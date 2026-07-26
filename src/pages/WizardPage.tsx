@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, ArrowRight, Camera, CheckCircle2, ImagePlus, Loader2, Package, Plus } from 'lucide-react'
 import { apiRequest, type Operation, type UploadPhotoResponse } from '../lib/api'
-import { getSteps, LINEA_BLANCA_STEPS, MULTI_PHOTO_STEPS, PRODUCT_CODE_STEPS } from '../lib/constants'
+import { getSteps, LINEA_BLANCA_STEPS, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, PRODUCT_CODE_STEPS } from '../lib/constants'
 import { Stepper } from '../components/Stepper'
 import { CameraCapture } from '../components/CameraCapture'
 
@@ -43,7 +43,10 @@ export function WizardPage() {
   const isMultiPhoto = MULTI_PHOTO_STEPS[opType]?.includes(currentStep) ?? false
   const requiresProductCode = PRODUCT_CODE_STEPS[opType]?.includes(currentStep) ?? false
   const currentStepPhotos = (operation?.photos ?? []).filter((p) => p.stepIndex === currentStep)
-  const allMainStepsComplete = steps.every((_, i) => completedStepSet.has(i))
+  const allMainStepsComplete = steps.every((_, i) => {
+    if ((OPTIONAL_STEPS[opType] ?? []).includes(i)) return true // Opcional — no bloquea
+    return completedStepSet.has(i)
+  })
   const isCompleted = operation?.status === 'COMPLETADO'
 
   // Línea blanca current product
@@ -243,6 +246,7 @@ export function WizardPage() {
               currentStep={currentStep}
               completedSteps={completedSteps}
               multiPhotoSteps={MULTI_PHOTO_STEPS[opType] ?? []}
+              optionalSteps={OPTIONAL_STEPS[opType] ?? []}
               photoCounts={steps.map((_, i) => (operation.photos ?? []).filter((p) => p.stepIndex === i).length)}
               onStepClick={(idx) => {
                 if (MULTI_PHOTO_STEPS[opType]?.includes(idx) && completedStepSet.has(idx)) {

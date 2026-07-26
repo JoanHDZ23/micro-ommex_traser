@@ -5,11 +5,12 @@ interface StepperProps {
   currentStep: number
   completedSteps: number[]
   multiPhotoSteps?: number[]
+  optionalSteps?: number[]
   photoCounts?: number[]
   onStepClick?: (index: number) => void
 }
 
-export function Stepper({ steps, currentStep, completedSteps, multiPhotoSteps = [], photoCounts = [], onStepClick }: StepperProps) {
+export function Stepper({ steps, currentStep, completedSteps, multiPhotoSteps = [], optionalSteps = [], photoCounts = [], onStepClick }: StepperProps) {
   return (
     <div className="w-full">
       {/* Progress bar */}
@@ -35,6 +36,7 @@ export function Stepper({ steps, currentStep, completedSteps, multiPhotoSteps = 
           const isCurrent = idx === currentStep
           const isLocked = !isCompleted && idx > currentStep
           const isMultiPhoto = multiPhotoSteps.includes(idx)
+          const isOptional = optionalSteps.includes(idx)
           const photoCount = photoCounts[idx] ?? 0
           const isClickable = isMultiPhoto && isCompleted && onStepClick
 
@@ -72,6 +74,7 @@ export function Stepper({ steps, currentStep, completedSteps, multiPhotoSteps = 
                   isCurrent ? 'text-gray-900' : isCompleted ? 'text-emerald-700' : 'text-gray-500'
                 }`}>
                   {idx + 1}. {step}
+                  {isOptional && <span className="text-[10px] text-gray-400 font-normal ml-1">(opcional)</span>}
                 </p>
               </div>
               <div className="flex items-center gap-1.5">

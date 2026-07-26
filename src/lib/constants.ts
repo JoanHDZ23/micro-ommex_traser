@@ -51,3 +51,11 @@ export const PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
   DESCARGUE: [4],
   CARGUE: [],
 }
+
+/**
+ * Pasos opcionales (no obligatorios para finalizar).
+ */
+export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
+  DESCARGUE: [4],
+  CARGUE: [],
+}
