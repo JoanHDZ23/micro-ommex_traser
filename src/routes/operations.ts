@@ -12,7 +12,7 @@ const VALID_TYPES: OperationType[] = ['DESCARGUE', 'CARGUE']
  * Crea una nueva operación de Descargue o Cargue.
  */
 operationsRouter.post('/', async (req, res) => {
-  const { operationType, operatorName, vehiclePlate } = req.body ?? {}
+  const { operationType, operatorName, vehiclePlate, companyId } = req.body ?? {}
 
   if (!operationType || !VALID_TYPES.includes(operationType)) {
     res.status(400).json({ message: 'operationType es requerido (DESCARGUE o CARGUE).' })
@@ -38,6 +38,7 @@ operationsRouter.post('/', async (req, res) => {
       operationType,
       operatorName: operatorName.trim(),
       vehiclePlate: vehiclePlate.trim(),
+      companyId: companyId?.trim() ?? undefined,
       photos: [],
       lineaBlanca: [],
       status: 'EN_PROCESO',
@@ -65,9 +66,10 @@ operationsRouter.post('/', async (req, res) => {
  * Lista operaciones con filtros opcionales.
  */
 operationsRouter.get('/', async (req, res) => {
-  const { operationType, status, date, operatorName, vehiclePlate, limit = '50', page = '1' } = req.query as Record<string, string>
+  const { operationType, status, date, operatorName, vehiclePlate, companyId, limit = '50', page = '1' } = req.query as Record<string, string>
 
   const filter: Record<string, unknown> = {}
+  if (companyId) filter.companyId = companyId
   if (operationType) filter.operationType = operationType
   if (status) filter.status = status
   if (operatorName) filter.operatorName = { $regex: operatorName, $options: 'i' }

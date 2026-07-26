@@ -82,6 +82,7 @@ export interface OperationLog {
   operationType: OperationType
   operatorName: string
   vehiclePlate: string              // Siempre requerido (Descargue o Cargue)
+  companyId?: string                 // ID de la empresa (aislamiento multi-tenant)
   photos: PhotoRecord[]             // Fotos del proceso principal
   lineaBlanca: LineaBlancaProduct[] // Productos de Línea Blanca revisados
   status: OperationStatus
