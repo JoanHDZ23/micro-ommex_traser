@@ -11,14 +11,17 @@ export const DESCARGUE_STEPS = [
   'Apertura y visualización de mercancía',
   'Proceso de descargue',
   'Estado de mercancía al finalizar',
+  'Acontecimiento / Novedad',
 ] as const
 
 export const CARGUE_STEPS = [
+  'Revisión de productos',
   'Estado inicial del vehículo',
   'Inicio del cargue',
   'Desarrollo del cargue',
   'Distribución y acomodo final',
   'Cierre del vehículo y precinto',
+  'Acontecimiento / Novedad',
 ] as const
 
 /** Pasos para revisión de Línea Blanca (por cada producto individual) */
@@ -41,8 +44,8 @@ export function getStepsForType(type: OperationType): readonly string[] {
  * Pasos que permiten múltiples fotos (sin límite).
  */
 export const MULTI_PHOTO_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [3, 4],   // "Proceso de descargue" y "Estado de mercancía"
-  CARGUE: [],
+  DESCARGUE: [3, 4, 5],   // "Proceso de descargue", "Estado de mercancía", "Acontecimiento"
+  CARGUE: [0, 6],          // "Revisión de productos", "Acontecimiento"
 }
 
 /**
@@ -50,15 +53,15 @@ export const MULTI_PHOTO_STEPS: Record<OperationType, number[]> = {
  */
 export const PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
   DESCARGUE: [4],       // "Estado de mercancía" — subcarpeta por código
-  CARGUE: [],
+  CARGUE: [0],          // "Revisión de productos" — subcarpeta por código
 }
 
 /**
  * Pasos opcionales (no obligatorios para completar la operación).
  */
 export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [4],       // "Estado de mercancía al finalizar" es opcional
-  CARGUE: [],
+  DESCARGUE: [4, 5],    // "Estado de mercancía" y "Acontecimiento" son opcionales
+  CARGUE: [0, 6],       // "Revisión de productos" y "Acontecimiento" son opcionales
 }
 
 // ── Esquema de foto ─────────────────────────────────────────────────────

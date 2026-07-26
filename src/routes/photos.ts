@@ -34,12 +34,15 @@ photosRouter.post('/upload', async (req, res) => {
 
     const existingPhotos = (operation.photos as PhotoRecord[]) ?? []
     const optionalSteps = OPTIONAL_STEPS[opType] ?? []
-    // Verifica secuencia: puede saltar pasos opcionales
-    if (idx > 0) {
-      const previousRequired = !optionalSteps.includes(idx - 1)
-      const previousExists = existingPhotos.some((p) => p.stepIndex === idx - 1)
-      if (previousRequired && !previousExists) {
-        res.status(400).json({ message: `Debes completar el paso ${idx} ("${steps[idx - 1]}") antes.` }); return
+    // Verifica secuencia: busca el paso requerido más reciente que debe estar completo
+    if (idx > 0 && !optionalSteps.includes(idx)) {
+      // Busca hacia atrás el último paso requerido
+      let requiredPrev = idx - 1
+      while (requiredPrev >= 0 && optionalSteps.includes(requiredPrev)) {
+        requiredPrev--
+      }
+      if (requiredPrev >= 0 && !existingPhotos.some((p) => p.stepIndex === requiredPrev)) {
+        res.status(400).json({ message: `Debes completar "${steps[requiredPrev]}" antes.` }); return
       }
     }
 
