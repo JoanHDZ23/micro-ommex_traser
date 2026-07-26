@@ -1,18 +1,30 @@
 @import "tailwindcss";
 
 :root {
-  --color-primary: #1e3a5f;
-  --color-primary-light: #2d5a8e;
+  --color-primary: #6d28d9;
+  --color-primary-light: #7c3aed;
+  --color-primary-bg: #ede9fe;
   --color-accent: #f59e0b;
-  --color-success: #10b981;
-  --color-danger: #ef4444;
+  --color-success: #16a34a;
+  --color-success-bg: #dcfce7;
+  --color-danger: #dc2626;
+  --color-danger-bg: #fee2e2;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --color-text: #0f172a;
+  --color-text-2: #475569;
+  --color-text-3: #94a3b8;
+  --color-bg: #f4f6fb;
+  --radius: 10px;
+  --radius-lg: 14px;
 }
 
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
-  background-color: #f1f5f9;
+  background-color: var(--color-bg);
+  color: var(--color-text);
   min-height: 100dvh;
 }
 
@@ -22,7 +34,7 @@ body {
   flex-direction: column;
 }
 
-/* Mobile-first camera overlay */
+/* Camera overlay */
 .camera-overlay {
   position: fixed;
   inset: 0;

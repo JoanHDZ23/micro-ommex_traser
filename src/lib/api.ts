@@ -55,6 +55,7 @@ export interface Operation {
   operationType: OperationType
   operatorName: string
   vehiclePlate: string
+  companyId?: string
   photos: PhotoRecord[]
   lineaBlanca: LineaBlancaProduct[]
   status: OperationStatus
@@ -69,6 +70,7 @@ export interface CreateOperationPayload {
   operationType: OperationType
   operatorName: string
   vehiclePlate: string
+  companyId?: string
 }
 
 export interface UploadPhotoResponse {

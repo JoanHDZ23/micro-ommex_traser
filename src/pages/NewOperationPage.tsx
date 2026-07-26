@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Loader2 } from 'lucide-react'
 import { apiRequest, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
+import { getCompanyId, getOperatorName } from '../lib/context'
 
 export function NewOperationPage() {
   const navigate = useNavigate()
@@ -11,8 +12,9 @@ export function NewOperationPage() {
 
   const [form, setForm] = useState<CreateOperationPayload>({
     operationType: presetType ?? 'DESCARGUE',
-    operatorName: '',
+    operatorName: getOperatorName(),
     vehiclePlate: '',
+    companyId: getCompanyId(),
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -68,8 +70,8 @@ export function NewOperationPage() {
                 onClick={() => setForm((f) => ({ ...f, operationType: type }))}
                 className={`px-4 py-3 rounded-xl border text-center text-sm font-medium transition-all ${
                   form.operationType === type
-                    ? 'border-[var(--color-primary)] bg-blue-50 text-[var(--color-primary)]'
-                    : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                    ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)] text-[var(--color-primary)]'
+                    : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-2)] hover:border-gray-300'
                 }`}
               >
                 {OPERATION_LABELS[type]}

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Calendar, ChevronRight, Filter, Loader2, Package, Search, Truck } from 'lucide-react'
 import { apiRequest, type Operation, type OperationType, type PaginatedOperations } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
+import { getCompanyId } from '../lib/context'
 
 const TYPE_ICONS: Record<OperationType, React.ComponentType<{ className?: string }>> = {
   DESCARGUE: Truck,
@@ -29,6 +30,8 @@ export function HistoryPage() {
         const params = new URLSearchParams()
         params.set('page', String(page))
         params.set('limit', '20')
+        const companyId = getCompanyId()
+        if (companyId) params.set('companyId', companyId)
         if (filterType) params.set('operationType', filterType)
         if (filterDate) params.set('date', filterDate)
         if (filterOperator) params.set('operatorName', filterOperator)
