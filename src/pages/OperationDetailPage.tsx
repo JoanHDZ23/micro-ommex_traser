@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Calendar, Camera, CheckCircle2, Clock, ExternalLink, Loader2, MapPin, MessageSquare, Package, Trash2, User, X } from 'lucide-react'
+import { ArrowLeft, Calendar, Camera, CheckCircle2, Clock, ExternalLink, Loader2, MapPin, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 import { getSteps, LINEA_BLANCA_STEPS, OPERATION_LABELS } from '../lib/constants'
 
@@ -121,6 +121,26 @@ export function OperationDetailPage() {
       {operation.photos.some((p) => p.fileId === 'pending') && (
         <SyncButton trackingCode={operation.trackingCode} onSynced={load} />
       )}
+
+      {/* Share button */}
+      <button
+        onClick={() => {
+          const shareUrl = `${window.location.origin}/share/${operation.trackingCode}`
+          if (navigator.share) {
+            void navigator.share({
+              title: `Registro ${operation.trackingCode}`,
+              text: `${operation.operationType} · ${operation.vehiclePlate} — ${operation.operatorName}`,
+              url: shareUrl,
+            })
+          } else {
+            void navigator.clipboard.writeText(shareUrl)
+            alert('Link copiado: ' + shareUrl)
+          }
+        }}
+        className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-medium text-sm flex items-center justify-center gap-2 active:scale-[0.98]"
+      >
+        <Share2 className="w-4 h-4" /> Compartir registro
+      </button>
 
       {/* Delete button */}
       <DeleteButton trackingCode={operation.trackingCode} />
