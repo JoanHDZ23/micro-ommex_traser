@@ -11,14 +11,17 @@ export const DESCARGUE_STEPS = [
   'Apertura y visualización de mercancía',
   'Proceso de descargue',
   'Estado de mercancía al finalizar',
+  'Acontecimiento / Novedad',
 ]
 
 export const CARGUE_STEPS = [
+  'Revisión de productos',
   'Estado inicial del vehículo',
   'Inicio del cargue',
   'Desarrollo del cargue',
   'Distribución y acomodo final',
   'Cierre del vehículo y precinto',
+  'Acontecimiento / Novedad',
 ]
 
 export const LINEA_BLANCA_STEPS = [
@@ -40,8 +43,8 @@ export function getSteps(type: OperationType): string[] {
  * Pasos que permiten múltiples fotos.
  */
 export const MULTI_PHOTO_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [3, 4],
-  CARGUE: [],
+  DESCARGUE: [3, 4, 5],   // Proceso, Estado mercancía, Acontecimiento
+  CARGUE: [0, 6],          // Revisión productos, Acontecimiento
 }
 
 /**
@@ -49,13 +52,13 @@ export const MULTI_PHOTO_STEPS: Record<OperationType, number[]> = {
  */
 export const PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
   DESCARGUE: [4],
-  CARGUE: [],
+  CARGUE: [0],
 }
 
 /**
  * Pasos opcionales (no obligatorios para finalizar).
  */
 export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [4],
-  CARGUE: [],
+  DESCARGUE: [4, 5],    // Estado mercancía + Acontecimiento
+  CARGUE: [0, 6],       // Revisión productos + Acontecimiento
 }
