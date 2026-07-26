@@ -53,6 +53,14 @@ export const PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
   CARGUE: [],
 }
 
+/**
+ * Pasos opcionales (no obligatorios para completar la operación).
+ */
+export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
+  DESCARGUE: [4],       // "Estado de mercancía al finalizar" es opcional
+  CARGUE: [],
+}
+
 // ── Esquema de foto ─────────────────────────────────────────────────────
 
 export interface PhotoRecord {

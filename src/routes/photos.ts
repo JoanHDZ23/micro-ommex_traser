@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { uploadToDrive } from '../lib/drive-upload.js'
 import { getOperationsCollection } from '../lib/mongodb.js'
-import { getStepsForType, MULTI_PHOTO_STEPS, PRODUCT_CODE_STEPS, type OperationType, type PhotoRecord } from '../types.js'
+import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, PRODUCT_CODE_STEPS, type OperationType, type PhotoRecord } from '../types.js'
 
 export const photosRouter = Router()
 
@@ -33,8 +33,14 @@ photosRouter.post('/upload', async (req, res) => {
     }
 
     const existingPhotos = (operation.photos as PhotoRecord[]) ?? []
-    if (idx > 0 && !existingPhotos.some((p) => p.stepIndex === idx - 1)) {
-      res.status(400).json({ message: `Debes completar el paso ${idx} ("${steps[idx - 1]}") antes.` }); return
+    const optionalSteps = OPTIONAL_STEPS[opType] ?? []
+    // Verifica secuencia: puede saltar pasos opcionales
+    if (idx > 0) {
+      const previousRequired = !optionalSteps.includes(idx - 1)
+      const previousExists = existingPhotos.some((p) => p.stepIndex === idx - 1)
+      if (previousRequired && !previousExists) {
+        res.status(400).json({ message: `Debes completar el paso ${idx} ("${steps[idx - 1]}") antes.` }); return
+      }
     }
 
     const alreadyExists = !isMultiPhotoStep && existingPhotos.some((p) => p.stepIndex === idx)

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { getOperationsCollection } from '../lib/mongodb.js'
 import { generateTrackingCode } from '../lib/tracking-code.js'
-import { getStepsForType, LINEA_BLANCA_STEPS, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
+import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
 
 export const operationsRouter = Router()
 
@@ -350,12 +350,15 @@ operationsRouter.patch('/:trackingCode/complete', async (req, res) => {
       return
     }
 
-    // Verifica que todos los pasos principales tengan al menos 1 foto
+    // Verifica que todos los pasos OBLIGATORIOS tengan al menos 1 foto
     const steps = getStepsForType(operation.operationType as OperationType)
+    const opType = operation.operationType as OperationType
+    const optionalSteps = OPTIONAL_STEPS[opType] ?? []
     const photos = operation.photos as PhotoRecord[]
     const completedSteps = new Set(photos.map((p) => p.stepIndex))
 
     for (let i = 0; i < steps.length; i++) {
+      if (optionalSteps.includes(i)) continue // Paso opcional — no bloquea
       if (!completedSteps.has(i)) {
         res.status(400).json({
           message: `Falta la foto del paso "${steps[i]}".`,
