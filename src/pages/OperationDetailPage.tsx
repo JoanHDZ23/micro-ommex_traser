@@ -123,24 +123,7 @@ export function OperationDetailPage() {
       )}
 
       {/* Share button */}
-      <button
-        onClick={() => {
-          const shareUrl = `${window.location.origin}/share/${operation.trackingCode}`
-          if (navigator.share) {
-            void navigator.share({
-              title: `Registro ${operation.trackingCode}`,
-              text: `${operation.operationType} · ${operation.vehiclePlate} — ${operation.operatorName}`,
-              url: shareUrl,
-            })
-          } else {
-            void navigator.clipboard.writeText(shareUrl)
-            alert('Link copiado: ' + shareUrl)
-          }
-        }}
-        className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-medium text-sm flex items-center justify-center gap-2 active:scale-[0.98]"
-      >
-        <Share2 className="w-4 h-4" /> Compartir registro
-      </button>
+      <ShareButton trackingCode={operation.trackingCode} operationType={operation.operationType} vehiclePlate={operation.vehiclePlate} operatorName={operation.operatorName} />
 
       {/* Delete button */}
       <DeleteButton trackingCode={operation.trackingCode} />
@@ -312,6 +295,91 @@ function PhotoCard({ photo, onClick }: { photo: PhotoRecord; onClick: () => void
           </p>
         )}
       </div>
+    </button>
+  )
+}
+
+function ShareButton({ trackingCode, operationType, vehiclePlate, operatorName }: {
+  trackingCode: string; operationType: string; vehiclePlate: string; operatorName: string
+}) {
+  const [showOptions, setShowOptions] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  // Construye la URL pública — usa el origin real (no el del iframe)
+  const baseUrl = import.meta.env.VITE_SHARE_BASE_URL || window.location.origin
+  const shareUrl = `${baseUrl}/share/${trackingCode}`
+  const shareText = `📋 Registro ${trackingCode}\n${operationType} · ${vehiclePlate}\nOperador: ${operatorName}\n\n${shareUrl}`
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Fallback: seleccionar texto
+      const input = document.createElement('input')
+      input.value = shareUrl
+      document.body.appendChild(input)
+      input.select()
+      document.execCommand('copy')
+      document.body.removeChild(input)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  const handleWhatsApp = () => {
+    const waUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`
+    window.open(waUrl, '_blank')
+  }
+
+  const handleNativeShare = async () => {
+    try {
+      await navigator.share({ title: `Registro ${trackingCode}`, text: shareText, url: shareUrl })
+    } catch {
+      // Si falla (iframe, sin soporte), mostrar opciones manuales
+      setShowOptions(true)
+    }
+  }
+
+  if (showOptions) {
+    return (
+      <div className="p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] space-y-2">
+        <p className="text-xs font-medium text-[var(--color-text-2)]">Compartir registro:</p>
+        <input
+          type="text" readOnly value={shareUrl}
+          className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-xs bg-gray-50"
+          onFocus={(e) => e.target.select()}
+        />
+        <div className="flex gap-2">
+          <button onClick={() => void handleCopy()}
+            className="flex-1 py-2 rounded-lg bg-gray-100 text-sm font-medium text-[var(--color-text)] flex items-center justify-center gap-1">
+            {copied ? '✓ Copiado' : '📋 Copiar'}
+          </button>
+          <button onClick={handleWhatsApp}
+            className="flex-1 py-2 rounded-lg bg-emerald-500 text-white text-sm font-medium flex items-center justify-center gap-1">
+            💬 WhatsApp
+          </button>
+        </div>
+        <button onClick={() => setShowOptions(false)} className="w-full text-xs text-[var(--color-text-3)] py-1">
+          Cerrar
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      onClick={() => {
+        if (typeof navigator.share === 'function' && !window.frameElement) {
+          void handleNativeShare()
+        } else {
+          setShowOptions(true)
+        }
+      }}
+      className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-medium text-sm flex items-center justify-center gap-2 active:scale-[0.98]"
+    >
+      <Share2 className="w-4 h-4" /> Compartir registro
     </button>
   )
 }
