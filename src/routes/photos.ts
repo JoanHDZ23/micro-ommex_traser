@@ -1,0 +1,225 @@
+import { Router } from 'express'
+import { uploadToDrive } from '../lib/drive-upload.js'
+import { getOperationsCollection } from '../lib/mongodb.js'
+import { getStepsForType, MULTI_PHOTO_STEPS, PRODUCT_CODE_STEPS, type OperationType, type PhotoRecord } from '../types.js'
+
+export const photosRouter = Router()
+
+/**
+ * POST /api/photos/upload
+ */
+photosRouter.post('/upload', async (req, res) => {
+  const { trackingCode, stepIndex, base64Image, mimeType, productCode, comment } = req.body ?? {}
+
+  if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
+  if (stepIndex === undefined || stepIndex === null) { res.status(400).json({ message: 'stepIndex es requerido.' }); return }
+  if (!base64Image) { res.status(400).json({ message: 'base64Image es requerido.' }); return }
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+    if (operation.status === 'COMPLETADO') { res.status(409).json({ message: 'La operación ya está completada.' }); return }
+
+    const opType = operation.operationType as OperationType
+    const steps = getStepsForType(opType)
+    const idx = Number(stepIndex)
+    if (idx < 0 || idx >= steps.length) { res.status(400).json({ message: `stepIndex inválido (0-${steps.length - 1}).` }); return }
+
+    const isMultiPhotoStep = MULTI_PHOTO_STEPS[opType]?.includes(idx) ?? false
+    const requiresProductCode = PRODUCT_CODE_STEPS[opType]?.includes(idx) ?? false
+    if (requiresProductCode && (!productCode || !productCode.trim())) {
+      res.status(400).json({ message: 'El código de producto es requerido para este paso.' }); return
+    }
+
+    const existingPhotos = (operation.photos as PhotoRecord[]) ?? []
+    if (idx > 0 && !existingPhotos.some((p) => p.stepIndex === idx - 1)) {
+      res.status(400).json({ message: `Debes completar el paso ${idx} ("${steps[idx - 1]}") antes.` }); return
+    }
+
+    const alreadyExists = !isMultiPhotoStep && existingPhotos.some((p) => p.stepIndex === idx)
+    const photoIndex = existingPhotos.filter((p) => p.stepIndex === idx).length
+
+    let subfolderName = operation.vehiclePlate
+      ? `${operation.operationType}_${operation.vehiclePlate}`
+      : `${operation.operationType}_${trackingCode}`
+    const subSubfolderName = productCode?.trim() || undefined
+
+    const stepName = steps[idx]!
+    const cleanStepName = stepName.replace(/[^a-zA-Z0-9]/g, '_')
+    const suffix = isMultiPhotoStep ? `_${photoIndex + 1}` : ''
+    const productSuffix = productCode?.trim() ? `_${productCode.trim()}` : ''
+    const fileName = `${trackingCode}_paso${idx + 1}_${cleanStepName}${productSuffix}${suffix}.jpg`
+
+    const driveResult = await uploadToDrive({ base64Image, fileName, mimeType: mimeType || 'image/jpeg', subfolderName, subSubfolderName })
+
+    let fileId = driveResult.fileId ?? ''
+    let driveUrl = driveResult.driveUrl ?? ''
+
+    if (driveResult.status === 'error') {
+      if ((driveResult.message ?? '').includes('no configurado')) {
+        res.status(502).json({ message: 'GAS_WEBHOOK_URL no configurado.' }); return
+      }
+      fileId = fileId || 'pending'
+      driveUrl = driveUrl || 'pending-verification'
+    }
+
+    const photoRecord: PhotoRecord = {
+      stepIndex: idx, stepName, driveUrl, fileId,
+      ...(productCode?.trim() ? { productCode: productCode.trim() } : {}),
+      ...(isMultiPhotoStep ? { photoIndex } : {}),
+      ...(comment?.trim() ? { comment: comment.trim() } : {}),
+      timestamp: new Date().toISOString(),
+    }
+
+    if (alreadyExists && !isMultiPhotoStep) {
+      await col.updateOne({ trackingCode, 'photos.stepIndex': idx }, { $set: { 'photos.$': photoRecord, updatedAt: new Date().toISOString() } })
+    } else {
+      await col.updateOne({ trackingCode }, { $push: { photos: photoRecord }, $set: { updatedAt: new Date().toISOString() } } as unknown as Record<string, unknown>)
+    }
+
+    const updatedOp = await col.findOne({ trackingCode })
+    const updatedPhotos = (updatedOp?.photos as PhotoRecord[]) ?? []
+    const completedStepIndexes = new Set(updatedPhotos.map((p) => p.stepIndex))
+
+    res.json({ message: 'Foto registrada correctamente.', photo: photoRecord, progress: { current: completedStepIndexes.size, total: steps.length, totalPhotos: updatedPhotos.length, completed: false } })
+  } catch (err) {
+    console.error('[photos] Error:', err)
+    res.status(500).json({ message: 'Error interno al procesar la foto.' })
+  }
+})
+
+/**
+ * POST /api/photos/sync/:trackingCode
+ * Sincroniza fileIds desde Drive.
+ * 
+ * Usa POST al GAS con action:"list" para obtener archivos de la carpeta.
+ * Si GAS no tiene la función list (deployment viejo), devuelve instrucciones.
+ * 
+ * Alternativa: enviar { files: [{fileName, fileId, driveUrl}] } para sync manual.
+ */
+photosRouter.post('/sync/:trackingCode', async (req, res) => {
+  const { trackingCode } = req.params
+  const { files: manualFiles } = req.body ?? {}
+  const GAS_URL = process.env.GAS_WEBHOOK_URL ?? ''
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const folderName = `${operation.operationType}_${operation.vehiclePlate}`
+    const allFiles = new Map<string, { fileId: string; driveUrl: string }>()
+
+    // Opción 1: Files enviados manualmente desde el frontend
+    if (Array.isArray(manualFiles) && manualFiles.length > 0) {
+      for (const f of manualFiles as Array<{ fileName?: string; fileId?: string; driveUrl?: string }>) {
+        if (f.fileName && f.fileId) {
+          allFiles.set(f.fileName, { fileId: f.fileId, driveUrl: f.driveUrl ?? `https://drive.google.com/file/d/${f.fileId}/view?usp=sharing` })
+        }
+      }
+    }
+    // Opción 2: GET al GAS con action=sync (nuevo deployment)
+    else if (GAS_URL) {
+      try {
+        const syncUrl = `${GAS_URL}?action=sync&folder=${encodeURIComponent(folderName)}`
+        console.log(`[sync] Llamando GAS: ${syncUrl}`)
+        const gasResp = await fetch(syncUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(30_000) })
+        const text = await gasResp.text()
+
+        if (text) {
+          try {
+            const gasData = JSON.parse(text) as { status: string; files?: Array<{ fileId: string; fileName: string; driveUrl: string }>; subfolders?: Record<string, Array<{ fileId: string; fileName: string; driveUrl: string }>> }
+            if (gasData.status === 'success') {
+              for (const f of gasData.files ?? []) allFiles.set(f.fileName, { fileId: f.fileId, driveUrl: f.driveUrl })
+              for (const [, subFiles] of Object.entries(gasData.subfolders ?? {})) {
+                for (const f of subFiles) allFiles.set(f.fileName, { fileId: f.fileId, driveUrl: f.driveUrl })
+              }
+            } else {
+              console.warn('[sync] GAS respondió con status:', gasData.status)
+            }
+          } catch { /* JSON parse failed */ }
+        }
+      } catch (gasErr) {
+        console.warn('[sync] GAS error:', gasErr instanceof Error ? gasErr.message : gasErr)
+      }
+    }
+
+    if (allFiles.size === 0) {
+      res.status(400).json({
+        message: 'No se pudieron obtener los archivos de Drive. Necesitas actualizar el deployment de Apps Script.',
+        instructions: [
+          '1. Ve a script.google.com con la cuenta familiahernandezbilbao@gmail.com',
+          '2. Reemplaza Code.gs con el contenido del archivo apps-script/Code.gs de este proyecto',
+          '3. Deploy → Manage deployments → Editar → Version: New version → Deploy',
+          '4. Copia la nueva URL si cambió y actualízala en backend/.env (GAS_WEBHOOK_URL)',
+          '5. Intenta sincronizar de nuevo',
+        ],
+      })
+      return
+    }
+
+    // Actualiza fotos del proceso principal
+    const photos = (operation.photos as PhotoRecord[]) ?? []
+    let updated = 0
+    const usedFileIds = new Set<string>()
+
+    for (let i = 0; i < photos.length; i++) {
+      const stepIdx = photos[i].stepIndex
+      const photoIdx = photos[i].photoIndex
+      const productCode = photos[i].productCode
+
+      // Busca el archivo correcto en Drive
+      const matchKey = [...allFiles.keys()].find((name) => {
+        if (usedFileIds.has(allFiles.get(name)!.fileId)) return false
+        if (!name.includes(trackingCode)) return false
+        if (!name.includes(`paso${stepIdx + 1}`)) return false
+
+        // Si tiene productCode, debe coincidir
+        if (productCode && !name.includes(productCode)) return false
+
+        // Si es multi-foto, matchear por sufijo _N
+        if (photoIdx !== undefined) {
+          return name.includes(`_${photoIdx + 1}.jpg`) || name.includes(`_${photoIdx + 1}_`)
+        }
+
+        return true
+      })
+
+      if (matchKey) {
+        const data = allFiles.get(matchKey)!
+        usedFileIds.add(data.fileId)
+        // Solo actualiza si cambió
+        if (photos[i].fileId !== data.fileId || photos[i].driveUrl !== data.driveUrl) {
+          await col.updateOne({ trackingCode }, { $set: { [`photos.${i}.fileId`]: data.fileId, [`photos.${i}.driveUrl`]: data.driveUrl } })
+          updated++
+        }
+      }
+    }
+
+    // Actualiza fotos de línea blanca
+    const lineaBlanca = (operation.lineaBlanca ?? []) as Array<{ productCode: string; photos: PhotoRecord[] }>
+    for (let pIdx = 0; pIdx < lineaBlanca.length; pIdx++) {
+      for (let phIdx = 0; phIdx < lineaBlanca[pIdx].photos.length; phIdx++) {
+        const ph = lineaBlanca[pIdx].photos[phIdx]
+        if (ph.fileId === 'pending' || ph.driveUrl === 'pending-verification') {
+          const matchKey = [...allFiles.keys()].find((name) => {
+            if (usedFileIds.has(allFiles.get(name)!.fileId)) return false
+            return name.includes(trackingCode) && name.includes(lineaBlanca[pIdx].productCode) && name.includes(`paso${ph.stepIndex + 1}`)
+          })
+          if (matchKey) {
+            const data = allFiles.get(matchKey)!
+            usedFileIds.add(data.fileId)
+            await col.updateOne({ trackingCode }, { $set: { [`lineaBlanca.${pIdx}.photos.${phIdx}.fileId`]: data.fileId, [`lineaBlanca.${pIdx}.photos.${phIdx}.driveUrl`]: data.driveUrl } })
+            updated++
+          }
+        }
+      }
+    }
+
+    res.json({ message: `Sincronización completada. ${updated} foto(s) actualizada(s).`, filesInDrive: allFiles.size, updated })
+  } catch (err) {
+    console.error('[photos/sync] Error:', err)
+    res.status(500).json({ message: 'Error al sincronizar.' })
+  }
+})
