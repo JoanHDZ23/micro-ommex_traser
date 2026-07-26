@@ -69,7 +69,12 @@ operationsRouter.get('/', async (req, res) => {
   const { operationType, status, date, operatorName, vehiclePlate, companyId, limit = '50', page = '1' } = req.query as Record<string, string>
 
   const filter: Record<string, unknown> = {}
-  if (companyId) filter.companyId = companyId
+  if (companyId) {
+    filter.companyId = companyId
+  } else {
+    // Sin companyId → no devolver nada (previene ver operaciones de otras empresas)
+    filter.companyId = { $exists: false }
+  }
   if (operationType) filter.operationType = operationType
   if (status) filter.status = status
   if (operatorName) filter.operatorName = { $regex: operatorName, $options: 'i' }
