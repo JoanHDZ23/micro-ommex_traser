@@ -10,7 +10,6 @@ export const DESCARGUE_STEPS = [
   'Vehículo antes de apertura',
   'Apertura y visualización de mercancía',
   'Proceso de descargue',
-  'Estado de mercancía al finalizar',
   'Acontecimiento / Novedad',
 ]
 
@@ -39,34 +38,32 @@ export function getSteps(type: OperationType): string[] {
   }
 }
 
-/**
- * Pasos que permiten múltiples fotos.
- */
+/** Pasos multi-foto */
 export const MULTI_PHOTO_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [3, 4, 5],   // Proceso, Estado mercancía, Acontecimiento
-  CARGUE: [0, 6],          // Revisión productos, Acontecimiento
+  DESCARGUE: [3, 4],
+  CARGUE: [0, 6],
 }
 
-/**
- * Pasos que requieren código de producto.
- */
+/** Pasos que REQUIEREN código de producto */
 export const PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [4],
+  DESCARGUE: [],
   CARGUE: [0],
 }
 
-/**
- * Pasos opcionales (no obligatorios para finalizar).
- */
-export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [4, 5],    // Estado mercancía + Acontecimiento
-  CARGUE: [0, 6],       // Revisión productos + Acontecimiento
+/** Pasos donde el código de producto es OPCIONAL (acontecimiento de producto) */
+export const OPTIONAL_PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
+  DESCARGUE: [4],
+  CARGUE: [6],
 }
 
-/**
- * Pasos libres — se pueden tomar en CUALQUIER momento sin secuencia.
- */
+/** Pasos opcionales */
+export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
+  DESCARGUE: [4],
+  CARGUE: [0, 6],
+}
+
+/** Pasos libres — se pueden tomar en cualquier momento */
 export const FREE_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [5],       // "Acontecimiento / Novedad"
-  CARGUE: [6],          // "Acontecimiento / Novedad"
+  DESCARGUE: [4],
+  CARGUE: [6],
 }

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, ArrowRight, Camera, CheckCircle2, ImagePlus, Loader2, Package, Plus } from 'lucide-react'
+import { AlertCircle, ArrowLeft, ArrowRight, Camera, CheckCircle2, ImagePlus, Loader2, Package, Plus, Share2 } from 'lucide-react'
 import { apiRequest, type Operation, type UploadPhotoResponse } from '../lib/api'
-import { getSteps, FREE_STEPS, LINEA_BLANCA_STEPS, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, PRODUCT_CODE_STEPS } from '../lib/constants'
+import { getSteps, FREE_STEPS, LINEA_BLANCA_STEPS, MULTI_PHOTO_STEPS, OPTIONAL_PRODUCT_CODE_STEPS, OPTIONAL_STEPS, PRODUCT_CODE_STEPS } from '../lib/constants'
 import { Stepper } from '../components/Stepper'
 import { CameraCapture } from '../components/CameraCapture'
 
@@ -20,6 +20,7 @@ export function WizardPage() {
   const [showCamera, setShowCamera] = useState(false)
   const [productCode, setProductCode] = useState('')
   const [activeStep, setActiveStep] = useState<number | null>(null)
+  const [isProductNovedad, setIsProductNovedad] = useState(false)
 
   // ── Línea Blanca state ──
   const [mode, setMode] = useState<WizardMode>('main')
@@ -42,6 +43,8 @@ export function WizardPage() {
   const currentStep = activeStep ?? autoNextStep
   const isMultiPhoto = MULTI_PHOTO_STEPS[opType]?.includes(currentStep) ?? false
   const requiresProductCode = PRODUCT_CODE_STEPS[opType]?.includes(currentStep) ?? false
+  const isOptionalProductStep = (OPTIONAL_PRODUCT_CODE_STEPS[opType] ?? []).includes(currentStep)
+  const isFreeStep = (FREE_STEPS[opType] ?? []).includes(currentStep)
   const currentStepPhotos = (operation?.photos ?? []).filter((p) => p.stepIndex === currentStep)
   const allMainStepsComplete = steps.every((_, i) => {
     if ((OPTIONAL_STEPS[opType] ?? []).includes(i)) return true // Opcional — no bloquea
@@ -91,6 +94,7 @@ export function WizardPage() {
           base64Image: base64,
           mimeType: 'image/jpeg',
           ...(requiresProductCode && productCode.trim() ? { productCode: productCode.trim() } : {}),
+          ...(isProductNovedad && productCode.trim() ? { productCode: productCode.trim() } : {}),
           ...(comment ? { comment } : {}),
         },
       })
@@ -227,14 +231,34 @@ export function WizardPage() {
         </div>
 
         {isCompleted && (
-          <div className="flex items-center gap-3 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
-            <CheckCircle2 className="w-8 h-8 text-emerald-500 flex-shrink-0" />
-            <div>
-              <p className="text-sm font-semibold text-emerald-800">Operación completa</p>
-              <p className="text-xs text-emerald-600">
-                {operation.photos.length} fotos de proceso + {lbProducts.length} producto(s) de línea blanca
-              </p>
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+              <CheckCircle2 className="w-8 h-8 text-emerald-500 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-emerald-800">Operación completa</p>
+                <p className="text-xs text-emerald-600">
+                  {operation.photos.length} fotos de proceso + {lbProducts.length} producto(s) de línea blanca
+                </p>
+              </div>
             </div>
+            <button
+              onClick={() => {
+                const shareUrl = `${window.location.origin}/operation/${operation.trackingCode}`
+                if (navigator.share) {
+                  void navigator.share({
+                    title: `Registro ${operation.trackingCode}`,
+                    text: `${operation.operationType} · ${operation.vehiclePlate} — ${operation.photos.length} fotos`,
+                    url: shareUrl,
+                  })
+                } else {
+                  void navigator.clipboard.writeText(shareUrl)
+                  setUploadFeedback('✓ Link copiado al portapapeles')
+                }
+              }}
+              className="w-full py-3 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98]"
+            >
+              <Share2 className="w-4 h-4" /> Compartir registro
+            </button>
           </div>
         )}
 
@@ -260,11 +284,38 @@ export function WizardPage() {
 
             {/* Multi-photo info */}
             {!isCompleted && isMultiPhoto && (
-              <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 space-y-3">
-                <div className="flex items-center gap-2 text-sm text-blue-700">
+              <div className={`p-3 rounded-xl border space-y-3 ${isFreeStep ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200'}`}>
+                <div className={`flex items-center gap-2 text-sm ${isFreeStep ? 'text-amber-700' : 'text-blue-700'}`}>
                   <ImagePlus className="w-4 h-4" />
-                  <span className="font-medium">Múltiples fotos · {currentStepPhotos.length} registrada{currentStepPhotos.length !== 1 ? 's' : ''}</span>
+                  <span className="font-medium">
+                    {isFreeStep ? 'Acontecimiento / Novedad' : 'Múltiples fotos'} · {currentStepPhotos.length} registrada{currentStepPhotos.length !== 1 ? 's' : ''}
+                  </span>
                 </div>
+
+                {/* Toggle: ¿Es novedad de un producto? (solo en acontecimiento) */}
+                {isOptionalProductStep && (
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isProductNovedad}
+                        onChange={(e) => { setIsProductNovedad(e.target.checked); if (!e.target.checked) setProductCode('') }}
+                        className="w-4 h-4 rounded border-gray-300 accent-amber-600"
+                      />
+                      <span className="text-xs font-medium text-amber-800">¿La novedad es de un producto?</span>
+                    </label>
+                    {isProductNovedad && (
+                      <input
+                        type="text" value={productCode}
+                        onChange={(e) => setProductCode(e.target.value)}
+                        placeholder="Código del producto..."
+                        className="w-full px-3 py-2 rounded-lg border border-amber-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-300"
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Código requerido (para pasos que lo exigen) */}
                 {requiresProductCode && (
                   <div className="space-y-1">
                     <label className="text-xs font-medium text-blue-800 flex items-center gap-1">
@@ -278,10 +329,17 @@ export function WizardPage() {
                     />
                   </div>
                 )}
-                {currentStepPhotos.length > 0 && (
-                  <button onClick={() => { setActiveStep(null); setProductCode(''); setUploadFeedback(null) }}
+
+                {currentStepPhotos.length > 0 && !isFreeStep && (
+                  <button onClick={() => { setActiveStep(null); setProductCode(''); setIsProductNovedad(false); setUploadFeedback(null) }}
                     className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-medium flex items-center justify-center gap-2">
                     <ArrowRight className="w-4 h-4" /> Avanzar al siguiente paso
+                  </button>
+                )}
+                {isFreeStep && currentStepPhotos.length > 0 && (
+                  <button onClick={() => { setActiveStep(null); setProductCode(''); setIsProductNovedad(false); setUploadFeedback(null) }}
+                    className="w-full py-2 rounded-lg bg-amber-600 text-white text-sm font-medium flex items-center justify-center gap-2">
+                    <ArrowLeft className="w-4 h-4" /> Volver al proceso
                   </button>
                 )}
               </div>
