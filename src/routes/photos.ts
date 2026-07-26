@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { uploadToDrive } from '../lib/drive-upload.js'
 import { getOperationsCollection } from '../lib/mongodb.js'
-import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, PRODUCT_CODE_STEPS, type OperationType, type PhotoRecord } from '../types.js'
+import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, FREE_STEPS, PRODUCT_CODE_STEPS, type OperationType, type PhotoRecord } from '../types.js'
 
 export const photosRouter = Router()
 
@@ -34,11 +34,13 @@ photosRouter.post('/upload', async (req, res) => {
 
     const existingPhotos = (operation.photos as PhotoRecord[]) ?? []
     const optionalSteps = OPTIONAL_STEPS[opType] ?? []
-    // Verifica secuencia: busca el paso requerido más reciente que debe estar completo
-    if (idx > 0 && !optionalSteps.includes(idx)) {
-      // Busca hacia atrás el último paso requerido
+    const freeSteps = FREE_STEPS[opType] ?? []
+
+    // Pasos libres (acontecimiento): sin restricción de secuencia
+    // Otros pasos: verifica secuencia buscando el paso requerido anterior
+    if (idx > 0 && !freeSteps.includes(idx) && !optionalSteps.includes(idx)) {
       let requiredPrev = idx - 1
-      while (requiredPrev >= 0 && optionalSteps.includes(requiredPrev)) {
+      while (requiredPrev >= 0 && (optionalSteps.includes(requiredPrev) || freeSteps.includes(requiredPrev))) {
         requiredPrev--
       }
       if (requiredPrev >= 0 && !existingPhotos.some((p) => p.stepIndex === requiredPrev)) {

@@ -64,6 +64,14 @@ export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
   CARGUE: [0, 6],       // "Revisión de productos" y "Acontecimiento" son opcionales
 }
 
+/**
+ * Pasos libres — se pueden tomar en CUALQUIER momento sin secuencia.
+ */
+export const FREE_STEPS: Record<OperationType, number[]> = {
+  DESCARGUE: [5],       // "Acontecimiento / Novedad"
+  CARGUE: [6],          // "Acontecimiento / Novedad"
+}
+
 // ── Esquema de foto ─────────────────────────────────────────────────────
 
 export interface PhotoRecord {
