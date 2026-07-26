@@ -10,7 +10,6 @@ export const DESCARGUE_STEPS = [
   'Vehículo antes de apertura',
   'Apertura y visualización de mercancía',
   'Proceso de descargue',
-  'Estado de mercancía al finalizar',
   'Acontecimiento / Novedad',
 ] as const
 
@@ -44,31 +43,40 @@ export function getStepsForType(type: OperationType): readonly string[] {
  * Pasos que permiten múltiples fotos (sin límite).
  */
 export const MULTI_PHOTO_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [3, 4, 5],   // "Proceso de descargue", "Estado de mercancía", "Acontecimiento"
-  CARGUE: [0, 6],          // "Revisión de productos", "Acontecimiento"
+  DESCARGUE: [3, 4],    // "Proceso de descargue", "Acontecimiento"
+  CARGUE: [0, 6],       // "Revisión de productos", "Acontecimiento"
 }
 
 /**
  * Pasos que requieren código de producto para organizar en subcarpetas.
+ * En "Acontecimiento" el código es OPCIONAL (solo si la novedad es de un producto).
  */
 export const PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [4],       // "Estado de mercancía" — subcarpeta por código
+  DESCARGUE: [],
   CARGUE: [0],          // "Revisión de productos" — subcarpeta por código
+}
+
+/**
+ * Pasos donde el código de producto es opcional (el usuario elige si aplica).
+ */
+export const OPTIONAL_PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
+  DESCARGUE: [4],       // "Acontecimiento" — código solo si novedad es de producto
+  CARGUE: [6],          // "Acontecimiento" — código solo si novedad es de producto
 }
 
 /**
  * Pasos opcionales (no obligatorios para completar la operación).
  */
 export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [4, 5],    // "Estado de mercancía" y "Acontecimiento" son opcionales
-  CARGUE: [0, 6],       // "Revisión de productos" y "Acontecimiento" son opcionales
+  DESCARGUE: [4],       // "Acontecimiento"
+  CARGUE: [0, 6],       // "Revisión de productos" y "Acontecimiento"
 }
 
 /**
  * Pasos libres — se pueden tomar en CUALQUIER momento sin secuencia.
  */
 export const FREE_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [5],       // "Acontecimiento / Novedad"
+  DESCARGUE: [4],       // "Acontecimiento / Novedad"
   CARGUE: [6],          // "Acontecimiento / Novedad"
 }
 
@@ -88,8 +96,8 @@ export interface PhotoRecord {
 // ── Revisión de Línea Blanca (por producto) ─────────────────────────────
 
 export interface LineaBlancaProduct {
-  productCode: string        // Código identificador del producto
-  photos: PhotoRecord[]      // 5 fotos obligatorias
+  productCode: string
+  photos: PhotoRecord[]
   status: 'EN_PROCESO' | 'COMPLETADO'
   createdAt: string
 }
@@ -100,10 +108,10 @@ export interface OperationLog {
   trackingCode: string
   operationType: OperationType
   operatorName: string
-  vehiclePlate: string              // Siempre requerido (Descargue o Cargue)
-  companyId?: string                 // ID de la empresa (aislamiento multi-tenant)
-  photos: PhotoRecord[]             // Fotos del proceso principal
-  lineaBlanca: LineaBlancaProduct[] // Productos de Línea Blanca revisados
+  vehiclePlate: string
+  companyId?: string
+  photos: PhotoRecord[]
+  lineaBlanca: LineaBlancaProduct[]
   status: OperationStatus
   createdAt: string
   updatedAt: string

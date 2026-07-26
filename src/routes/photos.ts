@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { uploadToDrive } from '../lib/drive-upload.js'
 import { getOperationsCollection } from '../lib/mongodb.js'
-import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, FREE_STEPS, PRODUCT_CODE_STEPS, type OperationType, type PhotoRecord } from '../types.js'
+import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, FREE_STEPS, PRODUCT_CODE_STEPS, OPTIONAL_PRODUCT_CODE_STEPS, type OperationType, type PhotoRecord } from '../types.js'
 
 export const photosRouter = Router()
 
