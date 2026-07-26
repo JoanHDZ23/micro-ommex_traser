@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, ArrowRight, Camera, CheckCircle2, ImagePlus, Loader2, Package, Plus } from 'lucide-react'
 import { apiRequest, type Operation, type UploadPhotoResponse } from '../lib/api'
-import { getSteps, LINEA_BLANCA_STEPS, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, PRODUCT_CODE_STEPS } from '../lib/constants'
+import { getSteps, FREE_STEPS, LINEA_BLANCA_STEPS, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, PRODUCT_CODE_STEPS } from '../lib/constants'
 import { Stepper } from '../components/Stepper'
 import { CameraCapture } from '../components/CameraCapture'
 
@@ -249,7 +249,9 @@ export function WizardPage() {
               optionalSteps={OPTIONAL_STEPS[opType] ?? []}
               photoCounts={steps.map((_, i) => (operation.photos ?? []).filter((p) => p.stepIndex === i).length)}
               onStepClick={(idx) => {
-                if (MULTI_PHOTO_STEPS[opType]?.includes(idx) && completedStepSet.has(idx)) {
+                // Allow clicking on multi-photo completed steps OR free steps (acontecimiento)
+                const isFree = (FREE_STEPS[opType] ?? []).includes(idx)
+                if (isFree || (MULTI_PHOTO_STEPS[opType]?.includes(idx) && completedStepSet.has(idx))) {
                   setActiveStep(idx)
                   setProductCode('')
                 }
@@ -307,6 +309,16 @@ export function WizardPage() {
               <button onClick={() => void handleFinalize()} disabled={uploading}
                 className="w-full py-3.5 rounded-xl bg-emerald-600 text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50">
                 <CheckCircle2 className="w-5 h-5" /> Finalizar operación
+              </button>
+            )}
+
+            {/* Acontecimiento — acceso rápido siempre visible */}
+            {!isCompleted && (FREE_STEPS[opType] ?? []).length > 0 && currentStep !== (FREE_STEPS[opType]?.[0] ?? -1) && (
+              <button
+                onClick={() => { setActiveStep(FREE_STEPS[opType]![0]); setProductCode('') }}
+                className="w-full py-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 font-medium text-sm flex items-center justify-center gap-2"
+              >
+                <AlertCircle className="w-4 h-4" /> Registrar acontecimiento / novedad
               </button>
             )}
           </>
