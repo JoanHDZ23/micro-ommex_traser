@@ -19,6 +19,7 @@ export function WizardPage() {
 
   // Línea Blanca
   const [lbProductCode, setLbProductCode] = useState('')
+  const [lbIsLineaBlanca, setLbIsLineaBlanca] = useState(false)
   const [activeLbProduct, setActiveLbProduct] = useState<string | null>(null)
   const [lbAdding, setLbAdding] = useState(false)
   const [lbCameraOpen, setLbCameraOpen] = useState(false)
@@ -91,11 +92,12 @@ export function WizardPage() {
     setFeedback(null)
     try {
       await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
-        method: 'POST', body: { productCode: code.trim(), labelData: lbLabelData ?? undefined },
+        method: 'POST', body: { productCode: code.trim(), labelData: lbLabelData ?? undefined, isLineaBlanca: lbIsLineaBlanca },
       })
       setActiveLbProduct(code.trim())
       setLbProductCode('')
       setLbLabelData(null)
+      setLbIsLineaBlanca(false)
       await loadOperation()
       setFeedback(`✓ Producto ${code.trim()} agregado`)
     } catch (err) {
@@ -373,6 +375,13 @@ export function WizardPage() {
               </button>
             </div>
 
+            {/* Tipo de producto */}
+            <label className="flex items-center gap-2 cursor-pointer px-1">
+              <input type="checkbox" checked={lbIsLineaBlanca} onChange={(e) => setLbIsLineaBlanca(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 accent-[var(--color-primary)]" />
+              <span className="text-xs text-[var(--color-text-2)]">Marcar como <strong>Línea Blanca</strong></span>
+            </label>
+
             {/* Parsed label data preview */}
             {lbLabelData && Object.values(lbLabelData).some(Boolean) && (
               <div className="p-2 rounded-lg bg-blue-50 border border-blue-200 space-y-0.5">
@@ -402,7 +411,9 @@ export function WizardPage() {
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-[var(--color-text)]">{product.productCode}</p>
-                        <p className="text-[10px] text-[var(--color-text-3)]">{product.photos.length} fotos</p>
+                        <p className="text-[10px] text-[var(--color-text-3)]">
+                          {product.isLineaBlanca ? '🏷️ Línea Blanca' : '📦 Producto'} · {product.photos.length} fotos
+                        </p>
                       </div>
                     </button>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isDone ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>

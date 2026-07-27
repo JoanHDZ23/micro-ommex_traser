@@ -58,6 +58,7 @@ export interface LabelData {
 export interface LineaBlancaProduct {
   productCode: string
   labelData?: LabelData
+  isLineaBlanca?: boolean
   photos: PhotoRecord[]
   status: 'EN_PROCESO' | 'COMPLETADO'
   createdAt: string
