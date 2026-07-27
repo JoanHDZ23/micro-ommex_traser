@@ -46,10 +46,15 @@ export function WizardPage() {
   const isOptionalProductStep = (OPTIONAL_PRODUCT_CODE_STEPS[opType] ?? []).includes(currentStep)
   const isFreeStep = (FREE_STEPS[opType] ?? []).includes(currentStep)
   const currentStepPhotos = (operation?.photos ?? []).filter((p) => p.stepIndex === currentStep)
-  const allMainStepsComplete = steps.every((_, i) => {
-    if ((OPTIONAL_STEPS[opType] ?? []).includes(i)) return true // Opcional — no bloquea
-    return completedStepSet.has(i)
-  })
+  const allMainStepsComplete = (() => {
+    const requiredDone = steps.every((_, i) => {
+      if ((OPTIONAL_STEPS[opType] ?? []).includes(i)) return true
+      return completedStepSet.has(i)
+    })
+    // Si todos son opcionales, requiere al menos 1 foto para poder finalizar
+    const hasAtLeastOnePhoto = (operation?.photos ?? []).length > 0 || (operation?.lineaBlanca ?? []).length > 0
+    return requiredDone && hasAtLeastOnePhoto
+  })()
   const isCompleted = operation?.status === 'COMPLETADO'
 
   // Línea blanca current product
