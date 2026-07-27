@@ -278,12 +278,9 @@ export function WizardPage() {
               optionalSteps={OPTIONAL_STEPS[opType] ?? []}
               photoCounts={steps.map((_, i) => (operation.photos ?? []).filter((p) => p.stepIndex === i).length)}
               onStepClick={(idx) => {
-                // Allow clicking on multi-photo completed steps OR free steps (acontecimiento)
-                const isFree = (FREE_STEPS[opType] ?? []).includes(idx)
-                if (isFree || (MULTI_PHOTO_STEPS[opType]?.includes(idx) && completedStepSet.has(idx))) {
-                  setActiveStep(idx)
-                  setProductCode('')
-                }
+                setActiveStep(idx)
+                setProductCode('')
+                setIsProductNovedad(false)
               }}
             />
 

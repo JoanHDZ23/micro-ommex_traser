@@ -64,6 +64,6 @@ export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
 
 /** Pasos libres — se pueden tomar en cualquier momento */
 export const FREE_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [4],
-  CARGUE: [6],
+  DESCARGUE: [0, 1, 2, 3, 4],
+  CARGUE: [0, 1, 2, 3, 4, 5, 6],
 }

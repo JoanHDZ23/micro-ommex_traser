@@ -34,11 +34,11 @@ export function Stepper({ steps, currentStep, completedSteps, multiPhotoSteps = 
         {steps.map((step, idx) => {
           const isCompleted = completedSteps.includes(idx)
           const isCurrent = idx === currentStep
-          const isLocked = !isCompleted && idx > currentStep
+          const isLocked = false  // All steps are accessible
           const isMultiPhoto = multiPhotoSteps.includes(idx)
           const isOptional = optionalSteps.includes(idx)
           const photoCount = photoCounts[idx] ?? 0
-          const isClickable = isMultiPhoto && isCompleted && onStepClick
+          const isClickable = onStepClick != null
 
           return (
             <button
