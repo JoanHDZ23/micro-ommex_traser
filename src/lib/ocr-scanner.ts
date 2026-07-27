@@ -42,9 +42,9 @@ function preprocessImage(imageData: string): Promise<string> {
         // Escala de grises ponderada (percepción humana)
         const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
 
-        // Umbral: si es oscuro → negro (0), si es claro → blanco (255)
-        // Threshold de 140 funciona bien para etiquetas de colores
-        const bw = gray < 140 ? 0 : 255
+        // Umbral: texto oscuro → negro (0), fondo claro → blanco (255)
+        // Threshold 120 para etiquetas de colores (amarilla, rosada, azul, blanca)
+        const bw = gray < 120 ? 0 : 255
 
         data[i] = bw      // R
         data[i + 1] = bw  // G
@@ -87,24 +87,22 @@ export async function extractTextFromLabel(imageBase64: string): Promise<string>
  */
 export function parseLabelText(rawText: string) {
   return {
-    poNumber: rawText.match(/PO[:\s]*([\d-]+)/i)?.[1] ?? null,
-    sku: rawText.match(/SKU[:\s]*(\d+)/i)?.[1] ?? null,
+    poNumber: rawText.match(/PO[:\s]+([\d-]+)/i)?.[1] ?? null,
+    sku: rawText.match(/SKU[:\s]+(\d+)/i)?.[1] ?? null,
     sscc: rawText.match(/(?:\(CO\)\s*)?SERIAL\s*SHIPPING\s*CONTAINER[:\s]*(\d+)/i)?.[1]
       ?? rawText.match(/(\d{18,20})/)?.[1] ?? null,
-    destinatario: rawText.match(/To[:\s]*([A-Z0-9\s]+(?:SAS|SA|LTDA|S\.A\.S))/i)?.[1]?.trim() ?? null,
-    np: rawText.match(/NP[:\s]*([\d-]+)/i)?.[1] ?? null,
-    codigoEtiqueta: rawText.match(/Codigo\s*Etiqueta[:\s]*(\d+)/i)?.[1]
-      ?? rawText.match(/C[oó]digo[:\s]*(\d{6,})/i)?.[1] ?? null,
-    transportadora: rawText.match(/CARR[:\s]*([A-Z\s]+?)(?:\s{2}|\n)/i)?.[1]?.trim()
-      ?? rawText.match(/TRANSPORTADORA[:\s]*([A-Z\s]+)/i)?.[1]?.trim() ?? null,
+    destinatario: rawText.match(/To[:\s]+([A-Z0-9\s]+(?:SAS|SA|LTDA|S\.A\.S))/i)?.[1]?.trim() ?? null,
+    np: rawText.match(/NP[:\s]+([\d-]+)/i)?.[1] ?? null,
+    codigoEtiqueta: rawText.match(/C[oó]digo\s*Etiqueta[:\s]*(\d+)/i)?.[1]
+      ?? rawText.match(/C[oó]digo[:\s]+(\d{6,})/i)?.[1] ?? null,
+    transportadora: rawText.match(/TRANSPORTADORA[:\s]+(\w+)/i)?.[1]?.trim()
+      ?? rawText.match(/CARR[:\s]+([A-Z\s]+?)(?:\s{2}|\n)/i)?.[1]?.trim() ?? null,
     complemento: rawText.match(/COMPLEMENTO\s*(\d+)\s*de\s*(\d+)/i)
       ? `${rawText.match(/COMPLEMENTO\s*(\d+)\s*de\s*(\d+)/i)?.[1]}/${rawText.match(/COMPLEMENTO\s*(\d+)\s*de\s*(\d+)/i)?.[2]}`
       : null,
-    qty: rawText.match(/QTY[:\s]*(\d+)/i)?.[1] ?? null,
-    descripcion: rawText.match(/DESC[:\s]*(.+?)(?:\n|$)/i)?.[1]?.trim()
-      ?? rawText.match(/(?:VO|VD)\s+(.+?)(?:\n|$)/i)?.[1]?.trim()
-      ?? rawText.match(/COMBO\s+(.+?)(?:\n|$)/i)?.[1]?.trim()
-      ?? rawText.match(/(?:NEVERA|LAVADORA|ESTUFA|HORNO|COLCH[OÓ]N|MESA|SILLA|CAMA|CLOSET|SOFÁ?|COMEDOR)[\w\s]*(?:\n|$)/i)?.[0]?.trim()
+    qty: rawText.match(/QTY[:\s]+(\d+)/i)?.[1] ?? null,
+    descripcion: rawText.match(/DESC[:\s]+(.+?)(?:\n|$)/i)?.[1]?.trim()
+      ?? rawText.match(/(?:VD|VO)\s+(.+?)(?:\n|$)/i)?.[1]?.trim()
       ?? null,
   }
 }
