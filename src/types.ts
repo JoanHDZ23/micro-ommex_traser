@@ -112,6 +112,7 @@ export interface LabelData {
 export interface LineaBlancaProduct {
   productCode: string
   labelData?: LabelData
+  isLineaBlanca?: boolean    // true = línea blanca, false/undefined = producto normal
   photos: PhotoRecord[]
   status: 'EN_PROCESO' | 'COMPLETADO'
   createdAt: string
