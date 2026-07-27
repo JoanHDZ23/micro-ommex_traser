@@ -76,8 +76,8 @@ export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
  * Pasos libres — se pueden tomar en CUALQUIER momento sin secuencia.
  */
 export const FREE_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [4],       // "Acontecimiento / Novedad"
-  CARGUE: [6],          // "Acontecimiento / Novedad"
+  DESCARGUE: [0, 1, 2, 3, 4],       // Todos libres — sin orden obligatorio
+  CARGUE: [0, 1, 2, 3, 4, 5, 6],    // Todos libres — sin orden obligatorio
 }
 
 // ── Esquema de foto ─────────────────────────────────────────────────────
