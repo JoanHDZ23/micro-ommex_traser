@@ -53,6 +53,7 @@ export interface LabelData {
   codigoEtiqueta?: string
   transportadora?: string
   complemento?: string
+  descripcion?: string
 }
 
 export interface LineaBlancaProduct {

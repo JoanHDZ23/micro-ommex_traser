@@ -139,6 +139,7 @@ export function WizardPage() {
       if (parsed.codigoEtiqueta) labelData.codigoEtiqueta = parsed.codigoEtiqueta
       if (parsed.transportadora) labelData.transportadora = parsed.transportadora
       if (parsed.complemento) labelData.complemento = parsed.complemento
+      if (parsed.descripcion) labelData.descripcion = parsed.descripcion
 
       if (Object.keys(labelData).length > 0) {
         setLbLabelData(labelData)
@@ -444,6 +445,7 @@ export function WizardPage() {
                   {lbLabelData.np && <p className="text-[10px] text-blue-600"><span className="font-medium">NP:</span> {lbLabelData.np}</p>}
                   {lbLabelData.destinatario && <p className="text-[10px] text-blue-600 col-span-2"><span className="font-medium">Dest:</span> {lbLabelData.destinatario}</p>}
                   {lbLabelData.transportadora && <p className="text-[10px] text-blue-600"><span className="font-medium">Transp:</span> {lbLabelData.transportadora}</p>}
+                  {lbLabelData.descripcion && <p className="text-[10px] text-blue-600 col-span-2"><span className="font-medium">Desc:</span> {lbLabelData.descripcion}</p>}
                 </div>
                 <button onClick={() => setLbLabelData(null)} className="text-[10px] text-blue-500 underline">Descartar</button>
               </div>
@@ -491,6 +493,7 @@ export function WizardPage() {
                       {product.labelData.np && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">NP:</span> {product.labelData.np}</p>}
                       {product.labelData.destinatario && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Dest:</span> {product.labelData.destinatario}</p>}
                       {product.labelData.transportadora && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">Transp:</span> {product.labelData.transportadora}</p>}
+                      {product.labelData.descripcion && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Desc:</span> {product.labelData.descripcion}</p>}
                     </div>
                   )}
                   {isActive && !isDone && (

@@ -101,6 +101,10 @@ export function parseLabelText(rawText: string) {
       ? `${rawText.match(/COMPLEMENTO\s*(\d+)\s*de\s*(\d+)/i)?.[1]}/${rawText.match(/COMPLEMENTO\s*(\d+)\s*de\s*(\d+)/i)?.[2]}`
       : null,
     qty: rawText.match(/QTY[:\s]*(\d+)/i)?.[1] ?? null,
-    descripcion: rawText.match(/(?:VO|VD)\s+(.+?)(?:\n|$)/i)?.[1]?.trim() ?? null,
+    descripcion: rawText.match(/DESC[:\s]*(.+?)(?:\n|$)/i)?.[1]?.trim()
+      ?? rawText.match(/(?:VO|VD)\s+(.+?)(?:\n|$)/i)?.[1]?.trim()
+      ?? rawText.match(/COMBO\s+(.+?)(?:\n|$)/i)?.[1]?.trim()
+      ?? rawText.match(/(?:NEVERA|LAVADORA|ESTUFA|HORNO|COLCH[OÓ]N|MESA|SILLA|CAMA|CLOSET|SOFÁ?|COMEDOR)[\w\s]*(?:\n|$)/i)?.[0]?.trim()
+      ?? null,
   }
 }
