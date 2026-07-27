@@ -29,6 +29,22 @@ export function WizardPage() {
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
   const [editComment, setEditComment] = useState('')
 
+  // Plate editing
+  const [editingPlate, setEditingPlate] = useState(false)
+  const [plateValue, setPlateValue] = useState('')
+
+  const savePlate = async () => {
+    if (!trackingCode || !plateValue.trim()) return
+    try {
+      await apiRequest(`/operations/${trackingCode}`, { method: 'PATCH', body: { vehiclePlate: plateValue.trim() } })
+      await loadOperation()
+      setEditingPlate(false)
+      setFeedback('✓ Placa actualizada')
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error')
+    }
+  }
+
   const isCompleted = operation?.status === 'COMPLETADO'
   const lbProducts = operation?.lineaBlanca ?? []
   const activeLbData = lbProducts.find((p) => p.productCode === activeLbProduct)
@@ -226,7 +242,20 @@ export function WizardPage() {
           </button>
           <div className="flex-1 min-w-0">
             <h2 className="text-base font-bold text-[var(--color-text)] truncate">{operation.trackingCode}</h2>
-            <p className="text-xs text-[var(--color-text-2)]">{operation.operationType} · {operation.vehiclePlate}</p>
+            {editingPlate ? (
+              <div className="flex items-center gap-1 mt-0.5">
+                <input type="text" value={plateValue} onChange={(e) => setPlateValue(e.target.value.toUpperCase())}
+                  className="px-2 py-0.5 text-xs border border-[var(--color-primary)] rounded w-24 uppercase focus:outline-none"
+                  autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void savePlate(); if (e.key === 'Escape') setEditingPlate(false) }} />
+                <button onClick={() => void savePlate()} className="text-[10px] text-[var(--color-primary)] font-medium">✓</button>
+                <button onClick={() => setEditingPlate(false)} className="text-[10px] text-[var(--color-text-3)]">✕</button>
+              </div>
+            ) : (
+              <button onClick={() => { setPlateValue(operation.vehiclePlate); setEditingPlate(true) }}
+                className="text-xs text-[var(--color-text-2)] hover:text-[var(--color-primary)] flex items-center gap-1">
+                {operation.operationType} · {operation.vehiclePlate} <Pencil className="w-3 h-3 opacity-50" />
+              </button>
+            )}
           </div>
           <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${isCompleted ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
             {isCompleted ? 'Completado' : 'En proceso'}
