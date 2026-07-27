@@ -355,17 +355,21 @@ operationsRouter.patch('/:trackingCode/complete', async (req, res) => {
     const opType = operation.operationType as OperationType
     const optionalSteps = OPTIONAL_STEPS[opType] ?? []
     const photos = operation.photos as PhotoRecord[]
+    const lineaBlanca = (operation.lineaBlanca ?? []) as Array<{ photos: unknown[] }>
     const completedSteps = new Set(photos.map((p) => p.stepIndex))
 
     for (let i = 0; i < steps.length; i++) {
-      if (optionalSteps.includes(i)) continue // Paso opcional — no bloquea
+      if (optionalSteps.includes(i)) continue
       if (!completedSteps.has(i)) {
-        res.status(400).json({
-          message: `Falta la foto del paso "${steps[i]}".`,
-          missingStep: i,
-        })
+        res.status(400).json({ message: `Falta la foto del paso "${steps[i]}".`, missingStep: i })
         return
       }
+    }
+
+    // Requiere al menos 1 foto o 1 producto de línea blanca
+    if (photos.length === 0 && lineaBlanca.length === 0) {
+      res.status(400).json({ message: 'Debe tener al menos una foto o un producto registrado para completar.' })
+      return
     }
 
     await col.updateOne(
