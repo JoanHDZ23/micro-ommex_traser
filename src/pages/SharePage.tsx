@@ -106,16 +106,39 @@ export function SharePage() {
           })}
         </section>
 
-        {/* Línea Blanca */}
+        {/* Productos */}
         {(operation.lineaBlanca ?? []).length > 0 && (
           <section className="space-y-3">
             <h4 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
               <Package className="w-4 h-4 text-[var(--color-primary)]" />
-              Línea Blanca ({operation.lineaBlanca.length} producto{operation.lineaBlanca.length !== 1 ? 's' : ''})
+              Productos ({operation.lineaBlanca.length})
             </h4>
             {operation.lineaBlanca.map((product) => (
-              <div key={product.productCode} className="space-y-2 p-3 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)]">
-                <p className="text-sm font-semibold">{product.productCode}</p>
+              <div key={product.productCode} className="p-3 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] space-y-2">
+                {/* Product header */}
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold flex-1">{product.productCode}</p>
+                  {product.isLineaBlanca && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>
+                  )}
+                  <span className="text-[10px] text-[var(--color-text-3)]">{product.photos.length} fotos</span>
+                </div>
+
+                {/* Label data */}
+                {product.labelData && Object.values(product.labelData).some(Boolean) && (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 px-2 py-1.5 rounded bg-gray-50 border border-gray-100">
+                    {product.labelData.poNumber && <p className="text-[10px] text-[var(--color-text-2)]"><span className="font-medium">PO:</span> {product.labelData.poNumber}</p>}
+                    {product.labelData.np && <p className="text-[10px] text-[var(--color-text-2)]"><span className="font-medium">NP:</span> {product.labelData.np}</p>}
+                    {product.labelData.sku && <p className="text-[10px] text-[var(--color-text-2)]"><span className="font-medium">SKU:</span> {product.labelData.sku}</p>}
+                    {product.labelData.sscc && <p className="text-[10px] text-[var(--color-text-2)]"><span className="font-medium">SSCC:</span> {product.labelData.sscc}</p>}
+                    {product.labelData.descripcion && <p className="text-[10px] text-[var(--color-text-2)] col-span-2"><span className="font-medium">DESC:</span> {product.labelData.descripcion}</p>}
+                    {product.labelData.destinatario && <p className="text-[10px] text-[var(--color-text-2)] col-span-2"><span className="font-medium">Dest:</span> {product.labelData.destinatario}</p>}
+                    {product.labelData.transportadora && <p className="text-[10px] text-[var(--color-text-2)]"><span className="font-medium">Transp:</span> {product.labelData.transportadora}</p>}
+                    {product.labelData.complemento && <p className="text-[10px] text-[var(--color-text-2)]"><span className="font-medium">Comp:</span> {product.labelData.complemento}</p>}
+                  </div>
+                )}
+
+                {/* Photos */}
                 {product.photos.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
                     {product.photos.map((photo, i) => (
