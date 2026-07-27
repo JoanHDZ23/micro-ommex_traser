@@ -6,6 +6,57 @@ import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, FREE_STEPS, PRODUCT
 export const photosRouter = Router()
 
 /**
+ * DELETE /api/photos/:trackingCode/:photoIndex
+ * Elimina una foto individual por su índice.
+ */
+photosRouter.delete('/:trackingCode/:photoIndex', async (req, res) => {
+  const { trackingCode, photoIndex } = req.params
+  const idx = Number(photoIndex)
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const photos = (operation.photos as PhotoRecord[]) ?? []
+    if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
+
+    photos.splice(idx, 1)
+    await col.updateOne({ trackingCode }, { $set: { photos, updatedAt: new Date().toISOString() } })
+    res.json({ message: 'Foto eliminada.', remaining: photos.length })
+  } catch (err) {
+    console.error('[photos] Error al eliminar:', err)
+    res.status(500).json({ message: 'Error al eliminar la foto.' })
+  }
+})
+
+/**
+ * PATCH /api/photos/:trackingCode/:photoIndex
+ * Edita el comentario de una foto.
+ */
+photosRouter.patch('/:trackingCode/:photoIndex', async (req, res) => {
+  const { trackingCode, photoIndex } = req.params
+  const { comment } = req.body ?? {}
+  const idx = Number(photoIndex)
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const photos = (operation.photos as PhotoRecord[]) ?? []
+    if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
+
+    photos[idx].comment = comment?.trim() ?? photos[idx].comment
+    await col.updateOne({ trackingCode }, { $set: { photos, updatedAt: new Date().toISOString() } })
+    res.json({ message: 'Comentario actualizado.', photo: photos[idx] })
+  } catch (err) {
+    console.error('[photos] Error al editar comentario:', err)
+    res.status(500).json({ message: 'Error al actualizar comentario.' })
+  }
+})
+
+/**
  * POST /api/photos/upload
  */
 photosRouter.post('/upload', async (req, res) => {
@@ -79,6 +130,7 @@ photosRouter.post('/upload', async (req, res) => {
       ...(productCode?.trim() ? { productCode: productCode.trim() } : {}),
       ...(isMultiPhotoStep ? { photoIndex } : {}),
       ...(comment?.trim() ? { comment: comment.trim() } : {}),
+      photoType: 'proceso',
       timestamp: new Date().toISOString(),
     }
 

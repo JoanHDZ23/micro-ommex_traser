@@ -143,7 +143,7 @@ operationsRouter.get('/:trackingCode', async (req, res) => {
  */
 operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
   const { trackingCode } = req.params
-  const { productCode } = req.body ?? {}
+  const { productCode, labelData } = req.body ?? {}
 
   if (!productCode?.trim()) {
     res.status(400).json({ message: 'productCode es requerido.' })
@@ -173,6 +173,7 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
 
     const newProduct: LineaBlancaProduct = {
       productCode: productCode.trim(),
+      ...(labelData ? { labelData } : {}),
       photos: [],
       status: 'EN_PROCESO',
       createdAt: new Date().toISOString(),
@@ -290,6 +291,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
       fileId,
       productCode,
       ...(comment?.trim() ? { comment: comment.trim() } : {}),
+      photoType: 'producto',
       timestamp: new Date().toISOString(),
     }
 

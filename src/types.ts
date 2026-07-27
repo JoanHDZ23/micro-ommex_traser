@@ -82,6 +82,8 @@ export const FREE_STEPS: Record<OperationType, number[]> = {
 
 // ── Esquema de foto ─────────────────────────────────────────────────────
 
+export type PhotoType = 'proceso' | 'producto'
+
 export interface PhotoRecord {
   stepIndex: number
   stepName: string
@@ -90,13 +92,26 @@ export interface PhotoRecord {
   productCode?: string   // Código de producto (para organizar en subcarpetas)
   photoIndex?: number    // Índice dentro del mismo paso (para multi-foto)
   comment?: string       // Descripción o comentario de la foto
+  photoType?: PhotoType  // 'proceso' (general) o 'producto' (asociada a producto)
   timestamp: string      // ISO date
 }
 
 // ── Revisión de Línea Blanca (por producto) ─────────────────────────────
 
+export interface LabelData {
+  poNumber?: string
+  sku?: string
+  sscc?: string
+  destinatario?: string
+  np?: string
+  codigoEtiqueta?: string
+  transportadora?: string
+  complemento?: string
+}
+
 export interface LineaBlancaProduct {
   productCode: string
+  labelData?: LabelData
   photos: PhotoRecord[]
   status: 'EN_PROCESO' | 'COMPLETADO'
   createdAt: string
