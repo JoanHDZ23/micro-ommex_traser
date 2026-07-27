@@ -409,6 +409,31 @@ operationsRouter.patch('/:trackingCode/reopen', async (req, res) => {
 })
 
 /**
+ * PATCH /api/operations/:trackingCode
+ * Actualiza datos de la operación (placa, operador, etc.)
+ */
+operationsRouter.patch('/:trackingCode', async (req, res) => {
+  const { trackingCode } = req.params
+  const { vehiclePlate, operatorName } = req.body ?? {}
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() }
+    if (vehiclePlate?.trim()) updates.vehiclePlate = vehiclePlate.trim()
+    if (operatorName?.trim()) updates.operatorName = operatorName.trim()
+
+    await col.updateOne({ trackingCode }, { $set: updates })
+    res.json({ message: 'Operación actualizada.', ...updates })
+  } catch (err) {
+    console.error('[operations] Error al actualizar:', err)
+    res.status(500).json({ message: 'Error al actualizar.' })
+  }
+})
+
+/**
  * DELETE /api/operations/:trackingCode
  * Elimina una operación de MongoDB y su carpeta completa de Drive.
  */
