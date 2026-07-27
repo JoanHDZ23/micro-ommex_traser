@@ -58,8 +58,8 @@ export const OPTIONAL_PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
 
 /** Pasos opcionales */
 export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [4],
-  CARGUE: [0, 1, 2, 3, 4, 5, 6],  // Todos opcionales — se puede cerrar solo con revisión de productos
+  DESCARGUE: [0, 1, 2, 3, 4],  // Todos opcionales — se completa con al menos 1 foto
+  CARGUE: [0, 1, 2, 3, 4, 5, 6],
 }
 
 /** Pasos libres — se pueden tomar en cualquier momento */
