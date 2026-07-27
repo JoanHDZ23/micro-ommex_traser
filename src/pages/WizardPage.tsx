@@ -412,7 +412,7 @@ export function WizardPage() {
                       <div>
                         <p className="text-sm font-semibold text-[var(--color-text)]">{product.productCode}</p>
                         <p className="text-[10px] text-[var(--color-text-3)]">
-                          {product.isLineaBlanca ? '🏷️ Línea Blanca' : '📦 Producto'} · {product.photos.length} fotos
+                          {product.isLineaBlanca && <span className="text-purple-600 font-medium">L.B · </span>}{product.photos.length} fotos
                         </p>
                       </div>
                     </button>
@@ -494,13 +494,27 @@ export function WizardPage() {
           <section className="space-y-2">
             <h4 className="text-xs font-semibold text-[var(--color-text-3)] uppercase">Productos ({lbProducts.length})</h4>
             {lbProducts.map((p) => (
-              <div key={p.productCode} className="flex items-center gap-2 p-2 bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)]">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                <span className="text-sm font-medium">{p.productCode}</span>
-                <span className="text-[10px] text-[var(--color-text-3)] ml-auto">{p.photos.length} fotos</span>
+              <div key={p.productCode} className="flex items-center gap-2 p-2.5 bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)]">
+                <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                <span className="text-sm font-medium flex-1">{p.productCode}</span>
+                {p.isLineaBlanca && <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>}
+                <span className="text-[10px] text-[var(--color-text-3)]">{p.photos.length} fotos</span>
               </div>
             ))}
           </section>
+        )}
+
+        {/* Sync button */}
+        {operation && operation.photos.some((p) => p.fileId === 'pending') && (
+          <button onClick={async () => {
+            try {
+              const r = await apiRequest<{ updated: number }>(`/photos/sync/${trackingCode}`, { method: 'POST' })
+              setFeedback(`✓ ${r.updated} foto(s) sincronizada(s)`)
+              await loadOperation()
+            } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error al sincronizar') }
+          }} className="w-full py-2.5 rounded-xl bg-blue-500 text-white font-medium text-sm flex items-center justify-center gap-2">
+            🔄 Sincronizar fotos con Drive
+          </button>
         )}
       </div>
 
