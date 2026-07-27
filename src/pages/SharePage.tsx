@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Calendar, Camera, CheckCircle2, Clock, Loader2, MapPin, MessageSquare, Package, User } from 'lucide-react'
+import { Calendar, Camera, CheckCircle2, Clock, Loader2, MapPin, Package, User } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
-import { getSteps } from '../lib/constants'
 
 function getDriveImageUrl(photo: PhotoRecord): string | null {
   const { driveUrl, fileId } = photo
@@ -54,7 +53,6 @@ export function SharePage() {
     )
   }
 
-  const steps = getSteps(operation.operationType)
   const date = new Date(operation.createdAt)
   const totalPhotos = operation.photos.length + (operation.lineaBlanca ?? []).reduce((s, p) => s + p.photos.length, 0)
 
@@ -85,26 +83,20 @@ export function SharePage() {
           </span>
         </div>
 
-        {/* Photos by step */}
-        <section className="space-y-4">
-          {steps.map((step, idx) => {
-            const photosForStep = operation.photos.filter((p) => p.stepIndex === idx)
-            if (photosForStep.length === 0) return null
-            return (
-              <div key={idx} className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                  <span className="text-sm font-medium text-[var(--color-text)]">{step}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 pl-6">
-                  {photosForStep.map((photo, i) => (
-                    <PhotoThumbnail key={`${idx}-${i}`} photo={photo} />
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-        </section>
+        {/* Fotos del proceso */}
+        {operation.photos.length > 0 && (
+          <section className="space-y-3">
+            <h4 className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              Registro fotográfico ({operation.photos.length})
+            </h4>
+            <div className="grid grid-cols-2 gap-2">
+              {operation.photos.map((photo, i) => (
+                <PhotoThumbnail key={i} photo={photo} useCommentAsTitle />
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Productos */}
         {(operation.lineaBlanca ?? []).length > 0 && (
@@ -160,14 +152,15 @@ export function SharePage() {
   )
 }
 
-function PhotoThumbnail({ photo }: { photo: PhotoRecord }) {
+function PhotoThumbnail({ photo, useCommentAsTitle }: { photo: PhotoRecord; useCommentAsTitle?: boolean }) {
   const url = getDriveImageUrl(photo)
+  const title = useCommentAsTitle && photo.comment ? photo.comment : photo.stepName
   return (
     <div className="rounded-lg overflow-hidden border border-[var(--color-border)] bg-[var(--color-surface)]">
       <div className="aspect-[4/3] bg-gray-100">
         {url ? (
           <a href={photo.driveUrl !== 'pending-verification' ? photo.driveUrl : undefined} target="_blank" rel="noopener noreferrer">
-            <img src={url} alt={photo.stepName} className="w-full h-full object-cover" loading="lazy"
+            <img src={url} alt={title} className="w-full h-full object-cover" loading="lazy"
               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
           </a>
         ) : (
@@ -177,11 +170,9 @@ function PhotoThumbnail({ photo }: { photo: PhotoRecord }) {
         )}
       </div>
       <div className="px-2 py-1.5">
-        <p className="text-[10px] font-medium text-[var(--color-text-2)] truncate">{photo.stepName}</p>
-        {photo.comment && (
-          <p className="text-[9px] text-[var(--color-text-3)] truncate flex items-center gap-0.5">
-            <MessageSquare className="w-2.5 h-2.5" /> {photo.comment}
-          </p>
+        <p className="text-[10px] font-medium text-[var(--color-text-2)] truncate">{title}</p>
+        {useCommentAsTitle && !photo.comment && (
+          <p className="text-[9px] text-[var(--color-text-3)]">Sin descripción</p>
         )}
         <p className="text-[8px] text-[var(--color-text-3)] mt-0.5">
           {new Date(photo.timestamp).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
