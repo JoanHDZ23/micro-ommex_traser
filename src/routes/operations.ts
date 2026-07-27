@@ -482,3 +482,63 @@ operationsRouter.delete('/:trackingCode', async (req, res) => {
     res.status(500).json({ message: 'Error al eliminar la operación.' })
   }
 })
+
+/**
+ * DELETE /api/operations/:trackingCode/linea-blanca/:productCode
+ * Elimina un producto completo (con todas sus fotos) de la operación.
+ */
+operationsRouter.delete('/:trackingCode/linea-blanca/:productCode', async (req, res) => {
+  const { trackingCode, productCode } = req.params
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const products = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
+    const filtered = products.filter((p) => p.productCode !== productCode)
+
+    if (filtered.length === products.length) {
+      res.status(404).json({ message: `Producto "${productCode}" no encontrado.` })
+      return
+    }
+
+    await col.updateOne({ trackingCode }, { $set: { lineaBlanca: filtered, updatedAt: new Date().toISOString() } })
+    res.json({ message: `Producto "${productCode}" eliminado.`, remaining: filtered.length })
+  } catch (err) {
+    console.error('[operations] Error al eliminar producto:', err)
+    res.status(500).json({ message: 'Error al eliminar producto.' })
+  }
+})
+
+/**
+ * DELETE /api/operations/:trackingCode/linea-blanca/:productCode/photo/:photoIndex
+ * Elimina una foto individual de un producto.
+ */
+operationsRouter.delete('/:trackingCode/linea-blanca/:productCode/photo/:photoIndex', async (req, res) => {
+  const { trackingCode, productCode, photoIndex } = req.params
+  const idx = Number(photoIndex)
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const products = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
+    const productIdx = products.findIndex((p) => p.productCode === productCode)
+    if (productIdx === -1) { res.status(404).json({ message: `Producto "${productCode}" no encontrado.` }); return }
+
+    const photos = products[productIdx].photos
+    if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
+
+    photos.splice(idx, 1)
+    // Si quitó fotos y estaba completado, volver a EN_PROCESO
+    if (products[productIdx].status === 'COMPLETADO') {
+      products[productIdx].status = 'EN_PROCESO'
+    }
+
+    await col.updateOne({ trackingCode }, { $set: { lineaBlanca: products, updatedAt: new Date().toISOString() } })
+    res.json({ message: 'Foto eliminada.', remaining: photos.length })
+  } catch (err) {
+    console.error('[operations] Error al eliminar foto de producto:', err)
+    res.status(500).json({ message: 'Error al eliminar foto.' })
+  }
+})
