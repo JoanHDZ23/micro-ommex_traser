@@ -414,6 +414,17 @@ export function WizardPage() {
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isDone ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                       {isDone ? 'Completo' : 'En proceso'}
                     </span>
+                    <button onClick={async () => {
+                      if (!confirm(`¿Eliminar producto ${product.productCode} y todas sus fotos?`)) return
+                      try {
+                        await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}`, { method: 'DELETE' })
+                        await loadOperation()
+                        setFeedback('✓ Producto eliminado')
+                        if (activeLbProduct === product.productCode) setActiveLbProduct(null)
+                      } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
+                    }} className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                   {/* Label data */}
                   {product.labelData && Object.values(product.labelData).some(Boolean) && (
@@ -427,12 +438,45 @@ export function WizardPage() {
                     </div>
                   )}
                   {isActive && !isDone && (
-                    <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
-                      <p className="text-xs text-[var(--color-text-2)] mb-2">📷 {LINEA_BLANCA_STEPS[lbNextStep] ?? 'Completado'}</p>
+                    <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2">
+                      {/* Photos of this product */}
+                      {product.photos.length > 0 && (
+                        <div className="space-y-1">
+                          {product.photos.map((ph, phIdx) => (
+                            <div key={phIdx} className="flex items-center gap-2 text-[10px] text-[var(--color-text-2)] bg-gray-50 rounded px-2 py-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />
+                              <span className="flex-1 truncate">{ph.stepName}{ph.comment ? ` · ${ph.comment}` : ''}</span>
+                              <button onClick={async () => {
+                                try {
+                                  await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${phIdx}`, { method: 'DELETE' })
+                                  await loadOperation()
+                                } catch { /* silent */ }
+                              }} className="p-0.5 text-red-400 hover:text-red-600"><Trash2 className="w-3 h-3" /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-xs text-[var(--color-text-2)]">📷 {LINEA_BLANCA_STEPS[lbNextStep] ?? 'Completado'}</p>
                       <button onClick={() => setLbCameraOpen(true)} disabled={uploading || lbNextStep >= LINEA_BLANCA_STEPS.length}
                         className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
                         <Camera className="w-4 h-4" /> Tomar foto
                       </button>
+                    </div>
+                  )}
+                  {isActive && isDone && (
+                    <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-1">
+                      {product.photos.map((ph, phIdx) => (
+                        <div key={phIdx} className="flex items-center gap-2 text-[10px] text-[var(--color-text-2)] bg-gray-50 rounded px-2 py-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />
+                          <span className="flex-1 truncate">{ph.stepName}{ph.comment ? ` · ${ph.comment}` : ''}</span>
+                          <button onClick={async () => {
+                            try {
+                              await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${phIdx}`, { method: 'DELETE' })
+                              await loadOperation()
+                            } catch { /* silent */ }
+                          }} className="p-0.5 text-red-400 hover:text-red-600"><Trash2 className="w-3 h-3" /></button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
