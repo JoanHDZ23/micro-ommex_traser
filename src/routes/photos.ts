@@ -77,10 +77,6 @@ photosRouter.post('/upload', async (req, res) => {
     if (idx < 0 || idx >= steps.length) { res.status(400).json({ message: `stepIndex inválido (0-${steps.length - 1}).` }); return }
 
     const isMultiPhotoStep = MULTI_PHOTO_STEPS[opType]?.includes(idx) ?? false
-    const requiresProductCode = PRODUCT_CODE_STEPS[opType]?.includes(idx) ?? false
-    if (requiresProductCode && (!productCode || !productCode.trim())) {
-      res.status(400).json({ message: 'El código de producto es requerido para este paso.' }); return
-    }
 
     const existingPhotos = (operation.photos as PhotoRecord[]) ?? []
     const optionalSteps = OPTIONAL_STEPS[opType] ?? []
