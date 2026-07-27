@@ -43,8 +43,8 @@ export function getStepsForType(type: OperationType): readonly string[] {
  * Pasos que permiten múltiples fotos (sin límite).
  */
 export const MULTI_PHOTO_STEPS: Record<OperationType, number[]> = {
-  DESCARGUE: [3, 4],    // "Proceso de descargue", "Acontecimiento"
-  CARGUE: [0, 6],       // "Revisión de productos", "Acontecimiento"
+  DESCARGUE: [0, 1, 2, 3, 4],    // Todos permiten multi-foto
+  CARGUE: [0, 1, 2, 3, 4, 5, 6], // Todos permiten multi-foto
 }
 
 /**

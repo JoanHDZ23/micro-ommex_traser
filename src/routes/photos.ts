@@ -19,7 +19,6 @@ photosRouter.post('/upload', async (req, res) => {
     const col = getOperationsCollection()
     const operation = await col.findOne({ trackingCode })
     if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
-    if (operation.status === 'COMPLETADO') { res.status(409).json({ message: 'La operación ya está completada.' }); return }
 
     const opType = operation.operationType as OperationType
     const steps = getStepsForType(opType)

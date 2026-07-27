@@ -385,6 +385,28 @@ operationsRouter.patch('/:trackingCode/complete', async (req, res) => {
 })
 
 /**
+ * PATCH /api/operations/:trackingCode/reopen
+ * Reabre una operación completada para edición.
+ */
+operationsRouter.patch('/:trackingCode/reopen', async (req, res) => {
+  const { trackingCode } = req.params
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    await col.updateOne(
+      { trackingCode },
+      { $set: { status: 'EN_PROCESO', updatedAt: new Date().toISOString() } },
+    )
+    res.json({ message: 'Operación reabierta para edición.', trackingCode })
+  } catch (err) {
+    console.error('[operations] Error al reabrir:', err)
+    res.status(500).json({ message: 'Error al reabrir la operación.' })
+  }
+})
+
+/**
  * DELETE /api/operations/:trackingCode
  * Elimina una operación de MongoDB y su carpeta completa de Drive.
  */
