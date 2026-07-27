@@ -40,11 +40,24 @@ export interface PhotoRecord {
   productCode?: string
   photoIndex?: number
   comment?: string
+  photoType?: 'proceso' | 'producto'
   timestamp: string
+}
+
+export interface LabelData {
+  poNumber?: string
+  sku?: string
+  sscc?: string
+  destinatario?: string
+  np?: string
+  codigoEtiqueta?: string
+  transportadora?: string
+  complemento?: string
 }
 
 export interface LineaBlancaProduct {
   productCode: string
+  labelData?: LabelData
   photos: PhotoRecord[]
   status: 'EN_PROCESO' | 'COMPLETADO'
   createdAt: string

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Loader2, Package, Plus, QrCode, Share2, X } from 'lucide-react'
-import { apiRequest, type Operation, type UploadPhotoResponse } from '../lib/api'
+import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Loader2, Package, Pencil, Plus, QrCode, Share2, Trash2, X } from 'lucide-react'
+import { apiRequest, type LabelData, type Operation, type UploadPhotoResponse } from '../lib/api'
 import { LINEA_BLANCA_STEPS } from '../lib/constants'
+import { parseLabelData } from '../lib/barcode-scanner'
 import { CameraCapture } from '../components/CameraCapture'
 
 export function WizardPage() {
@@ -22,6 +23,11 @@ export function WizardPage() {
   const [activeLbProduct, setActiveLbProduct] = useState<string | null>(null)
   const [lbAdding, setLbAdding] = useState(false)
   const [lbCameraOpen, setLbCameraOpen] = useState(false)
+  const [lbLabelData, setLbLabelData] = useState<LabelData | null>(null)
+
+  // Photo editing
+  const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
+  const [editComment, setEditComment] = useState('')
 
   const isCompleted = operation?.status === 'COMPLETADO'
   const lbProducts = operation?.lineaBlanca ?? []
@@ -76,10 +82,11 @@ export function WizardPage() {
     setFeedback(null)
     try {
       await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
-        method: 'POST', body: { productCode: code.trim() },
+        method: 'POST', body: { productCode: code.trim(), labelData: lbLabelData ?? undefined },
       })
       setActiveLbProduct(code.trim())
       setLbProductCode('')
+      setLbLabelData(null)
       await loadOperation()
       setFeedback(`✓ Producto ${code.trim()} agregado`)
     } catch (err) {
@@ -136,10 +143,58 @@ export function WizardPage() {
     }
   }
 
+  // ── Delete photo ──
+  const handleDeletePhoto = async (photoIndex: number) => {
+    if (!trackingCode) return
+    if (!window.confirm('¿Eliminar esta foto?')) return
+    setUploading(true)
+    try {
+      await apiRequest(`/photos/${trackingCode}/${photoIndex}`, { method: 'DELETE' })
+      setFeedback('✓ Foto eliminada')
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al eliminar.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  // ── Edit photo comment ──
+  const handleEditComment = async (photoIndex: number) => {
+    if (!trackingCode) return
+    setUploading(true)
+    try {
+      await apiRequest(`/photos/${trackingCode}/${photoIndex}`, { method: 'PATCH', body: { comment: editComment } })
+      setFeedback('✓ Comentario actualizado')
+      setEditingPhotoIdx(null)
+      setEditComment('')
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al editar.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   // ── Barcode scanner ──
   const handleScanResult = (code: string) => {
     setShowScanner(false)
     setLbProductCode(code)
+    // Try to parse label data from scanned text
+    const parsed = parseLabelData(code)
+    const hasData = Object.values(parsed).some((v) => v !== null)
+    if (hasData) {
+      const cleanData: LabelData = {}
+      if (parsed.poNumber) cleanData.poNumber = parsed.poNumber
+      if (parsed.sku) cleanData.sku = parsed.sku
+      if (parsed.sscc) cleanData.sscc = parsed.sscc
+      if (parsed.destinatario) cleanData.destinatario = parsed.destinatario
+      if (parsed.np) cleanData.np = parsed.np
+      if (parsed.codigoEtiqueta) cleanData.codigoEtiqueta = parsed.codigoEtiqueta
+      if (parsed.transportadora) cleanData.transportadora = parsed.transportadora
+      if (parsed.complemento) cleanData.complemento = parsed.complemento
+      setLbLabelData(cleanData)
+    }
     void handleAddProduct(code)
   }
 
@@ -234,11 +289,36 @@ export function WizardPage() {
                     <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-[var(--color-text)] truncate">
-                      {photo.comment || photo.stepName}
-                    </p>
-                    {photo.productCode && <p className="text-[10px] text-[var(--color-text-3)]">📦 {photo.productCode}</p>}
+                    {editingPhotoIdx === i ? (
+                      <div className="flex items-center gap-1">
+                        <input type="text" value={editComment} onChange={(e) => setEditComment(e.target.value)}
+                          className="flex-1 text-xs px-2 py-1 border border-[var(--color-border)] rounded bg-white focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                          placeholder="Comentario..." autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void handleEditComment(i); if (e.key === 'Escape') setEditingPhotoIdx(null) }} />
+                        <button onClick={() => void handleEditComment(i)} className="text-emerald-600 p-1"><CheckCircle2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => setEditingPhotoIdx(null)} className="text-gray-400 p-1"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-xs font-medium text-[var(--color-text)] truncate">
+                          {photo.comment || photo.stepName}
+                        </p>
+                        {photo.productCode && <p className="text-[10px] text-[var(--color-text-3)]">📦 {photo.productCode}</p>}
+                      </>
+                    )}
                   </div>
+                  {!isCompleted && editingPhotoIdx !== i && (
+                    <div className="flex items-center gap-0.5">
+                      <button onClick={() => { setEditingPhotoIdx(i); setEditComment(photo.comment ?? '') }}
+                        className="p-1.5 rounded text-gray-400 hover:text-[var(--color-primary)] hover:bg-gray-100">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => void handleDeletePhoto(i)}
+                        className="p-1.5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  {(isCompleted || editingPhotoIdx === i) ? null : null}
                   <span className="text-[9px] text-[var(--color-text-3)]">
                     {new Date(photo.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
                   </span>
@@ -270,6 +350,22 @@ export function WizardPage() {
               </button>
             </div>
 
+            {/* Parsed label data preview */}
+            {lbLabelData && Object.values(lbLabelData).some(Boolean) && (
+              <div className="p-2 rounded-lg bg-blue-50 border border-blue-200 space-y-0.5">
+                <p className="text-[10px] font-semibold text-blue-700 uppercase">Datos de etiqueta detectados</p>
+                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                  {lbLabelData.poNumber && <p className="text-[10px] text-blue-600"><span className="font-medium">PO:</span> {lbLabelData.poNumber}</p>}
+                  {lbLabelData.sku && <p className="text-[10px] text-blue-600"><span className="font-medium">SKU:</span> {lbLabelData.sku}</p>}
+                  {lbLabelData.sscc && <p className="text-[10px] text-blue-600"><span className="font-medium">SSCC:</span> {lbLabelData.sscc}</p>}
+                  {lbLabelData.np && <p className="text-[10px] text-blue-600"><span className="font-medium">NP:</span> {lbLabelData.np}</p>}
+                  {lbLabelData.destinatario && <p className="text-[10px] text-blue-600 col-span-2"><span className="font-medium">Dest:</span> {lbLabelData.destinatario}</p>}
+                  {lbLabelData.transportadora && <p className="text-[10px] text-blue-600"><span className="font-medium">Transp:</span> {lbLabelData.transportadora}</p>}
+                </div>
+                <button onClick={() => setLbLabelData(null)} className="text-[10px] text-blue-500 underline">Descartar</button>
+              </div>
+            )}
+
             {/* Product list */}
             {lbProducts.map((product) => {
               const isActive = activeLbProduct === product.productCode
@@ -290,6 +386,17 @@ export function WizardPage() {
                       {isDone ? 'Completo' : 'En proceso'}
                     </span>
                   </div>
+                  {/* Label data */}
+                  {product.labelData && Object.values(product.labelData).some(Boolean) && (
+                    <div className="mt-2 pt-2 border-t border-[var(--color-border)] grid grid-cols-2 gap-x-3 gap-y-0.5">
+                      {product.labelData.poNumber && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">PO:</span> {product.labelData.poNumber}</p>}
+                      {product.labelData.sku && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">SKU:</span> {product.labelData.sku}</p>}
+                      {product.labelData.sscc && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">SSCC:</span> {product.labelData.sscc}</p>}
+                      {product.labelData.np && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">NP:</span> {product.labelData.np}</p>}
+                      {product.labelData.destinatario && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Dest:</span> {product.labelData.destinatario}</p>}
+                      {product.labelData.transportadora && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">Transp:</span> {product.labelData.transportadora}</p>}
+                    </div>
+                  )}
                   {isActive && !isDone && (
                     <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
                       <p className="text-xs text-[var(--color-text-2)] mb-2">📷 {LINEA_BLANCA_STEPS[lbNextStep] ?? 'Completado'}</p>
