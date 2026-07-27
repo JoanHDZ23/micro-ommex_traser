@@ -123,6 +123,7 @@ export function WizardPage() {
         return
       }
 
+      console.log('[OCR] Texto detectado:', rawText)
       const parsed = parseLabelText(rawText)
       // Usa el código de etiqueta o SSCC o PO como código del producto
       const code = parsed.codigoEtiqueta ?? parsed.sscc ?? parsed.poNumber ?? parsed.np ?? ''

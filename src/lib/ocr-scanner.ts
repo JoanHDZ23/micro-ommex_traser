@@ -101,8 +101,9 @@ export function parseLabelText(rawText: string) {
       ? `${rawText.match(/COMPLEMENTO\s*(\d+)\s*de\s*(\d+)/i)?.[1]}/${rawText.match(/COMPLEMENTO\s*(\d+)\s*de\s*(\d+)/i)?.[2]}`
       : null,
     qty: rawText.match(/QTY[:\s]+(\d+)/i)?.[1] ?? null,
-    descripcion: rawText.match(/DESC[:\s]+(.+?)(?:\n|$)/i)?.[1]?.trim()
+    descripcion: rawText.match(/DESC[^a-zA-Z]*[:\s]+(.+?)(?:\n|$)/i)?.[1]?.trim()
       ?? rawText.match(/(?:VD|VO)\s+(.+?)(?:\n|$)/i)?.[1]?.trim()
+      ?? rawText.match(/D\s*E\s*S\s*C[:\s]+(.+?)(?:\n|$)/i)?.[1]?.trim()
       ?? null,
   }
 }
