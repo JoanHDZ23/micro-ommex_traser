@@ -217,8 +217,8 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
   }
 
   const idx = Number(stepIndex)
-  if (idx < 0 || idx >= LINEA_BLANCA_STEPS.length) {
-    res.status(400).json({ message: `stepIndex inválido. Debe estar entre 0 y ${LINEA_BLANCA_STEPS.length - 1}.` })
+  if (idx < 0) {
+    res.status(400).json({ message: 'stepIndex debe ser >= 0.' })
     return
   }
 
@@ -240,20 +240,11 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
     }
 
     const product = products[productIdx]
+    // Producto completado manualmente por el usuario — puede seguir agregando fotos
+    // (se reabre automáticamente al agregar más)
     if (product.status === 'COMPLETADO') {
-      res.status(409).json({ message: `El producto "${productCode}" ya tiene todas sus fotos completas.` })
-      return
-    }
-
-    // Verifica secuencia
-    if (idx > 0) {
-      const previousExists = product.photos.some((p) => p.stepIndex === idx - 1)
-      if (!previousExists) {
-        res.status(400).json({
-          message: `Debes completar "${LINEA_BLANCA_STEPS[idx - 1]}" antes de avanzar.`,
-        })
-        return
-      }
+      products[productIdx].status = 'EN_PROCESO'
+      await col.updateOne({ trackingCode }, { $set: { [`lineaBlanca.${productIdx}.status`]: 'EN_PROCESO' } })
     }
 
     // Sube a Drive — subcarpeta del producto dentro de la del vehículo
@@ -295,39 +286,25 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
       timestamp: new Date().toISOString(),
     }
 
-    // Verifica si ya existe foto para ese paso (reemplaza)
-    const existingPhotoIdx = product.photos.findIndex((p) => p.stepIndex === idx)
-    if (existingPhotoIdx >= 0) {
-      await col.updateOne(
-        { trackingCode, 'lineaBlanca.productCode': productCode, 'lineaBlanca.photos.stepIndex': idx },
-        { $set: { [`lineaBlanca.${productIdx}.photos.${existingPhotoIdx}`]: photoRecord, updatedAt: new Date().toISOString() } },
-      )
-    } else {
-      await col.updateOne(
-        { trackingCode, 'lineaBlanca.productCode': productCode },
-        {
-          $push: { [`lineaBlanca.${productIdx}.photos`]: photoRecord },
-          $set: { updatedAt: new Date().toISOString() },
-        } as unknown as Record<string, unknown>,
-      )
-    }
+    // Siempre agregar (sin reemplazar) — permite fotos ilimitadas
+    await col.updateOne(
+      { trackingCode, 'lineaBlanca.productCode': productCode },
+      {
+        $push: { [`lineaBlanca.${productIdx}.photos`]: photoRecord },
+        $set: { updatedAt: new Date().toISOString() },
+      } as unknown as Record<string, unknown>,
+    )
 
-    // Si tiene las 5 fotos, marca producto como completado
+    // No auto-completar — el usuario decide cuándo terminar el producto
     const updatedOp = await col.findOne({ trackingCode })
     const updatedProduct = (updatedOp?.lineaBlanca as LineaBlancaProduct[])?.[productIdx]
-    if (updatedProduct && updatedProduct.photos.length >= LINEA_BLANCA_STEPS.length) {
-      await col.updateOne(
-        { trackingCode },
-        { $set: { [`lineaBlanca.${productIdx}.status`]: 'COMPLETADO', updatedAt: new Date().toISOString() } },
-      )
-    }
 
     res.json({
-      message: 'Foto de línea blanca registrada.',
+      message: 'Foto de producto registrada.',
       photo: photoRecord,
       progress: {
-        current: (updatedProduct?.photos.length ?? 0) + (existingPhotoIdx >= 0 ? 0 : 1),
-        total: LINEA_BLANCA_STEPS.length,
+        current: updatedProduct?.photos.length ?? 0,
+        total: 0, // Sin límite fijo
       },
     })
   } catch (err) {
