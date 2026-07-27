@@ -504,15 +504,15 @@ export function WizardPage() {
           </section>
         )}
 
-        {/* Sync button */}
-        {operation && operation.photos.some((p) => p.fileId === 'pending') && (
+        {/* Sync button — siempre visible */}
+        {operation && (
           <button onClick={async () => {
             try {
               const r = await apiRequest<{ updated: number }>(`/photos/sync/${trackingCode}`, { method: 'POST' })
               setFeedback(`✓ ${r.updated} foto(s) sincronizada(s)`)
               await loadOperation()
             } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error al sincronizar') }
-          }} className="w-full py-2.5 rounded-xl bg-blue-500 text-white font-medium text-sm flex items-center justify-center gap-2">
+          }} className="w-full py-2.5 rounded-xl border border-blue-200 text-blue-600 font-medium text-sm flex items-center justify-center gap-2 hover:bg-blue-50 transition-colors">
             🔄 Sincronizar fotos con Drive
           </button>
         )}
