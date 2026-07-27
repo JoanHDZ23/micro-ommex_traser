@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Loader2, Package, Pencil, Plus, QrCode, Share2, Trash2, X } from 'lucide-react'
 import { apiRequest, type LabelData, type Operation, type UploadPhotoResponse } from '../lib/api'
-import { LINEA_BLANCA_STEPS } from '../lib/constants'
 import { parseLabelData } from '../lib/barcode-scanner'
 import { CameraCapture } from '../components/CameraCapture'
 
@@ -48,12 +47,6 @@ export function WizardPage() {
   const isCompleted = operation?.status === 'COMPLETADO'
   const lbProducts = operation?.lineaBlanca ?? []
   const activeLbData = lbProducts.find((p) => p.productCode === activeLbProduct)
-  const lbNextStep = (() => {
-    if (!activeLbData) return 0
-    const done = new Set(activeLbData.photos.map((p) => p.stepIndex))
-    for (let i = 0; i < LINEA_BLANCA_STEPS.length; i++) { if (!done.has(i)) return i }
-    return LINEA_BLANCA_STEPS.length
-  })()
 
   const loadOperation = useCallback(async () => {
     if (!trackingCode) return
@@ -116,10 +109,11 @@ export function WizardPage() {
     if (!trackingCode || !activeLbProduct) return
     setLbCameraOpen(false)
     setUploading(true)
+    const photoCount = activeLbData?.photos.length ?? 0
     try {
       await apiRequest<UploadPhotoResponse>(
         `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(activeLbProduct)}/photo`,
-        { method: 'POST', body: { stepIndex: lbNextStep, base64Image: base64, mimeType: 'image/jpeg', comment } },
+        { method: 'POST', body: { stepIndex: photoCount, base64Image: base64, mimeType: 'image/jpeg', comment } },
       )
       setFeedback(`✓ Foto de ${activeLbProduct}`)
       await loadOperation()
@@ -408,7 +402,7 @@ export function WizardPage() {
                       </div>
                       <div>
                         <p className="text-sm font-semibold text-[var(--color-text)]">{product.productCode}</p>
-                        <p className="text-[10px] text-[var(--color-text-3)]">{product.photos.length}/{LINEA_BLANCA_STEPS.length} fotos</p>
+                        <p className="text-[10px] text-[var(--color-text-3)]">{product.photos.length} fotos</p>
                       </div>
                     </button>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isDone ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -445,7 +439,7 @@ export function WizardPage() {
                           {product.photos.map((ph, phIdx) => (
                             <div key={phIdx} className="flex items-center gap-2 text-[10px] text-[var(--color-text-2)] bg-gray-50 rounded px-2 py-1">
                               <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />
-                              <span className="flex-1 truncate">{ph.stepName}{ph.comment ? ` · ${ph.comment}` : ''}</span>
+                              <span className="flex-1 truncate">{ph.comment || ph.stepName}</span>
                               <button onClick={async () => {
                                 try {
                                   await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${phIdx}`, { method: 'DELETE' })
@@ -456,10 +450,9 @@ export function WizardPage() {
                           ))}
                         </div>
                       )}
-                      <p className="text-xs text-[var(--color-text-2)]">📷 {LINEA_BLANCA_STEPS[lbNextStep] ?? 'Completado'}</p>
-                      <button onClick={() => setLbCameraOpen(true)} disabled={uploading || lbNextStep >= LINEA_BLANCA_STEPS.length}
+                      <button onClick={() => setLbCameraOpen(true)} disabled={uploading}
                         className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
-                        <Camera className="w-4 h-4" /> Tomar foto
+                        <Camera className="w-4 h-4" /> Tomar foto ({product.photos.length})
                       </button>
                     </div>
                   )}
@@ -468,7 +461,7 @@ export function WizardPage() {
                       {product.photos.map((ph, phIdx) => (
                         <div key={phIdx} className="flex items-center gap-2 text-[10px] text-[var(--color-text-2)] bg-gray-50 rounded px-2 py-1">
                           <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />
-                          <span className="flex-1 truncate">{ph.stepName}{ph.comment ? ` · ${ph.comment}` : ''}</span>
+                          <span className="flex-1 truncate">{ph.comment || ph.stepName}</span>
                           <button onClick={async () => {
                             try {
                               await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${phIdx}`, { method: 'DELETE' })
@@ -509,7 +502,7 @@ export function WizardPage() {
 
       {/* Camera for Línea Blanca */}
       {lbCameraOpen && activeLbProduct && (
-        <CameraCapture stepName={`${LINEA_BLANCA_STEPS[lbNextStep]} — ${activeLbProduct}`} stepIndex={lbNextStep}
+        <CameraCapture stepName={`Foto de ${activeLbProduct}`} stepIndex={activeLbData?.photos.length ?? 0}
           onCapture={(b64, cmt) => void handleLbCapture(b64, cmt)}
           onCancel={() => setLbCameraOpen(false)} />
       )}
