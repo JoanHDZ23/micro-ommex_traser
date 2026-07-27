@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Calendar, Camera, CheckCircle2, Clock, ExternalLink, Loader2, MapPin, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
+import { ArrowLeft, Calendar, Camera, CheckCircle2, Clock, Edit3, ExternalLink, Loader2, MapPin, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 import { getSteps, LINEA_BLANCA_STEPS, OPERATION_LABELS } from '../lib/constants'
 
@@ -124,6 +124,21 @@ export function OperationDetailPage() {
 
       {/* Share button */}
       <ShareButton trackingCode={operation.trackingCode} operationType={operation.operationType} vehiclePlate={operation.vehiclePlate} operatorName={operation.operatorName} />
+
+      {/* Edit/Reopen button — visible when completed */}
+      {operation.status === 'COMPLETADO' && (
+        <button
+          onClick={async () => {
+            try {
+              await apiRequest(`/operations/${operation.trackingCode}/reopen`, { method: 'PATCH' })
+              await load()
+            } catch { /* silently fail */ }
+          }}
+          className="w-full py-2.5 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] font-medium text-sm flex items-center justify-center gap-2 hover:bg-[var(--color-primary-bg)] transition-colors"
+        >
+          <Edit3 className="w-4 h-4" /> Editar registro (volver a En proceso)
+        </button>
+      )}
 
       {/* Delete button */}
       <DeleteButton trackingCode={operation.trackingCode} />
