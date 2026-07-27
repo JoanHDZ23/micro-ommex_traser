@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Loader2, Package, Pencil, Plus, QrCode, Share2, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Loader2, Package, Pencil, Plus, QrCode, ScanLine, Share2, Trash2, X } from 'lucide-react'
 import { apiRequest, type LabelData, type Operation, type UploadPhotoResponse } from '../lib/api'
 import { parseLabelData } from '../lib/barcode-scanner'
 import { CameraCapture } from '../components/CameraCapture'
@@ -24,6 +24,8 @@ export function WizardPage() {
   const [lbAdding, setLbAdding] = useState(false)
   const [lbCameraOpen, setLbCameraOpen] = useState(false)
   const [lbLabelData, setLbLabelData] = useState<LabelData | null>(null)
+  const [ocrScanning, setOcrScanning] = useState(false)
+  const [ocrCameraOpen, setOcrCameraOpen] = useState(false)
 
   // Photo editing
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
@@ -104,6 +106,49 @@ export function WizardPage() {
       setFeedback(err instanceof Error ? err.message : 'Error.')
     } finally {
       setLbAdding(false)
+    }
+  }
+
+  // ── OCR: escanear etiqueta ──
+  const handleOcrCapture = async (base64: string) => {
+    setOcrCameraOpen(false)
+    setOcrScanning(true)
+    setFeedback(null)
+    try {
+      const { extractTextFromLabel, parseLabelText } = await import('../lib/ocr-scanner')
+      const rawText = await extractTextFromLabel(base64)
+
+      if (!rawText.trim()) {
+        setFeedback('No se detectó texto en la imagen. Intenta con mejor iluminación.')
+        return
+      }
+
+      const parsed = parseLabelText(rawText)
+      // Usa el código de etiqueta o SSCC o PO como código del producto
+      const code = parsed.codigoEtiqueta ?? parsed.sscc ?? parsed.poNumber ?? parsed.np ?? ''
+
+      if (code) setLbProductCode(code)
+
+      // Prepara labelData
+      const labelData: LabelData = {}
+      if (parsed.poNumber) labelData.poNumber = parsed.poNumber
+      if (parsed.sku) labelData.sku = parsed.sku
+      if (parsed.sscc) labelData.sscc = parsed.sscc
+      if (parsed.destinatario) labelData.destinatario = parsed.destinatario
+      if (parsed.np) labelData.np = parsed.np
+      if (parsed.codigoEtiqueta) labelData.codigoEtiqueta = parsed.codigoEtiqueta
+      if (parsed.transportadora) labelData.transportadora = parsed.transportadora
+      if (parsed.complemento) labelData.complemento = parsed.complemento
+
+      if (Object.keys(labelData).length > 0) {
+        setLbLabelData(labelData)
+      }
+
+      setFeedback(code ? `✓ Etiqueta leída: ${code}` : '⚠️ Se leyó texto pero no se encontró código')
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al procesar la etiqueta')
+    } finally {
+      setOcrScanning(false)
     }
   }
 
@@ -382,6 +427,12 @@ export function WizardPage() {
               <span className="text-xs text-[var(--color-text-2)]">Marcar como <strong>Línea Blanca</strong></span>
             </label>
 
+            {/* Escanear etiqueta con OCR */}
+            <button onClick={() => setOcrCameraOpen(true)} disabled={ocrScanning}
+              className="w-full py-2.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50">
+              {ocrScanning ? <><Loader2 className="w-4 h-4 animate-spin" /> Leyendo etiqueta...</> : <><ScanLine className="w-4 h-4" /> Escanear etiqueta (OCR)</>}
+            </button>
+
             {/* Parsed label data preview */}
             {lbLabelData && Object.values(lbLabelData).some(Boolean) && (
               <div className="p-2 rounded-lg bg-blue-50 border border-blue-200 space-y-0.5">
@@ -534,6 +585,13 @@ export function WizardPage() {
 
       {/* Barcode Scanner */}
       {showScanner && <BarcodeScanner onResult={handleScanResult} onClose={() => setShowScanner(false)} />}
+
+      {/* OCR Label Scanner */}
+      {ocrCameraOpen && (
+        <CameraCapture stepName="Foto de etiqueta para OCR" stepIndex={0}
+          onCapture={(b64) => void handleOcrCapture(b64)}
+          onCancel={() => setOcrCameraOpen(false)} />
+      )}
     </>
   )
 }
