@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Calendar, Camera, CheckCircle2, Clock, Edit3, ExternalLink, Loader2, MapPin, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
+import { ArrowLeft, Calendar, Camera, Clock, Edit3, ExternalLink, Loader2, MapPin, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
-import { getSteps, LINEA_BLANCA_STEPS, OPERATION_LABELS } from '../lib/constants'
+import { OPERATION_LABELS } from '../lib/constants'
 
 /** Convierte una driveUrl o fileId en una URL de imagen embebible */
 function getDriveImageUrl(photo: PhotoRecord): string | null {
@@ -75,7 +75,6 @@ export function OperationDetailPage() {
     )
   }
 
-  const steps = getSteps(operation.operationType)
   const date = new Date(operation.createdAt)
   const totalPhotos = operation.photos.length + (operation.lineaBlanca ?? []).reduce((sum, p) => sum + p.photos.length, 0)
 
@@ -143,71 +142,54 @@ export function OperationDetailPage() {
       {/* Delete button */}
       <DeleteButton trackingCode={operation.trackingCode} />
 
-      {/* ── Fotos del proceso principal ── */}
-      <section className="space-y-3">
-        <h4 className="text-sm font-semibold text-gray-700">
-          Proceso de {operation.operationType.toLowerCase()} ({operation.photos.length} fotos)
-        </h4>
+      {/* ── Registro fotográfico ── */}
+      {operation.photos.length > 0 && (
+        <section className="space-y-3">
+          <h4 className="text-sm font-semibold text-gray-700">
+            Registro fotográfico ({operation.photos.length} fotos)
+          </h4>
+          <div className="grid grid-cols-2 gap-2">
+            {operation.photos.map((photo, i) => (
+              <PhotoCard key={i} photo={photo} onClick={() => setLightbox(photo)} useCommentAsTitle />
+            ))}
+          </div>
+        </section>
+      )}
 
-        {steps.map((step, idx) => {
-          const photosForStep = operation.photos.filter((p) => p.stepIndex === idx)
-          const hasPhotos = photosForStep.length > 0
-
-          return (
-            <div key={idx} className="space-y-2">
-              {/* Step header */}
-              <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${hasPhotos ? 'bg-emerald-50 border border-emerald-200' : 'bg-gray-50 border border-gray-100'}`}>
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${hasPhotos ? 'bg-emerald-500 text-white' : 'bg-gray-300 text-white'}`}>
-                  {hasPhotos ? <CheckCircle2 className="w-3.5 h-3.5" /> : idx + 1}
-                </div>
-                <span className={`text-xs font-medium ${hasPhotos ? 'text-emerald-800' : 'text-gray-500'}`}>{step}</span>
-                {photosForStep.length > 1 && (
-                  <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full ml-auto">{photosForStep.length} fotos</span>
-                )}
-              </div>
-
-              {/* Photo grid for this step */}
-              {hasPhotos && (
-                <div className="grid grid-cols-2 gap-2 pl-8">
-                  {photosForStep.map((photo, i) => (
-                    <PhotoCard key={`${idx}-${i}`} photo={photo} onClick={() => setLightbox(photo)} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </section>
-
-      {/* ── Línea Blanca ── */}
+      {/* ── Productos ── */}
       {(operation.lineaBlanca ?? []).length > 0 && (
         <section className="space-y-3">
           <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-            <Package className="w-4 h-4 text-purple-600" />
-            Revisión Línea Blanca ({operation.lineaBlanca.length} producto{operation.lineaBlanca.length !== 1 ? 's' : ''})
+            <Package className="w-4 h-4 text-[var(--color-primary)]" />
+            Productos ({operation.lineaBlanca.length})
           </h4>
-
           {operation.lineaBlanca.map((product) => (
-            <div key={product.productCode} className="space-y-2 p-3 rounded-xl border border-purple-200 bg-purple-50/50">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-purple-900">{product.productCode}</p>
-                <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
-                  product.status === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                }`}>
-                  {product.photos.length}/{LINEA_BLANCA_STEPS.length}
-                </span>
+            <div key={product.productCode} className="space-y-2 p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-semibold flex-1">{product.productCode}</p>
+                {product.isLineaBlanca && <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>}
+                <span className="text-[10px] text-gray-500">{product.photos.length} fotos</span>
               </div>
-
+              {product.labelData && Object.values(product.labelData).some(Boolean) && (
+                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 px-2 py-1.5 rounded bg-gray-50 border border-gray-100 text-[10px] text-gray-600">
+                  {product.labelData.poNumber && <p><span className="font-medium">PO:</span> {product.labelData.poNumber}</p>}
+                  {product.labelData.np && <p><span className="font-medium">NP:</span> {product.labelData.np}</p>}
+                  {product.labelData.sku && <p><span className="font-medium">SKU:</span> {product.labelData.sku}</p>}
+                  {product.labelData.sscc && <p><span className="font-medium">SSCC:</span> {product.labelData.sscc}</p>}
+                  {product.labelData.descripcion && <p className="col-span-2"><span className="font-medium">DESC:</span> {product.labelData.descripcion}</p>}
+                  {product.labelData.destinatario && <p className="col-span-2"><span className="font-medium">Dest:</span> {product.labelData.destinatario}</p>}
+                  {product.labelData.transportadora && <p><span className="font-medium">Transp:</span> {product.labelData.transportadora}</p>}
+                </div>
+              )}
               {product.photos.length > 0 && (
                 <div className="grid grid-cols-2 gap-2">
                   {product.photos.map((photo, i) => (
-                    <PhotoCard key={`lb-${product.productCode}-${i}`} photo={photo} onClick={() => setLightbox(photo)} />
+                    <PhotoCard key={`p-${product.productCode}-${i}`} photo={photo} onClick={() => setLightbox(photo)} useCommentAsTitle />
                   ))}
                 </div>
               )}
-
               {product.photos.length === 0 && (
-                <p className="text-xs text-purple-400 text-center py-2">Sin fotos registradas</p>
+                <p className="text-xs text-gray-400 text-center py-2">Sin fotos registradas</p>
               )}
             </div>
           ))}
@@ -263,9 +245,10 @@ export function OperationDetailPage() {
   )
 }
 
-function PhotoCard({ photo, onClick }: { photo: PhotoRecord; onClick: () => void }) {
+function PhotoCard({ photo, onClick, useCommentAsTitle }: { photo: PhotoRecord; onClick: () => void; useCommentAsTitle?: boolean }) {
   const imageUrl = getDriveImageUrl(photo)
   const isPending = !imageUrl
+  const title = useCommentAsTitle && photo.comment ? photo.comment : photo.stepName
   const fallbackUrl = photo.fileId && photo.fileId !== 'pending'
     ? `https://drive.google.com/thumbnail?id=${photo.fileId}&sz=w400`
     : null
@@ -303,8 +286,8 @@ function PhotoCard({ photo, onClick }: { photo: PhotoRecord; onClick: () => void
       </div>
       {/* Info */}
       <div className="p-1.5">
-        <p className="text-[10px] font-medium text-gray-700 truncate">{photo.stepName}</p>
-        {photo.comment && (
+        <p className="text-[10px] font-medium text-gray-700 truncate">{title}</p>
+        {!useCommentAsTitle && photo.comment && (
           <p className="text-[9px] text-gray-400 truncate flex items-center gap-0.5 mt-0.5">
             <MessageSquare className="w-2.5 h-2.5" /> {photo.comment}
           </p>
