@@ -497,7 +497,7 @@ export function WizardPage() {
                       {product.labelData.descripcion && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Desc:</span> {product.labelData.descripcion}</p>}
                     </div>
                   )}
-                  {isActive && !isDone && (
+                  {isActive && (
                     <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2">
                       {/* Photos of this product */}
                       {product.photos.length > 0 && (
@@ -520,22 +520,6 @@ export function WizardPage() {
                         className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
                         <Camera className="w-4 h-4" /> Tomar foto ({product.photos.length})
                       </button>
-                    </div>
-                  )}
-                  {isActive && isDone && (
-                    <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-1">
-                      {product.photos.map((ph, phIdx) => (
-                        <div key={phIdx} className="flex items-center gap-2 text-[10px] text-[var(--color-text-2)] bg-gray-50 rounded px-2 py-1">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />
-                          <span className="flex-1 truncate">{ph.comment || ph.stepName}</span>
-                          <button onClick={async () => {
-                            try {
-                              await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${phIdx}`, { method: 'DELETE' })
-                              await loadOperation()
-                            } catch { /* silent */ }
-                          }} className="p-0.5 text-red-400 hover:text-red-600"><Trash2 className="w-3 h-3" /></button>
-                        </div>
-                      ))}
                     </div>
                   )}
                 </div>
