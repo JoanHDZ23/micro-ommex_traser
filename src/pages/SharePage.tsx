@@ -134,7 +134,7 @@ export function SharePage() {
                 {product.photos.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
                     {product.photos.map((photo, i) => (
-                      <PhotoThumbnail key={`lb-${product.productCode}-${i}`} photo={photo} />
+                      <PhotoThumbnail key={`lb-${product.productCode}-${i}`} photo={photo} useCommentAsTitle />
                     ))}
                   </div>
                 )}
