@@ -251,8 +251,9 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
     // Sube a Drive — subcarpeta del producto dentro de la del vehículo
     const { uploadToDrive } = await import('../lib/drive-upload.js')
     const vehicleFolder = `${operation.operationType}_${operation.vehiclePlate}`
-    const stepName = LINEA_BLANCA_STEPS[idx]
-    const fileName = `${trackingCode}_LB_${productCode}_paso${idx + 1}_${stepName.replace(/[^a-zA-Z0-9]/g, '_')}.jpg`
+    const stepName = LINEA_BLANCA_STEPS[idx] ?? `Foto_${idx + 1}`
+    const safeStepName = stepName.replace(/[^a-zA-Z0-9]/g, '_')
+    const fileName = `${trackingCode}_LB_${productCode}_foto${idx + 1}_${safeStepName}.jpg`
 
     const driveResult = await uploadToDrive({
       base64Image,
