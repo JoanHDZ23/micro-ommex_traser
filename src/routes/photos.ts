@@ -263,7 +263,7 @@ photosRouter.post('/sync/:trackingCode', async (req, res) => {
         if (ph.fileId === 'pending' || ph.driveUrl === 'pending-verification') {
           const matchKey = [...allFiles.keys()].find((name) => {
             if (usedFileIds.has(allFiles.get(name)!.fileId)) return false
-            return name.includes(trackingCode) && name.includes(lineaBlanca[pIdx].productCode) && name.includes(`paso${ph.stepIndex + 1}`)
+            return name.includes(trackingCode) && name.includes(lineaBlanca[pIdx].productCode) && (name.includes(`foto${ph.stepIndex + 1}`) || name.includes(`paso${ph.stepIndex + 1}`))
           })
           if (matchKey) {
             const data = allFiles.get(matchKey)!
