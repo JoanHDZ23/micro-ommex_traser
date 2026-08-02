@@ -18,7 +18,8 @@ async function getWorker() {
 
 /**
  * Preprocesa la imagen para mejorar OCR en etiquetas de cualquier color.
- * Convierte a escala de grises + umbral binario (texto oscuro → negro, fondo → blanco).
+ * 1. Recorta al centro (donde está el texto — ignora bordes)
+ * 2. Convierte a escala de grises + umbral binario
  */
 function preprocessImage(imageData: string): Promise<string> {
   return new Promise((resolve) => {
@@ -26,18 +27,25 @@ function preprocessImage(imageData: string): Promise<string> {
     img.crossOrigin = 'anonymous'
     img.onload = () => {
       const canvas = document.createElement('canvas')
-      canvas.width = img.width
-      canvas.height = img.height
+
+      // Recortar al 80% central (horizontal) y 70% central (vertical)
+      const cropX = Math.floor(img.width * 0.1)
+      const cropY = Math.floor(img.height * 0.15)
+      const cropW = Math.floor(img.width * 0.8)
+      const cropH = Math.floor(img.height * 0.7)
+
+      canvas.width = cropW
+      canvas.height = cropH
       const ctx = canvas.getContext('2d')!
 
-      // Dibuja la imagen original
-      ctx.drawImage(img, 0, 0)
+      // Dibuja solo la porción central
+      ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
 
       // Obtiene los pixels
       const imageDataObj = ctx.getImageData(0, 0, canvas.width, canvas.height)
       const data = imageDataObj.data
 
-      // Convierte a escala de grises + threshold adaptativo
+      // Convierte a escala de grises + threshold binario
       for (let i = 0; i < data.length; i += 4) {
         // Escala de grises ponderada (percepción humana)
         const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114

@@ -107,13 +107,24 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
       ) : preview ? (
         <img src={preview} alt="Preview" className="w-full h-full object-contain flex-1 bg-black" />
       ) : (
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="w-full h-full object-cover flex-1"
-        />
+        <>
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full h-full object-cover flex-1"
+          />
+          {/* OCR guide — shows crop area when scanning labels */}
+          {stepName.toLowerCase().includes('etiqueta') && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-[80%] h-[70%] border-2 border-amber-400 rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.5)]" />
+              <p className="absolute bottom-[20%] text-white text-xs font-medium bg-black/50 px-3 py-1 rounded-full">
+                Centra el texto aquí
+              </p>
+            </div>
+          )}
+        </>
       )}
 
       {/* Controls */}
