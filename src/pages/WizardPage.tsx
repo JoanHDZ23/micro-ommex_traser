@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Loader2, Package, Pencil, Plus, QrCode, ScanLine, Share2, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Loader2, Package, Pencil, Plus, QrCode, Share2, Trash2, X } from 'lucide-react'
 import { apiRequest, type LabelData, type Operation, type UploadPhotoResponse } from '../lib/api'
-import { parseLabelData } from '../lib/barcode-scanner'
 import { CameraCapture } from '../components/CameraCapture'
 
 export function WizardPage() {
@@ -24,8 +23,6 @@ export function WizardPage() {
   const [lbAdding, setLbAdding] = useState(false)
   const [lbCameraOpen, setLbCameraOpen] = useState(false)
   const [lbLabelData, setLbLabelData] = useState<LabelData | null>(null)
-  const [ocrScanning, setOcrScanning] = useState(false)
-  const [ocrCameraOpen, setOcrCameraOpen] = useState(false)
 
   // Photo editing
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
@@ -106,51 +103,6 @@ export function WizardPage() {
       setFeedback(err instanceof Error ? err.message : 'Error.')
     } finally {
       setLbAdding(false)
-    }
-  }
-
-  // ── OCR: escanear etiqueta ──
-  const handleOcrCapture = async (base64: string) => {
-    setOcrCameraOpen(false)
-    setOcrScanning(true)
-    setFeedback(null)
-    try {
-      const { extractTextFromLabel, parseLabelText } = await import('../lib/ocr-scanner')
-      const rawText = await extractTextFromLabel(base64)
-
-      if (!rawText.trim()) {
-        setFeedback('No se detectó texto en la imagen. Intenta con mejor iluminación.')
-        return
-      }
-
-      console.log('[OCR] Texto detectado:', rawText)
-      const parsed = parseLabelText(rawText)
-      // Usa el código de etiqueta o SSCC o PO como código del producto
-      const code = parsed.codigoEtiqueta ?? parsed.sscc ?? parsed.poNumber ?? parsed.np ?? ''
-
-      if (code) setLbProductCode(code)
-
-      // Prepara labelData
-      const labelData: LabelData = {}
-      if (parsed.poNumber) labelData.poNumber = parsed.poNumber
-      if (parsed.sku) labelData.sku = parsed.sku
-      if (parsed.sscc) labelData.sscc = parsed.sscc
-      if (parsed.destinatario) labelData.destinatario = parsed.destinatario
-      if (parsed.np) labelData.np = parsed.np
-      if (parsed.codigoEtiqueta) labelData.codigoEtiqueta = parsed.codigoEtiqueta
-      if (parsed.transportadora) labelData.transportadora = parsed.transportadora
-      if (parsed.complemento) labelData.complemento = parsed.complemento
-      if (parsed.descripcion) labelData.descripcion = parsed.descripcion
-
-      if (Object.keys(labelData).length > 0) {
-        setLbLabelData(labelData)
-      }
-
-      setFeedback(code ? `✓ Etiqueta leída: ${code}` : '⚠️ Se leyó texto pero no se encontró código')
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'Error al procesar la etiqueta')
-    } finally {
-      setOcrScanning(false)
     }
   }
 
@@ -236,24 +188,73 @@ export function WizardPage() {
   }
 
   // ── Barcode scanner ──
+  const [scannedCode, setScannedCode] = useState('')
+  const [scanOcrOpen, setScanOcrOpen] = useState(false)
+  const [ocrScanning, setOcrScanning] = useState(false)
+  const [scanObservation, setScanObservation] = useState('')
+  const [scanDesc, setScanDesc] = useState('')
+  const [scanConfirmOpen, setScanConfirmOpen] = useState(false)
+
   const handleScanResult = (code: string) => {
     setShowScanner(false)
+    setScannedCode(code)
     setLbProductCode(code)
-    // Try to parse label data from scanned text
-    const parsed = parseLabelData(code)
-    const hasData = Object.values(parsed).some((v) => v !== null)
-    if (hasData) {
-      const cleanData: LabelData = {}
-      if (parsed.poNumber) cleanData.poNumber = parsed.poNumber
-      if (parsed.sku) cleanData.sku = parsed.sku
-      if (parsed.sscc) cleanData.sscc = parsed.sscc
-      if (parsed.destinatario) cleanData.destinatario = parsed.destinatario
-      if (parsed.np) cleanData.np = parsed.np
-      if (parsed.codigoEtiqueta) cleanData.codigoEtiqueta = parsed.codigoEtiqueta
-      if (parsed.transportadora) cleanData.transportadora = parsed.transportadora
-      if (parsed.complemento) cleanData.complemento = parsed.complemento
-      setLbLabelData(cleanData)
+    // Abre cámara para leer descripción con OCR
+    setScanOcrOpen(true)
+  }
+
+  const handleScanOcrCapture = async (base64: string) => {
+    setScanOcrOpen(false)
+    setOcrScanning(true)
+    try {
+      const { extractTextFromLabel, parseLabelText } = await import('../lib/ocr-scanner')
+      const rawText = await extractTextFromLabel(base64)
+      console.log('[OCR scan] Texto:', rawText)
+      const parsed = parseLabelText(rawText)
+
+      // Extraer DESC como nombre del producto
+      const desc = parsed.descripcion ?? ''
+      setScanDesc(desc)
+
+      // Guardar label data
+      const labelData: LabelData = {}
+      if (parsed.poNumber) labelData.poNumber = parsed.poNumber
+      if (parsed.sku) labelData.sku = parsed.sku
+      if (parsed.sscc) labelData.sscc = parsed.sscc
+      if (parsed.np) labelData.np = parsed.np
+      if (parsed.destinatario) labelData.destinatario = parsed.destinatario
+      if (parsed.transportadora) labelData.transportadora = parsed.transportadora
+      if (parsed.codigoEtiqueta) labelData.codigoEtiqueta = parsed.codigoEtiqueta
+      if (parsed.complemento) labelData.complemento = parsed.complemento
+      if (desc) labelData.descripcion = desc
+      if (Object.keys(labelData).length > 0) setLbLabelData(labelData)
+
+      // Mostrar formulario de confirmación con observación
+      setScanConfirmOpen(true)
+    } catch {
+      // Si OCR falla, permitir agregar con solo el código
+      setScanConfirmOpen(true)
+    } finally {
+      setOcrScanning(false)
     }
+  }
+
+  const confirmScannedProduct = () => {
+    const code = scannedCode || lbProductCode
+    if (!code) return
+    // Agregar la observación como parte del labelData.descripcion
+    if (scanObservation.trim()) {
+      const current = lbLabelData ?? {}
+      current.descripcion = scanObservation.trim() + (scanDesc ? ` — ${scanDesc}` : '')
+      setLbLabelData(current)
+    } else if (scanDesc) {
+      const current = lbLabelData ?? {}
+      current.descripcion = scanDesc
+      setLbLabelData(current)
+    }
+    setScanConfirmOpen(false)
+    setScanObservation('')
+    setScanDesc('')
     void handleAddProduct(code)
   }
 
@@ -429,12 +430,6 @@ export function WizardPage() {
               <span className="text-xs text-[var(--color-text-2)]">Marcar como <strong>Línea Blanca</strong></span>
             </label>
 
-            {/* Escanear etiqueta con OCR */}
-            <button onClick={() => setOcrCameraOpen(true)} disabled={ocrScanning}
-              className="w-full py-2.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 text-sm font-medium flex items-center justify-center gap-2 disabled:opacity-50">
-              {ocrScanning ? <><Loader2 className="w-4 h-4 animate-spin" /> Leyendo etiqueta...</> : <><ScanLine className="w-4 h-4" /> Escanear etiqueta (OCR)</>}
-            </button>
-
             {/* Parsed label data preview */}
             {lbLabelData && Object.values(lbLabelData).some(Boolean) && (
               <div className="p-2 rounded-lg bg-blue-50 border border-blue-200 space-y-0.5">
@@ -574,11 +569,43 @@ export function WizardPage() {
       {/* Barcode Scanner */}
       {showScanner && <BarcodeScanner onResult={handleScanResult} onClose={() => setShowScanner(false)} />}
 
-      {/* OCR Label Scanner */}
-      {ocrCameraOpen && (
-        <CameraCapture stepName="Foto de etiqueta para OCR" stepIndex={0}
-          onCapture={(b64) => void handleOcrCapture(b64)}
-          onCancel={() => setOcrCameraOpen(false)} />
+      {/* OCR after barcode scan — reads product description */}
+      {scanOcrOpen && (
+        <CameraCapture stepName="Foto de la etiqueta (leer descripción)" stepIndex={0}
+          onCapture={(b64) => void handleScanOcrCapture(b64)}
+          onCancel={() => { setScanOcrOpen(false); setScanConfirmOpen(true) }} />
+      )}
+
+      {/* Confirm scanned product */}
+      {(scanConfirmOpen || ocrScanning) && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-end justify-center p-4">
+          <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl p-4 space-y-3 shadow-xl">
+            {ocrScanning ? (
+              <div className="flex items-center justify-center gap-2 py-6">
+                <Loader2 className="w-5 h-5 animate-spin text-[var(--color-primary)]" />
+                <span className="text-sm text-[var(--color-text-2)]">Leyendo etiqueta...</span>
+              </div>
+            ) : (
+              <>
+            <h3 className="text-sm font-bold text-[var(--color-text)]">Producto escaneado</h3>
+            <p className="text-xs text-[var(--color-text-2)]">Código: <strong>{scannedCode}</strong></p>
+            {scanDesc && <p className="text-xs text-emerald-700 bg-emerald-50 px-2 py-1 rounded">DESC: {scanDesc}</p>}
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-[var(--color-text-2)]">Observación (título del producto)</label>
+              <input type="text" value={scanObservation} onChange={(e) => setScanObservation(e.target.value)}
+                placeholder="Ej: Daño en esquina, Producto completo..."
+                className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" autoFocus />
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => { setScanConfirmOpen(false); setScanDesc(''); setScanObservation('') }}
+                className="flex-1 py-2.5 rounded-lg border border-[var(--color-border)] text-sm font-medium text-[var(--color-text-2)]">Cancelar</button>
+              <button onClick={confirmScannedProduct}
+                className="flex-1 py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium">Agregar producto</button>
+            </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </>
   )
