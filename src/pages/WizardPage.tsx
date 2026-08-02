@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Loader2, Package, Pencil, Plus, QrCode, ScanLine, Share2, Trash2, X } from 'lucide-react'
 import { apiRequest, type LabelData, type Operation, type UploadPhotoResponse } from '../lib/api'
@@ -587,34 +587,75 @@ export function WizardPage() {
 // ── Barcode Scanner Component ──
 function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => void; onClose: () => void }) {
   const [error, setError] = useState<string | null>(null)
-  const videoRef = { current: null as HTMLVideoElement | null }
+  const [scanning, setScanning] = useState(true)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const controlsRef = useRef<{ stop: () => void } | null>(null)
 
   useEffect(() => {
     let cancelled = false
+
     const start = async () => {
       try {
         const { BrowserMultiFormatReader } = await import('@zxing/browser')
-        const reader = new BrowserMultiFormatReader()
-        const devices = await navigator.mediaDevices.enumerateDevices()
-        const cameras = devices.filter((d) => d.kind === 'videoinput')
-        const backCamera = cameras.find((c) => c.label.toLowerCase().includes('back')) ?? cameras[0]
+        const { BarcodeFormat, DecodeHintType } = await import('@zxing/library')
 
-        if (!backCamera || !videoRef.current) return
+        // Configurar hints para mejorar detección de códigos de barras
+        const hints = new Map()
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+          BarcodeFormat.CODE_128,
+          BarcodeFormat.CODE_39,
+          BarcodeFormat.EAN_13,
+          BarcodeFormat.EAN_8,
+          BarcodeFormat.ITF,
+          BarcodeFormat.CODABAR,
+          BarcodeFormat.UPC_A,
+          BarcodeFormat.UPC_E,
+        ])
+        hints.set(DecodeHintType.TRY_HARDER, true)
 
-        const controls = await reader.decodeFromVideoDevice(backCamera.deviceId, videoRef.current, (result) => {
-          if (result && !cancelled) {
-            controls.stop()
-            onResult(result.getText())
-          }
-        })
+        const reader = new BrowserMultiFormatReader(hints)
 
-        return () => { cancelled = true; controls.stop() }
-      } catch {
-        setError('No se pudo acceder a la cámara para escanear')
+        // Esperar a que el video ref esté disponible
+        await new Promise((r) => setTimeout(r, 100))
+        if (cancelled || !videoRef.current) return
+
+        // Usar facingMode: environment para cámara trasera
+        const constraints: MediaStreamConstraints = {
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+          },
+        }
+
+        const controls = await reader.decodeFromConstraints(
+          constraints,
+          videoRef.current,
+          (result) => {
+            if (result && !cancelled) {
+              setScanning(false)
+              controls.stop()
+              controlsRef.current = null
+              onResult(result.getText())
+            }
+          },
+        )
+
+        controlsRef.current = controls
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'No se pudo acceder a la cámara')
+        }
       }
     }
-    const cleanup = start()
-    return () => { cancelled = true; void cleanup?.then((fn) => fn?.()) }
+
+    void start()
+
+    return () => {
+      cancelled = true
+      controlsRef.current?.stop()
+      controlsRef.current = null
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -623,19 +664,23 @@ function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => voi
       <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-gradient-to-b from-black/60 to-transparent flex items-center justify-between">
         <div className="text-white">
           <p className="text-sm font-semibold">Escanear código de barras</p>
-          <p className="text-xs opacity-70">Apunta al código de la etiqueta</p>
+          <p className="text-xs opacity-70">{scanning ? 'Apunta al código de la etiqueta' : 'Código detectado'}</p>
         </div>
-        <button onClick={onClose} className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
+        <button onClick={() => { controlsRef.current?.stop(); onClose() }} className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
           <X className="w-5 h-5 text-white" />
         </button>
       </div>
       {error ? (
         <div className="flex-1 flex items-center justify-center p-6 text-white text-center text-sm">{error}</div>
       ) : (
-        <video ref={(el) => { videoRef.current = el }} autoPlay playsInline muted className="w-full h-full object-cover flex-1" />
+        <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover flex-1" />
       )}
+      {/* Scanning guide overlay */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="w-64 h-32 border-2 border-white/60 rounded-lg" />
+        <div className="w-72 h-24 border-2 border-red-400 rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.4)]" />
+      </div>
+      <div className="absolute bottom-6 left-0 right-0 text-center">
+        <p className="text-white text-xs opacity-80">Coloca el código de barras dentro del recuadro</p>
       </div>
     </div>
   )
