@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Loader2, Package, Pencil, Plus, QrCode, Share2, Trash2, X } from 'lucide-react'
-import { apiRequest, type LabelData, type Operation, type UploadPhotoResponse } from '../lib/api'
+import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Link2, Loader2, Package, Pencil, Plus, QrCode, Search, Share2, Trash2, X } from 'lucide-react'
+import { apiRequest, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
 
 export function WizardPage() {
@@ -31,6 +31,47 @@ export function WizardPage() {
   // Plate editing
   const [editingPlate, setEditingPlate] = useState(false)
   const [plateValue, setPlateValue] = useState('')
+
+  // Link product to another operation
+  const [linkProductCode, setLinkProductCode] = useState<string | null>(null)
+  const [linkSearch, setLinkSearch] = useState('')
+  const [linkResults, setLinkResults] = useState<Operation[]>([])
+  const [linkLoading, setLinkLoading] = useState(false)
+  const [linkSearching, setLinkSearching] = useState(false)
+
+  const searchForLink = async (query: string) => {
+    setLinkSearch(query)
+    if (!query.trim() && !trackingCode) return
+    setLinkSearching(true)
+    try {
+      const params = new URLSearchParams()
+      if (trackingCode) params.set('exclude', trackingCode)
+      if (operation?.companyId) params.set('companyId', operation.companyId)
+      if (query.trim()) params.set('q', query.trim())
+      const res = await apiRequest<{ operations: Operation[] }>(`/operations/search-for-link?${params.toString()}`)
+      setLinkResults(res.operations)
+    } catch { setLinkResults([]) }
+    finally { setLinkSearching(false) }
+  }
+
+  const handleLinkProduct = async (targetTrackingCode: string) => {
+    if (!trackingCode || !linkProductCode) return
+    setLinkLoading(true)
+    try {
+      await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(linkProductCode)}/link`, {
+        method: 'POST',
+        body: { targetTrackingCode },
+      })
+      setFeedback(`✓ Producto vinculado a ${targetTrackingCode}`)
+      setLinkProductCode(null)
+      setLinkSearch('')
+      setLinkResults([])
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al vincular')
+    } finally {
+      setLinkLoading(false)
+    }
+  }
 
   const savePlate = async () => {
     if (!trackingCode || !plateValue.trim()) return
@@ -515,6 +556,10 @@ export function WizardPage() {
                         className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
                         <Camera className="w-4 h-4" /> Tomar foto ({product.photos.length})
                       </button>
+                      <button onClick={() => { setLinkProductCode(product.productCode); void searchForLink('') }}
+                        className="w-full py-2 rounded-lg border border-blue-200 text-blue-600 text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-blue-50">
+                        <Link2 className="w-3.5 h-3.5" /> Vincular a otro registro
+                      </button>
                     </div>
                   )}
                 </div>
@@ -603,6 +648,75 @@ export function WizardPage() {
                 className="flex-1 py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium">Agregar producto</button>
             </div>
               </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Link product to another operation modal */}
+      {linkProductCode && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-end justify-center p-4">
+          <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl p-4 space-y-3 shadow-xl max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-[var(--color-text)]">Vincular producto</h3>
+                <p className="text-xs text-[var(--color-text-2)]">
+                  <strong>{linkProductCode}</strong> → Selecciona la operación destino
+                </p>
+              </div>
+              <button onClick={() => { setLinkProductCode(null); setLinkSearch(''); setLinkResults([]) }}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={linkSearch}
+                onChange={(e) => void searchForLink(e.target.value)}
+                placeholder="Buscar por código, operador o placa..."
+                className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                autoFocus
+              />
+            </div>
+
+            {/* Results */}
+            {linkSearching ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="w-5 h-5 animate-spin text-[var(--color-primary)]" />
+              </div>
+            ) : linkResults.length === 0 ? (
+              <p className="text-xs text-center text-[var(--color-text-3)] py-4">
+                No se encontraron operaciones en proceso
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {linkResults.map((op) => (
+                  <button
+                    key={op.trackingCode}
+                    onClick={() => void handleLinkProduct(op.trackingCode)}
+                    disabled={linkLoading}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-all text-left disabled:opacity-50"
+                  >
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${
+                      op.operationType === 'PRODUCTOS_ENTRANTES' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'
+                    }`}>
+                      {op.operationType === 'PRODUCTOS_ENTRANTES' ? '↓' : '↑'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-[var(--color-text)] truncate">{op.trackingCode}</p>
+                      <p className="text-[10px] text-[var(--color-text-3)] truncate">
+                        {(op.operationType as OperationType) === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'} · {op.operatorName}
+                        {op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
+                      </p>
+                    </div>
+                    <Link2 className="w-4 h-4 text-[var(--color-primary)] flex-shrink-0" />
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         </div>
