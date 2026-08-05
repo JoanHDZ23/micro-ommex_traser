@@ -502,7 +502,9 @@ export function WizardPage() {
                       <div>
                         <p className="text-sm font-semibold text-[var(--color-text)]">{product.productCode}</p>
                         <p className="text-[10px] text-[var(--color-text-3)]">
-                          {product.isLineaBlanca && <span className="text-purple-600 font-medium">L.B · </span>}{product.photos.length} fotos
+                          {product.isLineaBlanca && <span className="text-purple-600 font-medium">L.B · </span>}
+                          {product.linkedTo && product.linkedTo.length > 0 && <span className="text-blue-500 font-medium">🔗{product.linkedTo.length} · </span>}
+                          {product.photos.length} fotos
                         </p>
                       </div>
                     </button>
