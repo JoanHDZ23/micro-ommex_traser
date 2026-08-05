@@ -509,6 +509,10 @@ export function WizardPage() {
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isDone ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
                       {isDone ? 'Completo' : 'En proceso'}
                     </span>
+                    <button onClick={() => { setLinkProductCode(product.productCode); void searchForLink('') }}
+                      className="p-1 rounded text-blue-400 hover:text-blue-600 hover:bg-blue-50" title="Vincular a otro registro">
+                      <Link2 className="w-3.5 h-3.5" />
+                    </button>
                     <button onClick={async () => {
                       if (!confirm(`¿Eliminar producto ${product.productCode} y todas sus fotos?`)) return
                       try {
@@ -555,10 +559,6 @@ export function WizardPage() {
                       <button onClick={() => setLbCameraOpen(true)} disabled={uploading}
                         className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
                         <Camera className="w-4 h-4" /> Tomar foto ({product.photos.length})
-                      </button>
-                      <button onClick={() => { setLinkProductCode(product.productCode); void searchForLink('') }}
-                        className="w-full py-2 rounded-lg border border-blue-200 text-blue-600 text-xs font-medium flex items-center justify-center gap-1.5 hover:bg-blue-50">
-                        <Link2 className="w-3.5 h-3.5" /> Vincular a otro registro
                       </button>
                     </div>
                   )}
