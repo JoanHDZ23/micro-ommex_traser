@@ -331,20 +331,22 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
     const updatedProduct = (updatedOp?.lineaBlanca as LineaBlancaProduct[])?.[productIdx]
 
     // ── Sincronizar foto a operaciones vinculadas ──
-    const linkedTo = product.linkedTo ?? []
-    if (linkedTo.length > 0) {
-      for (const linkedTrackingCode of linkedTo) {
+    // Re-leer linkedTo del producto actualizado en la DB (puede haber cambiado)
+    const currentLinkedTo = updatedProduct?.linkedTo ?? []
+    console.log(`[linea-blanca] Producto ${productCode} linkedTo:`, currentLinkedTo)
+    if (currentLinkedTo.length > 0) {
+      for (const linkedTrackingCode of currentLinkedTo) {
         try {
           const linkedOp = await col.findOne({ trackingCode: linkedTrackingCode })
-          if (!linkedOp) continue
+          if (!linkedOp) { console.warn(`[sync] Operación ${linkedTrackingCode} no encontrada`); continue }
           const linkedProducts = (linkedOp.lineaBlanca as LineaBlancaProduct[]) ?? []
           const linkedProductIdx = linkedProducts.findIndex((p) => p.productCode === productCode)
-          if (linkedProductIdx === -1) continue
+          if (linkedProductIdx === -1) { console.warn(`[sync] Producto ${productCode} no encontrado en ${linkedTrackingCode}`); continue }
 
           // Verificar que la foto no exista ya (por timestamp) para evitar duplicados
           const existingPhotos = linkedProducts[linkedProductIdx].photos ?? []
-          const alreadySynced = existingPhotos.some((p) => p.timestamp === photoRecord.timestamp && p.fileId === photoRecord.fileId)
-          if (alreadySynced) continue
+          const alreadySynced = existingPhotos.some((p) => p.timestamp === photoRecord.timestamp)
+          if (alreadySynced) { console.log(`[sync] Foto ya existe en ${linkedTrackingCode}`); continue }
 
           await col.updateOne(
             { trackingCode: linkedTrackingCode, 'lineaBlanca.productCode': productCode },
@@ -353,6 +355,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
               $set: { updatedAt: new Date().toISOString() },
             } as unknown as Record<string, unknown>,
           )
+          console.log(`[sync] ✓ Foto sincronizada a ${linkedTrackingCode}`)
         } catch (syncErr) {
           console.warn(`[linea-blanca] Error al sincronizar foto a ${linkedTrackingCode}:`, syncErr)
         }
@@ -366,7 +369,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
         current: updatedProduct?.photos.length ?? 0,
         total: 0, // Sin límite fijo
       },
-      synced: linkedTo.length,
+      synced: currentLinkedTo.length,
     })
   } catch (err) {
     console.error('[linea-blanca] Error:', err)

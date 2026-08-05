@@ -275,6 +275,36 @@ photosRouter.post('/sync/:trackingCode', async (req, res) => {
       }
     }
 
+    // ── Sincronizar fotos actualizadas a operaciones vinculadas ──
+    // Re-leer operación con fotos actualizadas
+    const freshOp = await col.findOne({ trackingCode })
+    const freshLB = (freshOp?.lineaBlanca ?? []) as Array<{ productCode: string; linkedTo?: string[]; photos: PhotoRecord[] }>
+
+    for (const product of freshLB) {
+      const linked = product.linkedTo ?? []
+      if (linked.length === 0) continue
+
+      // Para cada operación vinculada, actualizar las fotos del producto
+      for (const linkedTC of linked) {
+        try {
+          const linkedOp = await col.findOne({ trackingCode: linkedTC })
+          if (!linkedOp) continue
+          const linkedProducts = (linkedOp.lineaBlanca ?? []) as Array<{ productCode: string; photos: PhotoRecord[] }>
+          const linkedPIdx = linkedProducts.findIndex((p) => p.productCode === product.productCode)
+          if (linkedPIdx === -1) continue
+
+          // Reemplazar las fotos del producto vinculado con las fotos actualizadas
+          await col.updateOne(
+            { trackingCode: linkedTC, 'lineaBlanca.productCode': product.productCode },
+            { $set: { [`lineaBlanca.${linkedPIdx}.photos`]: product.photos, updatedAt: new Date().toISOString() } },
+          )
+          updated++
+        } catch (syncErr) {
+          console.warn(`[sync] Error al propagar fotos a ${linkedTC}:`, syncErr)
+        }
+      }
+    }
+
     res.json({ message: `Sincronización completada. ${updated} foto(s) actualizada(s).`, filesInDrive: allFiles.size, updated })
   } catch (err) {
     console.error('[photos/sync] Error:', err)
