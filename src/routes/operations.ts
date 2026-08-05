@@ -107,6 +107,36 @@ operationsRouter.get('/', async (req, res) => {
 })
 
 /**
+ * GET /api/operations/search-for-link
+ * Busca operaciones disponibles para vincular un producto (excluye la operación actual).
+ * Query: ?exclude=TRACKING_CODE&companyId=XXX
+ */
+operationsRouter.get('/search-for-link', async (req, res) => {
+  const { exclude, companyId, q } = req.query as Record<string, string>
+
+  try {
+    const col = getOperationsCollection()
+    const filter: Record<string, unknown> = { status: 'EN_PROCESO' }
+    if (exclude) filter.trackingCode = { $ne: exclude }
+    if (companyId) filter.companyId = companyId
+    if (q) {
+      filter.$or = [
+        { trackingCode: { $regex: q, $options: 'i' } },
+        { operatorName: { $regex: q, $options: 'i' } },
+        { vehiclePlate: { $regex: q, $options: 'i' } },
+      ]
+    }
+
+    const operations = await col.find(filter).sort({ createdAt: -1 }).limit(10).toArray()
+
+    res.json({ operations })
+  } catch (err) {
+    console.error('[operations] Error al buscar para vincular:', err)
+    res.status(500).json({ message: 'Error al buscar operaciones.' })
+  }
+})
+
+/**
  * GET /api/operations/:trackingCode
  * Obtiene una operación por su código de tracking.
  */
@@ -518,5 +548,81 @@ operationsRouter.delete('/:trackingCode/linea-blanca/:productCode/photo/:photoIn
   } catch (err) {
     console.error('[operations] Error al eliminar foto de producto:', err)
     res.status(500).json({ message: 'Error al eliminar foto.' })
+  }
+})
+
+/**
+ * POST /api/operations/:trackingCode/linea-blanca/:productCode/link
+ * Vincula (copia) un producto a otra operación existente.
+ * Body: { targetTrackingCode }
+ */
+operationsRouter.post('/:trackingCode/linea-blanca/:productCode/link', async (req, res) => {
+  const { trackingCode, productCode } = req.params
+  const { targetTrackingCode } = req.body ?? {}
+
+  if (!targetTrackingCode?.trim()) {
+    res.status(400).json({ message: 'targetTrackingCode es requerido.' })
+    return
+  }
+
+  if (targetTrackingCode.trim() === trackingCode) {
+    res.status(400).json({ message: 'No puedes vincular un producto a la misma operación.' })
+    return
+  }
+
+  try {
+    const col = getOperationsCollection()
+
+    // Buscar operación origen
+    const sourceOp = await col.findOne({ trackingCode })
+    if (!sourceOp) { res.status(404).json({ message: 'Operación origen no encontrada.' }); return }
+
+    const sourceProducts = (sourceOp.lineaBlanca as LineaBlancaProduct[]) ?? []
+    const product = sourceProducts.find((p) => p.productCode === productCode)
+    if (!product) { res.status(404).json({ message: `Producto "${productCode}" no encontrado en operación origen.` }); return }
+
+    // Buscar operación destino
+    const targetOp = await col.findOne({ trackingCode: targetTrackingCode.trim() })
+    if (!targetOp) { res.status(404).json({ message: `Operación destino "${targetTrackingCode}" no encontrada.` }); return }
+
+    if (targetOp.status === 'COMPLETADO') {
+      res.status(409).json({ message: 'La operación destino ya está completada. Reábrela primero.' })
+      return
+    }
+
+    // Verificar que no exista ya en la operación destino
+    const targetProducts = (targetOp.lineaBlanca as LineaBlancaProduct[]) ?? []
+    if (targetProducts.some((p) => p.productCode === productCode)) {
+      res.status(409).json({ message: `El producto "${productCode}" ya existe en la operación destino.` })
+      return
+    }
+
+    // Copiar el producto (sin fotos, como nuevo registro vinculado)
+    const linkedProduct: LineaBlancaProduct = {
+      productCode: product.productCode,
+      labelData: product.labelData ? { ...product.labelData } : undefined,
+      isLineaBlanca: product.isLineaBlanca,
+      photos: [],
+      status: 'EN_PROCESO',
+      createdAt: new Date().toISOString(),
+    }
+
+    await col.updateOne(
+      { trackingCode: targetTrackingCode.trim() },
+      {
+        $push: { lineaBlanca: linkedProduct },
+        $set: { updatedAt: new Date().toISOString() },
+      } as unknown as Record<string, unknown>,
+    )
+
+    res.status(201).json({
+      message: `Producto "${productCode}" vinculado a operación ${targetTrackingCode}.`,
+      targetTrackingCode: targetTrackingCode.trim(),
+      targetOperationType: targetOp.operationType,
+      product: linkedProduct,
+    })
+  } catch (err) {
+    console.error('[operations] Error al vincular producto:', err)
+    res.status(500).json({ message: 'Error al vincular producto.' })
   }
 })
