@@ -5,27 +5,22 @@ import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, type LineaBlancaPr
 
 export const operationsRouter = Router()
 
-const VALID_TYPES: OperationType[] = ['DESCARGUE', 'CARGUE']
+const VALID_TYPES: OperationType[] = ['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES']
 
 /**
  * POST /api/operations
- * Crea una nueva operación de Descargue o Cargue.
+ * Crea una nueva operación (Productos Entrantes o Productos Salientes).
  */
 operationsRouter.post('/', async (req, res) => {
   const { operationType, operatorName, vehiclePlate, companyId } = req.body ?? {}
 
   if (!operationType || !VALID_TYPES.includes(operationType)) {
-    res.status(400).json({ message: 'operationType es requerido (DESCARGUE o CARGUE).' })
+    res.status(400).json({ message: 'operationType es requerido (PRODUCTOS_ENTRANTES o PRODUCTOS_SALIENTES).' })
     return
   }
 
   if (!operatorName?.trim()) {
     res.status(400).json({ message: 'operatorName es requerido.' })
-    return
-  }
-
-  if (!vehiclePlate?.trim()) {
-    res.status(400).json({ message: 'vehiclePlate (placa del vehículo) es requerido.' })
     return
   }
 
@@ -37,7 +32,7 @@ operationsRouter.post('/', async (req, res) => {
       trackingCode,
       operationType,
       operatorName: operatorName.trim(),
-      vehiclePlate: vehiclePlate.trim(),
+      vehiclePlate: vehiclePlate?.trim() || undefined,
       companyId: companyId?.trim() ?? undefined,
       photos: [],
       lineaBlanca: [],
@@ -66,7 +61,7 @@ operationsRouter.post('/', async (req, res) => {
  * Lista operaciones con filtros opcionales.
  */
 operationsRouter.get('/', async (req, res) => {
-  const { operationType, status, date, operatorName, vehiclePlate, companyId, limit = '50', page = '1' } = req.query as Record<string, string>
+  const { operationType, status, date, operatorName, vehiclePlate, companyId, productName, limit = '50', page = '1' } = req.query as Record<string, string>
 
   const filter: Record<string, unknown> = {}
   if (companyId) {
@@ -79,6 +74,10 @@ operationsRouter.get('/', async (req, res) => {
   if (status) filter.status = status
   if (operatorName) filter.operatorName = { $regex: operatorName, $options: 'i' }
   if (vehiclePlate) filter.vehiclePlate = { $regex: vehiclePlate, $options: 'i' }
+  if (productName) {
+    // Buscar por nombre/código de producto dentro de lineaBlanca
+    filter['lineaBlanca.productCode'] = { $regex: productName, $options: 'i' }
+  }
   if (date) {
     filter.createdAt = {
       $gte: `${date}T00:00:00.000Z`,
