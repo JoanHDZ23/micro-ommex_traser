@@ -330,6 +330,35 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
     const updatedOp = await col.findOne({ trackingCode })
     const updatedProduct = (updatedOp?.lineaBlanca as LineaBlancaProduct[])?.[productIdx]
 
+    // ── Sincronizar foto a operaciones vinculadas ──
+    const linkedTo = product.linkedTo ?? []
+    if (linkedTo.length > 0) {
+      for (const linkedTrackingCode of linkedTo) {
+        try {
+          const linkedOp = await col.findOne({ trackingCode: linkedTrackingCode })
+          if (!linkedOp) continue
+          const linkedProducts = (linkedOp.lineaBlanca as LineaBlancaProduct[]) ?? []
+          const linkedProductIdx = linkedProducts.findIndex((p) => p.productCode === productCode)
+          if (linkedProductIdx === -1) continue
+
+          // Verificar que la foto no exista ya (por timestamp) para evitar duplicados
+          const existingPhotos = linkedProducts[linkedProductIdx].photos ?? []
+          const alreadySynced = existingPhotos.some((p) => p.timestamp === photoRecord.timestamp && p.fileId === photoRecord.fileId)
+          if (alreadySynced) continue
+
+          await col.updateOne(
+            { trackingCode: linkedTrackingCode, 'lineaBlanca.productCode': productCode },
+            {
+              $push: { [`lineaBlanca.${linkedProductIdx}.photos`]: photoRecord },
+              $set: { updatedAt: new Date().toISOString() },
+            } as unknown as Record<string, unknown>,
+          )
+        } catch (syncErr) {
+          console.warn(`[linea-blanca] Error al sincronizar foto a ${linkedTrackingCode}:`, syncErr)
+        }
+      }
+    }
+
     res.json({
       message: 'Foto de producto registrada.',
       photo: photoRecord,
@@ -337,6 +366,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
         current: updatedProduct?.photos.length ?? 0,
         total: 0, // Sin límite fijo
       },
+      synced: linkedTo.length,
     })
   } catch (err) {
     console.error('[linea-blanca] Error:', err)
@@ -554,6 +584,7 @@ operationsRouter.delete('/:trackingCode/linea-blanca/:productCode/photo/:photoIn
 /**
  * POST /api/operations/:trackingCode/linea-blanca/:productCode/link
  * Vincula (copia) un producto a otra operación existente.
+ * Las fotos se sincronizan automáticamente entre operaciones vinculadas.
  * Body: { targetTrackingCode }
  */
 operationsRouter.post('/:trackingCode/linea-blanca/:productCode/link', async (req, res) => {
@@ -578,8 +609,9 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/link', async (re
     if (!sourceOp) { res.status(404).json({ message: 'Operación origen no encontrada.' }); return }
 
     const sourceProducts = (sourceOp.lineaBlanca as LineaBlancaProduct[]) ?? []
-    const product = sourceProducts.find((p) => p.productCode === productCode)
-    if (!product) { res.status(404).json({ message: `Producto "${productCode}" no encontrado en operación origen.` }); return }
+    const sourceIdx = sourceProducts.findIndex((p) => p.productCode === productCode)
+    if (sourceIdx === -1) { res.status(404).json({ message: `Producto "${productCode}" no encontrado en operación origen.` }); return }
+    const product = sourceProducts[sourceIdx]
 
     // Buscar operación destino
     const targetOp = await col.findOne({ trackingCode: targetTrackingCode.trim() })
@@ -597,16 +629,21 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/link', async (re
       return
     }
 
-    // Copiar el producto (sin fotos, como nuevo registro vinculado)
+    // Copiar el producto con las fotos ya existentes y agregar linkedTo
+    const sourceLinkedTo = product.linkedTo ?? []
+    const newSourceLinkedTo = [...new Set([...sourceLinkedTo, targetTrackingCode.trim()])]
+
     const linkedProduct: LineaBlancaProduct = {
       productCode: product.productCode,
       labelData: product.labelData ? { ...product.labelData } : undefined,
       isLineaBlanca: product.isLineaBlanca,
-      photos: [],
+      linkedTo: [trackingCode], // la operación destino sabe que está vinculada con la origen
+      photos: [...product.photos], // copiar fotos existentes
       status: 'EN_PROCESO',
       createdAt: new Date().toISOString(),
     }
 
+    // Actualizar operación destino: agregar producto
     await col.updateOne(
       { trackingCode: targetTrackingCode.trim() },
       {
@@ -615,8 +652,14 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/link', async (re
       } as unknown as Record<string, unknown>,
     )
 
+    // Actualizar operación origen: marcar linkedTo en el producto fuente
+    await col.updateOne(
+      { trackingCode, 'lineaBlanca.productCode': productCode },
+      { $set: { [`lineaBlanca.${sourceIdx}.linkedTo`]: newSourceLinkedTo, updatedAt: new Date().toISOString() } },
+    )
+
     res.status(201).json({
-      message: `Producto "${productCode}" vinculado a operación ${targetTrackingCode}.`,
+      message: `Producto "${productCode}" vinculado a operación ${targetTrackingCode}. Las fotos se sincronizarán automáticamente.`,
       targetTrackingCode: targetTrackingCode.trim(),
       targetOperationType: targetOp.operationType,
       product: linkedProduct,

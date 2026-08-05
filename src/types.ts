@@ -75,6 +75,7 @@ export interface LineaBlancaProduct {
   productCode: string
   labelData?: LabelData
   isLineaBlanca?: boolean
+  linkedTo?: string[]              // trackingCodes de operaciones vinculadas
   photos: PhotoRecord[]
   status: 'EN_PROCESO' | 'COMPLETADO'
   createdAt: string
