@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, ClipboardList, Package, Truck } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUp, ClipboardList } from 'lucide-react'
 
 export function HomePage() {
   const navigate = useNavigate()
@@ -13,18 +13,18 @@ export function HomePage() {
         </h3>
         <div className="grid grid-cols-1 gap-3">
           <QuickAction
-            icon={Truck}
-            title="Descargue"
-            description="Precinto, apertura, mercancía + revisión de productos"
+            icon={ArrowDown}
+            title="Productos Entrantes"
+            description="Registro de productos que ingresan"
             color="bg-blue-50 text-blue-600"
-            onClick={() => navigate('/new?type=DESCARGUE')}
+            onClick={() => navigate('/new?type=PRODUCTOS_ENTRANTES')}
           />
           <QuickAction
-            icon={Package}
-            title="Cargue"
-            description="Vehículo, carga, precinto + revisión línea blanca"
+            icon={ArrowUp}
+            title="Productos Salientes"
+            description="Registro de productos que salen"
             color="bg-[var(--color-primary-bg)] text-[var(--color-primary)]"
-            onClick={() => navigate('/new?type=CARGUE')}
+            onClick={() => navigate('/new?type=PRODUCTOS_SALIENTES')}
           />
         </div>
       </section>

@@ -29,7 +29,7 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-export type OperationType = 'DESCARGUE' | 'CARGUE'
+export type OperationType = 'PRODUCTOS_ENTRANTES' | 'PRODUCTOS_SALIENTES'
 export type OperationStatus = 'EN_PROCESO' | 'COMPLETADO'
 
 export interface PhotoRecord {
@@ -69,7 +69,7 @@ export interface Operation {
   trackingCode: string
   operationType: OperationType
   operatorName: string
-  vehiclePlate: string
+  vehiclePlate?: string
   companyId?: string
   photos: PhotoRecord[]
   lineaBlanca: LineaBlancaProduct[]
@@ -84,7 +84,7 @@ export interface Operation {
 export interface CreateOperationPayload {
   operationType: OperationType
   operatorName: string
-  vehiclePlate: string
+  vehiclePlate?: string
   companyId?: string
 }
 

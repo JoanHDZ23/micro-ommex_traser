@@ -62,7 +62,7 @@ export function SharePage() {
       <header className="bg-[var(--color-primary)] text-white px-4 py-5 text-center">
         <p className="text-xs opacity-70 mb-1">Registro fotográfico</p>
         <h1 className="text-lg font-bold">{operation.trackingCode}</h1>
-        <p className="text-sm opacity-80 mt-1">{operation.operationType} · {operation.vehiclePlate}</p>
+        <p className="text-sm opacity-80 mt-1">{operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''}</p>
       </header>
 
       <div className="p-4 space-y-4 max-w-lg mx-auto">
@@ -70,7 +70,7 @@ export function SharePage() {
         <div className="grid grid-cols-2 gap-2">
           <InfoChip icon={User} label="Operador" value={operation.operatorName} />
           <InfoChip icon={Calendar} label="Fecha" value={date.toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })} />
-          <InfoChip icon={MapPin} label="Placa" value={operation.vehiclePlate} />
+          {operation.vehiclePlate && <InfoChip icon={MapPin} label="Placa" value={operation.vehiclePlate} />}
           <InfoChip icon={Clock} label="Hora" value={date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} />
         </div>
 

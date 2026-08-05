@@ -87,7 +87,7 @@ export function OperationDetailPage() {
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-base font-bold text-gray-900">{operation.trackingCode}</h2>
-          <p className="text-xs text-gray-500">{OPERATION_LABELS[operation.operationType]} · {operation.vehiclePlate}</p>
+          <p className="text-xs text-gray-500">{OPERATION_LABELS[operation.operationType]}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''}</p>
         </div>
         <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
           operation.status === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
@@ -100,11 +100,11 @@ export function OperationDetailPage() {
       <div className="grid grid-cols-2 gap-2">
         <InfoCard icon={User} label="Operador" value={operation.operatorName} />
         <InfoCard icon={Calendar} label="Fecha" value={date.toLocaleDateString('es-CO')} />
-        <InfoCard icon={MapPin} label="Placa" value={operation.vehiclePlate} />
+        {operation.vehiclePlate && <InfoCard icon={MapPin} label="Placa" value={operation.vehiclePlate} />}
         <InfoCard icon={Clock} label="Hora" value={date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} />
         <InfoCard icon={Camera} label="Fotos" value={`${totalPhotos} total`} />
         {(operation.lineaBlanca ?? []).length > 0 && (
-          <InfoCard icon={Package} label="L. Blanca" value={`${operation.lineaBlanca.length} prod.`} />
+          <InfoCard icon={Package} label="Productos" value={`${operation.lineaBlanca.length} prod.`} />
         )}
       </div>
 
@@ -122,7 +122,7 @@ export function OperationDetailPage() {
       )}
 
       {/* Share button */}
-      <ShareButton trackingCode={operation.trackingCode} operationType={operation.operationType} vehiclePlate={operation.vehiclePlate} operatorName={operation.operatorName} />
+      <ShareButton trackingCode={operation.trackingCode} operationType={operation.operationType} vehiclePlate={operation.vehiclePlate ?? ''} operatorName={operation.operatorName} />
 
       {/* Edit/Reopen button — visible when completed */}
       {operation.status === 'COMPLETADO' && (

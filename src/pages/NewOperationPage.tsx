@@ -11,15 +11,14 @@ export function NewOperationPage() {
   const presetType = params.get('type') as OperationType | null
 
   const [form, setForm] = useState<CreateOperationPayload>({
-    operationType: presetType ?? 'DESCARGUE',
+    operationType: presetType ?? 'PRODUCTOS_ENTRANTES',
     operatorName: getOperatorName(),
-    vehiclePlate: '',
     companyId: getCompanyId(),
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const canSubmit = form.operatorName.trim() && form.vehiclePlate.trim()
+  const canSubmit = form.operatorName.trim()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -63,7 +62,7 @@ export function NewOperationPage() {
         <fieldset className="space-y-2">
           <label className="text-sm font-medium text-gray-700">Tipo de operación</label>
           <div className="grid grid-cols-2 gap-2">
-            {(['DESCARGUE', 'CARGUE'] as OperationType[]).map((type) => (
+            {(['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES'] as OperationType[]).map((type) => (
               <button
                 key={type}
                 type="button"
@@ -93,20 +92,6 @@ export function NewOperationPage() {
           />
         </fieldset>
 
-        {/* Placa del vehículo */}
-        <fieldset className="space-y-1.5">
-          <label className="text-sm font-medium text-gray-700">Placa del vehículo *</label>
-          <input
-            type="text"
-            value={form.vehiclePlate}
-            onChange={(e) => setForm((f) => ({ ...f, vehiclePlate: e.target.value.toUpperCase() }))}
-            placeholder="Ej: ABC123"
-            maxLength={10}
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]"
-            autoComplete="off"
-          />
-        </fieldset>
-
         {/* Error */}
         {error && (
           <div className="flex items-start gap-2 p-3 bg-red-50 rounded-xl text-sm text-red-700">
@@ -127,7 +112,7 @@ export function NewOperationPage() {
               Creando...
             </>
           ) : (
-            'Iniciar registro fotográfico'
+            'Iniciar registro'
           )}
         </button>
       </form>

@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Calendar, ChevronRight, Filter, Loader2, Package, Search, Truck } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowUp, Calendar, ChevronRight, Filter, Loader2, Package, Search } from 'lucide-react'
 import { apiRequest, type Operation, type OperationType, type PaginatedOperations } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
 import { getCompanyId } from '../lib/context'
 
 const TYPE_ICONS: Record<OperationType, React.ComponentType<{ className?: string }>> = {
-  DESCARGUE: Truck,
-  CARGUE: Package,
+  PRODUCTOS_ENTRANTES: ArrowDown,
+  PRODUCTOS_SALIENTES: ArrowUp,
 }
 
 export function HistoryPage() {
@@ -21,6 +21,7 @@ export function HistoryPage() {
   const [filterType, setFilterType] = useState<string>('')
   const [filterDate, setFilterDate] = useState<string>('')
   const [filterOperator, setFilterOperator] = useState<string>('')
+  const [filterProduct, setFilterProduct] = useState<string>('')
   const [showFilters, setShowFilters] = useState(false)
 
   useEffect(() => {
@@ -35,6 +36,7 @@ export function HistoryPage() {
         if (filterType) params.set('operationType', filterType)
         if (filterDate) params.set('date', filterDate)
         if (filterOperator) params.set('operatorName', filterOperator)
+        if (filterProduct) params.set('productName', filterProduct)
 
         const result = await apiRequest<PaginatedOperations>(`/operations?${params.toString()}`)
         setOperations(result.operations)
@@ -46,7 +48,7 @@ export function HistoryPage() {
       }
     }
     void load()
-  }, [page, filterType, filterDate, filterOperator])
+  }, [page, filterType, filterDate, filterOperator, filterProduct])
 
   return (
     <div className="p-4 space-y-4">
@@ -82,8 +84,8 @@ export function HistoryPage() {
               className="px-3 py-2 rounded-lg border border-gray-200 text-xs"
             >
               <option value="">Todos los tipos</option>
-              <option value="DESCARGUE">Descargue</option>
-              <option value="CARGUE">Cargue</option>
+              <option value="PRODUCTOS_ENTRANTES">Productos Entrantes</option>
+              <option value="PRODUCTOS_SALIENTES">Productos Salientes</option>
             </select>
             <div className="relative">
               <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
@@ -102,6 +104,16 @@ export function HistoryPage() {
               value={filterOperator}
               onChange={(e) => { setFilterOperator(e.target.value); setPage(1) }}
               placeholder="Buscar por operador..."
+              className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-200 text-xs"
+            />
+          </div>
+          <div className="relative">
+            <Package className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              value={filterProduct}
+              onChange={(e) => { setFilterProduct(e.target.value); setPage(1) }}
+              placeholder="Buscar por nombre/código de producto..."
               className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-200 text-xs"
             />
           </div>
