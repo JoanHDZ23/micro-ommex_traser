@@ -1,16 +1,19 @@
 /**
  * Sube una imagen a Google Drive a través del webhook de Google Apps Script.
- *
- * Patrón GAS WebApp:
- * 1. POST al exec URL con redirect:'manual' → GAS responde 302
- * 2. El Location header apunta a script.googleusercontent.com con la respuesta JSON
- * 3. Se sigue con GET para obtener el JSON de respuesta
- *
- * Si la respuesta de GAS no se puede parsear (timeout, HTML, etc.)
- * pero sabemos que se subió, devolvemos éxito con URL construida.
  */
 
-const GAS_WEBHOOK_URL = process.env.GAS_WEBHOOK_URL ?? ''
+import { getDb } from './mongodb.js'
+
+async function getGasUrl(): Promise<string> {
+  // Primero intenta leer de la DB (configuración dinámica)
+  try {
+    const db = getDb()
+    const settings = await db.collection('settings').findOne({ _id: 'global' as unknown as import('mongodb').ObjectId })
+    if (settings?.gasWebhookUrl) return settings.gasWebhookUrl as string
+  } catch { /* DB not ready or no settings */ }
+  // Fallback a variable de entorno
+  return process.env.GAS_WEBHOOK_URL ?? ''
+}
 
 export interface DriveUploadResult {
   status: 'success' | 'error'
@@ -30,9 +33,11 @@ export interface DriveUploadPayload {
 }
 
 export async function uploadToDrive(payload: DriveUploadPayload): Promise<DriveUploadResult> {
+  const GAS_WEBHOOK_URL = await getGasUrl()
+
   if (!GAS_WEBHOOK_URL) {
     console.warn('[Drive] GAS_WEBHOOK_URL no configurado. Saltando upload.')
-    return { status: 'error', message: 'GAS_WEBHOOK_URL no configurado' }
+    return { status: 'error', message: 'GAS_WEBHOOK_URL no configurado. Ve a Configuración para agregar el link de Google Drive.' }
   }
 
   try {

@@ -3,6 +3,7 @@ import express from 'express'
 import { connectToMongo } from './lib/mongodb.js'
 import { operationsRouter } from './routes/operations.js'
 import { photosRouter } from './routes/photos.js'
+import { settingsRouter } from './routes/settings.js'
 
 const app = express()
 const PORT = Number(process.env.PORT) || 4000
@@ -21,6 +22,7 @@ app.use(express.json({ limit: '20mb' }))
 // Routes
 app.use('/api/operations', operationsRouter)
 app.use('/api/photos', photosRouter)
+app.use('/api/settings', settingsRouter)
 
 // Health check
 app.get('/api/health', (_req, res) => {
