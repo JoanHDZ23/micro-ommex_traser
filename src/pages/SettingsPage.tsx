@@ -83,22 +83,6 @@ export function SettingsPage() {
             Ejemplo: <code>https://drive.google.com/drive/folders/1BxiMVs0XRA...</code>
           </p>
         </fieldset>
-
-        {/* How to share */}
-        <details className="text-xs text-[var(--color-text-2)]">
-          <summary className="cursor-pointer font-medium text-[var(--color-primary)]">
-            ¿Cómo dar acceso al Apps Script?
-          </summary>
-          <ol className="list-decimal pl-4 space-y-1 pt-2">
-            <li>Abre la carpeta en Google Drive</li>
-            <li>Clic derecho → <strong>Compartir</strong></li>
-            <li>Agrega el correo del Apps Script como <strong>Editor</strong></li>
-            <li>Copia la URL de la carpeta y pégala arriba</li>
-          </ol>
-          <p className="mt-2 text-[10px] text-[var(--color-text-3)]">
-            El correo del Apps Script lo encuentras en Google Apps Script → Configuración del proyecto → Cuenta de servicio.
-          </p>
-        </details>
       </section>
 
       {/* Open drive link */}
