@@ -2,36 +2,35 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, CheckCircle2, ExternalLink, Loader2, Save } from 'lucide-react'
 import { apiRequest } from '../lib/api'
-
-interface Settings {
-  gasWebhookUrl: string
-  driveFolderId: string
-}
+import { getCompanyId } from '../lib/context'
 
 export function SettingsPage() {
   const navigate = useNavigate()
-  const [settings, setSettings] = useState<Settings>({ gasWebhookUrl: '', driveFolderId: '' })
+  const companyId = getCompanyId()
+  const [driveFolderUrl, setDriveFolderUrl] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!companyId) { setLoading(false); return }
     const load = async () => {
       try {
-        const data = await apiRequest<Settings>('/settings')
-        setSettings(data)
+        const data = await apiRequest<{ driveFolderUrl: string }>(`/settings?companyId=${encodeURIComponent(companyId)}`)
+        setDriveFolderUrl(data.driveFolderUrl ?? '')
       } catch { /* no settings yet */ }
       finally { setLoading(false) }
     }
     void load()
-  }, [])
+  }, [companyId])
 
   const handleSave = async () => {
+    if (!companyId) { setFeedback('No se encontró el ID de empresa.'); return }
     setSaving(true)
     setFeedback(null)
     try {
-      await apiRequest('/settings', { method: 'PUT', body: settings })
-      setFeedback('✓ Configuración guardada')
+      await apiRequest('/settings', { method: 'PUT', body: { companyId, driveFolderUrl } })
+      setFeedback('✓ Carpeta de Drive guardada correctamente')
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error al guardar')
     } finally {
@@ -55,78 +54,79 @@ export function SettingsPage() {
           <ArrowLeft className="w-5 h-5 text-gray-600" />
         </button>
         <div>
-          <h2 className="text-lg font-bold text-gray-900">Configuración</h2>
-          <p className="text-xs text-gray-500">Google Drive y almacenamiento de fotos</p>
+          <h2 className="text-lg font-bold text-gray-900">Configuración de Drive</h2>
+          <p className="text-xs text-gray-500">Carpeta donde se guardan las fotos de esta empresa</p>
         </div>
       </div>
 
-      {/* Google Drive Config */}
+      {/* Drive folder config */}
       <section className="space-y-3 p-4 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
         <div className="flex items-center gap-2">
-          <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg" alt="Drive" className="w-6 h-6" />
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Google Drive</h3>
+          <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg" alt="Drive" className="w-6 h-6" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">Carpeta de Google Drive</h3>
         </div>
+
         <p className="text-xs text-[var(--color-text-2)]">
-          Configura el enlace del Google Apps Script (GAS) que se usa para subir fotos a Google Drive.
+          Pega la URL de la carpeta de Google Drive donde se guardarán las fotos. Asegúrate de que el correo del Apps Script tenga acceso de editor a esa carpeta.
         </p>
 
-        {/* GAS Webhook URL */}
         <fieldset className="space-y-1.5">
-          <label className="text-xs font-medium text-[var(--color-text-2)]">URL del Apps Script (Webhook)</label>
+          <label className="text-xs font-medium text-[var(--color-text-2)]">URL de la carpeta de Drive</label>
           <input
             type="url"
-            value={settings.gasWebhookUrl}
-            onChange={(e) => setSettings((s) => ({ ...s, gasWebhookUrl: e.target.value }))}
-            placeholder="https://script.google.com/macros/s/.../exec"
+            value={driveFolderUrl}
+            onChange={(e) => setDriveFolderUrl(e.target.value)}
+            placeholder="https://drive.google.com/drive/folders/..."
             className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
           />
           <p className="text-[10px] text-[var(--color-text-3)]">
-            Este es el link de despliegue del Google Apps Script que sube las fotos a tu Drive.
+            Ejemplo: <code>https://drive.google.com/drive/folders/1BxiMVs0XRA...</code>
           </p>
         </fieldset>
 
-        {/* Drive Folder ID */}
-        <fieldset className="space-y-1.5">
-          <label className="text-xs font-medium text-[var(--color-text-2)]">ID de carpeta de Drive (opcional)</label>
-          <input
-            type="text"
-            value={settings.driveFolderId}
-            onChange={(e) => setSettings((s) => ({ ...s, driveFolderId: e.target.value }))}
-            placeholder="Ej: 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
-            className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-          />
-          <p className="text-[10px] text-[var(--color-text-3)]">
-            ID de la carpeta raíz donde se guardarán las fotos. Dejarlo vacío usa la carpeta por defecto del script.
-          </p>
-        </fieldset>
-
-        {/* Instructions */}
-        <details className="text-xs text-[var(--color-text-2)] space-y-1">
-          <summary className="cursor-pointer font-medium text-[var(--color-primary)]">¿Cómo obtener la URL?</summary>
+        {/* How to share */}
+        <details className="text-xs text-[var(--color-text-2)]">
+          <summary className="cursor-pointer font-medium text-[var(--color-primary)]">
+            ¿Cómo dar acceso al Apps Script?
+          </summary>
           <ol className="list-decimal pl-4 space-y-1 pt-2">
-            <li>Abre <a href="https://script.google.com" target="_blank" rel="noopener noreferrer" className="text-[var(--color-primary)] underline">script.google.com</a></li>
-            <li>Crea o abre el proyecto del Apps Script</li>
-            <li>Ve a <strong>Deploy → Manage deployments</strong></li>
-            <li>Copia la <strong>Web app URL</strong> (termina en <code>/exec</code>)</li>
-            <li>Pégala aquí arriba</li>
+            <li>Abre la carpeta en Google Drive</li>
+            <li>Clic derecho → <strong>Compartir</strong></li>
+            <li>Agrega el correo del Apps Script como <strong>Editor</strong></li>
+            <li>Copia la URL de la carpeta y pégala arriba</li>
           </ol>
+          <p className="mt-2 text-[10px] text-[var(--color-text-3)]">
+            El correo del Apps Script lo encuentras en Google Apps Script → Configuración del proyecto → Cuenta de servicio.
+          </p>
         </details>
       </section>
 
-      {/* Save button */}
+      {/* Open drive link */}
+      {driveFolderUrl && (
+        <a
+          href={driveFolderUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-primary)] text-sm font-medium flex items-center justify-center gap-2 hover:bg-[var(--color-primary-bg)] transition-colors"
+        >
+          <ExternalLink className="w-4 h-4" /> Abrir carpeta en Drive
+        </a>
+      )}
+
+      {/* Save */}
       <button
         onClick={() => void handleSave()}
-        disabled={saving}
+        disabled={saving || !driveFolderUrl.trim()}
         className="w-full py-3 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]"
       >
         {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-        Guardar configuración
+        Guardar carpeta
       </button>
 
       {/* Feedback */}
       {feedback && (
         <div className={`flex items-start gap-2 p-3 rounded-xl text-sm ${feedback.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-          {feedback.startsWith('✓') ? <CheckCircle2 className="w-4 h-4 mt-0.5" /> : <ExternalLink className="w-4 h-4 mt-0.5" />}
+          <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
           <p>{feedback}</p>
         </div>
       )}
