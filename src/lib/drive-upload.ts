@@ -49,7 +49,7 @@ export async function uploadToDrive(payload: DriveUploadPayload): Promise<DriveU
   const parentFolderId = await getCompanyFolderId(payload.companyId)
 
   try {
-    const bodyStr = JSON.stringify({ ...payload, parentFolderId: parentFolderId || undefined })
+    const bodyStr = JSON.stringify({ ...payload, parentFolderId: parentFolderId || undefined, companyId: undefined })
     console.log(`[Drive] Subiendo ${payload.fileName} a carpeta ${payload.subfolderName}${parentFolderId ? ` (empresa folderId: ${parentFolderId})` : ''} (${Math.round(payload.base64Image.length / 1024)} KB)...`)
 
     // Paso 1: POST al GAS exec URL con redirect:'manual'

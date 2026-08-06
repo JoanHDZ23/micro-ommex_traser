@@ -492,26 +492,42 @@ operationsRouter.delete('/:trackingCode', async (req, res) => {
       return
     }
 
-    const folderName = `${operation.operationType}_${operation.vehiclePlate}`
+    const folderName = operation.vehiclePlate
+      ? `${operation.operationType}_${operation.vehiclePlate}`
+      : `${operation.operationType}_${trackingCode}`
+
+    // Obtener parentFolderId de la empresa
+    let parentFolderId = ''
+    if (operation.companyId) {
+      try {
+        const { getDb } = await import('../lib/mongodb.js')
+        const db = getDb()
+        const settings = await db.collection('company_settings').findOne({ companyId: operation.companyId })
+        if (settings?.driveFolderId) parentFolderId = settings.driveFolderId as string
+      } catch { /* no settings */ }
+    }
 
     // Eliminar carpeta de Drive vía GAS
     let driveDeleted = false
     if (GAS_URL) {
       try {
-        const deleteUrl = `${GAS_URL}?action=delete&folder=${encodeURIComponent(folderName)}`
+        let deleteUrl = `${GAS_URL}?action=delete&folder=${encodeURIComponent(folderName)}`
+        if (parentFolderId) deleteUrl += `&parentFolderId=${encodeURIComponent(parentFolderId)}`
         const gasResp = await fetch(deleteUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(20_000) })
         const gasText = await gasResp.text()
-        const gasData = JSON.parse(gasText) as { status: string; message?: string }
-        driveDeleted = gasData.status === 'success'
-        if (!driveDeleted) {
-          console.warn(`[delete] GAS no pudo eliminar carpeta: ${gasData.message}`)
+        try {
+          const gasData = JSON.parse(gasText) as { status: string; message?: string }
+          driveDeleted = gasData.status === 'success'
+          if (!driveDeleted) console.warn(`[delete] GAS no pudo eliminar carpeta: ${gasData.message}`)
+        } catch {
+          console.warn('[delete] Respuesta GAS no válida (no JSON):', gasText.substring(0, 100))
         }
       } catch (gasErr) {
         console.warn('[delete] Error al eliminar carpeta de Drive:', gasErr instanceof Error ? gasErr.message : gasErr)
       }
     }
 
-    // Eliminar de MongoDB
+    // Siempre eliminar de MongoDB, independiente del resultado de Drive
     await col.deleteOne({ trackingCode })
 
     res.json({
