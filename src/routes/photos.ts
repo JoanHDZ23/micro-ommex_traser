@@ -166,8 +166,21 @@ photosRouter.post('/sync/:trackingCode', async (req, res) => {
     const operation = await col.findOne({ trackingCode })
     if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
 
-    const folderName = `${operation.operationType}_${operation.vehiclePlate}`
+    const folderName = operation.vehiclePlate
+      ? `${operation.operationType}_${operation.vehiclePlate}`
+      : `${operation.operationType}_${trackingCode}`
     const allFiles = new Map<string, { fileId: string; driveUrl: string }>()
+
+    // Obtener el parentFolderId de la empresa
+    let parentFolderId = ''
+    if (operation.companyId) {
+      try {
+        const { getDb } = await import('../lib/mongodb.js')
+        const db = getDb()
+        const settings = await db.collection('company_settings').findOne({ companyId: operation.companyId })
+        if (settings?.driveFolderId) parentFolderId = settings.driveFolderId as string
+      } catch { /* no settings */ }
+    }
 
     // Opción 1: Files enviados manualmente desde el frontend
     if (Array.isArray(manualFiles) && manualFiles.length > 0) {
@@ -177,10 +190,11 @@ photosRouter.post('/sync/:trackingCode', async (req, res) => {
         }
       }
     }
-    // Opción 2: GET al GAS con action=sync (nuevo deployment)
+    // Opción 2: GET al GAS con action=sync
     else if (GAS_URL) {
       try {
-        const syncUrl = `${GAS_URL}?action=sync&folder=${encodeURIComponent(folderName)}`
+        let syncUrl = `${GAS_URL}?action=sync&folder=${encodeURIComponent(folderName)}`
+        if (parentFolderId) syncUrl += `&parentFolderId=${encodeURIComponent(parentFolderId)}`
         console.log(`[sync] Llamando GAS: ${syncUrl}`)
         const gasResp = await fetch(syncUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(30_000) })
         const text = await gasResp.text()
@@ -204,15 +218,22 @@ photosRouter.post('/sync/:trackingCode', async (req, res) => {
     }
 
     if (allFiles.size === 0) {
+      // Si no hay archivos pero las fotos sí tienen fileId real, no es un error
+      const photos = (operation.photos as PhotoRecord[]) ?? []
+      const lineaBlanca = (operation.lineaBlanca ?? []) as Array<{ photos: PhotoRecord[] }>
+      const allPhotos = [...photos, ...lineaBlanca.flatMap((p) => p.photos)]
+      const hasPending = allPhotos.some((p) => p.fileId === 'pending')
+
+      if (!hasPending) {
+        // Todas las fotos ya están sincronizadas
+        res.json({ message: 'Todas las fotos ya están sincronizadas.', filesInDrive: 0, updated: 0 })
+        return
+      }
+
       res.status(400).json({
-        message: 'No se pudieron obtener los archivos de Drive. Necesitas actualizar el deployment de Apps Script.',
-        instructions: [
-          '1. Ve a script.google.com con la cuenta familiahernandezbilbao@gmail.com',
-          '2. Reemplaza Code.gs con el contenido del archivo apps-script/Code.gs de este proyecto',
-          '3. Deploy → Manage deployments → Editar → Version: New version → Deploy',
-          '4. Copia la nueva URL si cambió y actualízala en backend/.env (GAS_WEBHOOK_URL)',
-          '5. Intenta sincronizar de nuevo',
-        ],
+        message: !GAS_URL
+          ? 'El servicio de Google Drive no está configurado. Contacta al administrador.'
+          : 'No se encontraron archivos en la carpeta de Drive. Verifica que la carpeta esté configurada correctamente en Configuración.',
       })
       return
     }
