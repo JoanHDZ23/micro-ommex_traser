@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Camera, Check, MessageSquare, RotateCcw, Send, X } from 'lucide-react'
+import { Camera, Check, Flashlight, FlashlightOff, MessageSquare, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
 
 interface CameraCaptureProps {
   stepName: string
@@ -15,22 +15,34 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
   const [error, setError] = useState<string | null>(null)
   const [comment, setComment] = useState('')
   const [showCommentInput, setShowCommentInput] = useState(false)
+  const [torchOn, setTorchOn] = useState(false)
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment')
 
-  const startCamera = useCallback(async () => {
+  const startCamera = useCallback(async (facing?: 'environment' | 'user') => {
     try {
       setError(null)
+      // Stop previous stream
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+        video: {
+          facingMode: facing ?? facingMode,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          focusMode: { ideal: 'continuous' },
+        } as MediaTrackConstraints,
         audio: false,
       })
       streamRef.current = stream
       if (videoRef.current) {
         videoRef.current.srcObject = stream
       }
+      setTorchOn(false)
     } catch {
       setError('No se pudo acceder a la cámara. Verifica los permisos.')
     }
-  }, [])
+  }, [facingMode])
 
   const stopCamera = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop())
@@ -41,6 +53,23 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
     void startCamera()
     return () => stopCamera()
   }, [startCamera, stopCamera])
+
+  const toggleTorch = async () => {
+    const stream = streamRef.current
+    if (!stream) return
+    const track = stream.getVideoTracks()[0]
+    if (!track) return
+    try {
+      await track.applyConstraints({ advanced: [{ torch: !torchOn } as MediaTrackConstraintSet] })
+      setTorchOn(!torchOn)
+    } catch { /* torch not supported on this device */ }
+  }
+
+  const switchCamera = () => {
+    const newFacing = facingMode === 'environment' ? 'user' : 'environment'
+    setFacingMode(newFacing)
+    void startCamera(newFacing)
+  }
 
   const captureFrame = () => {
     const video = videoRef.current
@@ -81,12 +110,33 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
             <p className="text-xs opacity-80">Paso {stepIndex + 1}</p>
             <p className="text-sm font-semibold">{stepName}</p>
           </div>
-          <button
-            onClick={onCancel}
-            className="w-9 h-9 rounded-full bg-white/20 backdrop-blur flex items-center justify-center"
-          >
-            <X className="w-5 h-5 text-white" />
-          </button>
+          <div className="flex items-center gap-2">
+            {!preview && (
+              <>
+                {/* Torch */}
+                <button
+                  onClick={() => void toggleTorch()}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center ${torchOn ? 'bg-yellow-400 text-black' : 'bg-white/20 text-white'}`}
+                >
+                  {torchOn ? <FlashlightOff className="w-4 h-4" /> : <Flashlight className="w-4 h-4" />}
+                </button>
+                {/* Switch camera */}
+                <button
+                  onClick={switchCamera}
+                  className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center"
+                >
+                  <RefreshCw className="w-4 h-4 text-white" />
+                </button>
+              </>
+            )}
+            {/* Close */}
+            <button
+              onClick={onCancel}
+              className="w-9 h-9 rounded-full bg-white/20 backdrop-blur flex items-center justify-center"
+            >
+              <X className="w-5 h-5 text-white" />
+            </button>
+          </div>
         </div>
       </div>
 

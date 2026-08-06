@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowDown, ArrowRight, ArrowUp, ClipboardList } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Settings } from 'lucide-react'
 
 export function HomePage() {
   const navigate = useNavigate()
@@ -37,6 +37,18 @@ export function HomePage() {
         <div className="flex items-center gap-3">
           <ClipboardList className="w-5 h-5 text-[var(--color-text-3)]" />
           <span className="text-sm font-medium text-[var(--color-text)]">Ver historial de operaciones</span>
+        </div>
+        <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
+      </button>
+
+      {/* Settings link */}
+      <button
+        onClick={() => navigate('/settings')}
+        className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-surface)] rounded-[var(--radius)] border border-[var(--color-border)] hover:shadow-sm transition-shadow"
+      >
+        <div className="flex items-center gap-3">
+          <Settings className="w-5 h-5 text-[var(--color-text-3)]" />
+          <span className="text-sm font-medium text-[var(--color-text)]">Configuración (Google Drive)</span>
         </div>
         <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
       </button>
