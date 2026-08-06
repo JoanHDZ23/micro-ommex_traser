@@ -4,17 +4,21 @@
 
 import { getDb } from './mongodb.js'
 
-async function getGasUrl(): Promise<string> {
-  // Primero intenta leer de la DB (configuración dinámica)
-  try {
-    const db = getDb()
-    const settings = await db.collection('settings').findOne({ _id: 'global' as unknown as import('mongodb').ObjectId })
-    if (settings?.gasWebhookUrl) return settings.gasWebhookUrl as string
-  } catch { /* DB not ready or no settings */ }
-  // Fallback a variable de entorno
+// Obtiene la URL del GAS desde env (global para todas las empresas)
+function getGasUrl(): string {
   return process.env.GAS_WEBHOOK_URL ?? ''
 }
 
+// Obtiene el folderId de Drive configurado para una empresa específica
+async function getCompanyFolderId(companyId?: string): Promise<string> {
+  if (!companyId) return process.env.DRIVE_FOLDER_ID ?? ''
+  try {
+    const db = getDb()
+    const settings = await db.collection('company_settings').findOne({ companyId })
+    if (settings?.driveFolderId) return settings.driveFolderId as string
+  } catch { /* DB not ready */ }
+  return process.env.DRIVE_FOLDER_ID ?? ''
+}
 export interface DriveUploadResult {
   status: 'success' | 'error'
   fileId?: string
@@ -30,19 +34,23 @@ export interface DriveUploadPayload {
   mimeType: string
   subfolderName: string
   subSubfolderName?: string   // Subcarpeta dentro del vehículo (código de producto)
+  companyId?: string          // Para usar la carpeta de Drive de la empresa
 }
 
 export async function uploadToDrive(payload: DriveUploadPayload): Promise<DriveUploadResult> {
-  const GAS_WEBHOOK_URL = await getGasUrl()
+  const GAS_WEBHOOK_URL = getGasUrl()
 
   if (!GAS_WEBHOOK_URL) {
     console.warn('[Drive] GAS_WEBHOOK_URL no configurado. Saltando upload.')
     return { status: 'error', message: 'GAS_WEBHOOK_URL no configurado. Ve a Configuración para agregar el link de Google Drive.' }
   }
 
+  // Obtener folderId de la empresa si está configurado
+  const parentFolderId = await getCompanyFolderId(payload.companyId)
+
   try {
-    const bodyStr = JSON.stringify(payload)
-    console.log(`[Drive] Subiendo ${payload.fileName} a carpeta ${payload.subfolderName} (${Math.round(payload.base64Image.length / 1024)} KB)...`)
+    const bodyStr = JSON.stringify({ ...payload, parentFolderId: parentFolderId || undefined })
+    console.log(`[Drive] Subiendo ${payload.fileName} a carpeta ${payload.subfolderName}${parentFolderId ? ` (empresa folderId: ${parentFolderId})` : ''} (${Math.round(payload.base64Image.length / 1024)} KB)...`)
 
     // Paso 1: POST al GAS exec URL con redirect:'manual'
     const postResponse = await fetch(GAS_WEBHOOK_URL, {

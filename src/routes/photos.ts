@@ -108,7 +108,7 @@ photosRouter.post('/upload', async (req, res) => {
     const productSuffix = productCode?.trim() ? `_${productCode.trim()}` : ''
     const fileName = `${trackingCode}_paso${idx + 1}_${cleanStepName}${productSuffix}${suffix}.jpg`
 
-    const driveResult = await uploadToDrive({ base64Image, fileName, mimeType: mimeType || 'image/jpeg', subfolderName, subSubfolderName })
+    const driveResult = await uploadToDrive({ base64Image, fileName, mimeType: mimeType || 'image/jpeg', subfolderName, subSubfolderName, companyId: operation.companyId as string | undefined })
 
     let fileId = driveResult.fileId ?? ''
     let driveUrl = driveResult.driveUrl ?? ''

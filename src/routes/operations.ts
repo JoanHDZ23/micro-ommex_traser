@@ -290,6 +290,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
       mimeType: mimeType || 'image/jpeg',
       subfolderName: vehicleFolder,
       subSubfolderName: productCode,
+      companyId: operation.companyId as string | undefined,
     })
 
     let fileId = driveResult.fileId ?? ''
