@@ -21,6 +21,18 @@ photosRouter.delete('/:trackingCode/:photoIndex', async (req, res) => {
     const photos = (operation.photos as PhotoRecord[]) ?? []
     if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
 
+    // Eliminar archivo de Drive si tiene fileId real
+    const photo = photos[idx]
+    if (photo.fileId && photo.fileId !== 'pending') {
+      const GAS_URL = process.env.GAS_WEBHOOK_URL ?? ''
+      if (GAS_URL) {
+        try {
+          const deleteUrl = `${GAS_URL}?action=deleteFile&fileId=${encodeURIComponent(photo.fileId)}`
+          await fetch(deleteUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(15_000) })
+        } catch (e) { console.warn('[photos] Error al eliminar de Drive:', e) }
+      }
+    }
+
     photos.splice(idx, 1)
     await col.updateOne({ trackingCode }, { $set: { photos, updatedAt: new Date().toISOString() } })
     res.json({ message: 'Foto eliminada.', remaining: photos.length })

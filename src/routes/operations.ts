@@ -555,11 +555,32 @@ operationsRouter.delete('/:trackingCode/linea-blanca/:productCode', async (req, 
     if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
 
     const products = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
+    const productToDelete = products.find((p) => p.productCode === productCode)
     const filtered = products.filter((p) => p.productCode !== productCode)
 
     if (filtered.length === products.length) {
       res.status(404).json({ message: `Producto "${productCode}" no encontrado.` })
       return
+    }
+
+    // Eliminar subcarpeta del producto en Drive
+    const GAS_URL = process.env.GAS_WEBHOOK_URL ?? ''
+    if (GAS_URL && productToDelete) {
+      try {
+        const folderName = operation.vehiclePlate
+          ? `${operation.operationType}_${operation.vehiclePlate}`
+          : `${operation.operationType}_${trackingCode}`
+        let parentFolderId = ''
+        if (operation.companyId) {
+          const { getDb } = await import('../lib/mongodb.js')
+          const db = getDb()
+          const settings = await db.collection('company_settings').findOne({ companyId: operation.companyId })
+          if (settings?.driveFolderId) parentFolderId = settings.driveFolderId as string
+        }
+        let deleteUrl = `${GAS_URL}?action=deleteSubfolder&folder=${encodeURIComponent(folderName)}&subfolder=${encodeURIComponent(productCode)}`
+        if (parentFolderId) deleteUrl += `&parentFolderId=${encodeURIComponent(parentFolderId)}`
+        await fetch(deleteUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(15_000) })
+      } catch (e) { console.warn('[operations] Error al eliminar subcarpeta de Drive:', e) }
     }
 
     await col.updateOne({ trackingCode }, { $set: { lineaBlanca: filtered, updatedAt: new Date().toISOString() } })
@@ -588,6 +609,18 @@ operationsRouter.delete('/:trackingCode/linea-blanca/:productCode/photo/:photoIn
 
     const photos = products[productIdx].photos
     if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
+
+    // Eliminar archivo de Drive
+    const photoToDelete = photos[idx]
+    if (photoToDelete.fileId && photoToDelete.fileId !== 'pending') {
+      const GAS_URL = process.env.GAS_WEBHOOK_URL ?? ''
+      if (GAS_URL) {
+        try {
+          const deleteUrl = `${GAS_URL}?action=deleteFile&fileId=${encodeURIComponent(photoToDelete.fileId)}`
+          await fetch(deleteUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(15_000) })
+        } catch (e) { console.warn('[operations] Error al eliminar foto de Drive:', e) }
+      }
+    }
 
     photos.splice(idx, 1)
     // Si quitó fotos y estaba completado, volver a EN_PROCESO
