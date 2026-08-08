@@ -277,9 +277,11 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
       await col.updateOne({ trackingCode }, { $set: { [`lineaBlanca.${productIdx}.status`]: 'EN_PROCESO' } })
     }
 
-    // Sube a Drive — subcarpeta del producto dentro de la del vehículo
+    // Sube a Drive — subcarpeta del producto dentro de la operación
     const { uploadToDrive } = await import('../lib/drive-upload.js')
-    const vehicleFolder = `${operation.operationType}_${operation.vehiclePlate}`
+    const vehicleFolder = operation.vehiclePlate
+      ? `${operation.operationType}_${operation.vehiclePlate}`
+      : `${operation.operationType}_${trackingCode}`
     const stepName = LINEA_BLANCA_STEPS[idx] ?? `Foto_${idx + 1}`
     const safeStepName = stepName.replace(/[^a-zA-Z0-9]/g, '_')
     const fileName = `${trackingCode}_LB_${productCode}_foto${idx + 1}_${safeStepName}.jpg`

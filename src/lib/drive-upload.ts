@@ -52,36 +52,19 @@ export async function uploadToDrive(payload: DriveUploadPayload): Promise<DriveU
     const bodyStr = JSON.stringify({ ...payload, parentFolderId: parentFolderId || undefined, companyId: undefined })
     console.log(`[Drive] Subiendo ${payload.fileName} a carpeta ${payload.subfolderName}${parentFolderId ? ` (empresa folderId: ${parentFolderId})` : ''} (${Math.round(payload.base64Image.length / 1024)} KB)...`)
 
-    // Paso 1: POST al GAS exec URL con redirect:'manual'
+    // POST al GAS — seguir redirects automáticamente
     const postResponse = await fetch(GAS_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: bodyStr,
-      redirect: 'manual',
+      redirect: 'follow',
       signal: AbortSignal.timeout(120_000), // 2 min timeout — imágenes grandes
     })
 
-    // Paso 2: Capturar el redirect y seguirlo con GET
-    let text = ''
+    const text = await postResponse.text()
+    console.log(`[Drive] Respuesta (${postResponse.status}):`, text.substring(0, 300))
 
-    if (postResponse.status >= 300 && postResponse.status < 400) {
-      const location = postResponse.headers.get('location')
-      if (location) {
-        console.log('[Drive] Siguiendo redirect de GAS...')
-        const getResponse = await fetch(location, {
-          method: 'GET',
-          redirect: 'follow',
-          signal: AbortSignal.timeout(30_000),
-        })
-        text = await getResponse.text()
-      } else {
-        text = await postResponse.text()
-      }
-    } else {
-      text = await postResponse.text()
-    }
-
-    // Paso 3: Intentar parsear JSON
+    // Intentar parsear JSON
     if (text) {
       try {
         const result = JSON.parse(text) as DriveUploadResult
@@ -89,19 +72,22 @@ export async function uploadToDrive(payload: DriveUploadPayload): Promise<DriveU
           console.log(`[Drive] ✓ Subido: ${payload.fileName} → fileId: ${result.fileId}`)
           return result
         }
-        // GAS devolvió error explícito
         console.warn(`[Drive] ✗ GAS error: ${result.message}`)
         return result
       } catch {
-        // Respuesta no es JSON válido (HTML, etc.)
+        // Si no es JSON, intenta extraer de un wrapper {success: true, data: {...}}
+        try {
+          const wrapper = JSON.parse(text) as { success?: boolean; data?: DriveUploadResult }
+          if (wrapper.success && wrapper.data?.status === 'success') {
+            console.log(`[Drive] ✓ Subido (wrapper): ${payload.fileName} → fileId: ${wrapper.data.fileId}`)
+            return wrapper.data
+          }
+        } catch { /* ignore */ }
         console.warn('[Drive] Respuesta no-JSON:', text.substring(0, 200))
       }
     }
 
-    // Si llegamos aquí, GAS no devolvió una respuesta parseable.
-    // Pero la imagen PUEDE haberse subido (GAS procesa antes de redirigir).
-    // Devolvemos error para que el frontend lo maneje.
-    return { status: 'error', message: 'No se recibió confirmación de Google Drive. Verifica si la imagen se subió.' }
+    return { status: 'error', message: 'No se recibió confirmación de Google Drive.' }
 
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error desconocido'
