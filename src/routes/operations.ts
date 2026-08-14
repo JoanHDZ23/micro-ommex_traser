@@ -116,7 +116,7 @@ operationsRouter.get('/search-for-link', async (req, res) => {
 
   try {
     const col = getOperationsCollection()
-    const filter: Record<string, unknown> = { status: 'EN_PROCESO' }
+    const filter: Record<string, unknown> = {}
     if (exclude) filter.trackingCode = { $ne: exclude }
     if (companyId) filter.companyId = companyId
     if (q) {
@@ -672,10 +672,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/link', async (re
     const targetOp = await col.findOne({ trackingCode: targetTrackingCode.trim() })
     if (!targetOp) { res.status(404).json({ message: `Operación destino "${targetTrackingCode}" no encontrada.` }); return }
 
-    if (targetOp.status === 'COMPLETADO') {
-      res.status(409).json({ message: 'La operación destino ya está completada. Reábrela primero.' })
-      return
-    }
+    // Permitir vincular aunque la operación destino esté completada
 
     // Verificar que no exista ya en la operación destino
     const targetProducts = (targetOp.lineaBlanca as LineaBlancaProduct[]) ?? []
