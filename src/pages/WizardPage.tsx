@@ -631,11 +631,10 @@ export function WizardPage() {
                       {/* Unlink (only if linked) */}
                       {product.linkedTo && product.linkedTo.length > 0 && (
                         <button onClick={() => {
-                          const target = product.linkedTo![0]
-                          if (confirm(`¿Desvincular producto de la operación ${target}?`))
-                            void handleUnlinkProduct(product.productCode, target)
+                          if (confirm(`¿Quitar "${product.productCode}" de este registro?`))
+                            void handleUnlinkProduct(product.productCode, product.linkedTo![0])
                         }}
-                          className="p-1 rounded text-orange-400 hover:text-orange-600 hover:bg-orange-50" title="Desvincular">
+                          className="p-1 rounded text-orange-400 hover:text-orange-600 hover:bg-orange-50" title="Quitar de este registro">
                           <X className="w-3.5 h-3.5" />
                         </button>
                       )}
