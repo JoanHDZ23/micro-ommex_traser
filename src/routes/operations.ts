@@ -727,7 +727,8 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/link', async (re
 
 /**
  * POST /api/operations/:trackingCode/linea-blanca/:productCode/unlink
- * Desvincula un producto de otra operación.
+ * Desvincula y elimina el producto de la operación actual.
+ * Quita la referencia linkedTo en la operación vinculada.
  * Body: { targetTrackingCode }
  */
 operationsRouter.post('/:trackingCode/linea-blanca/:productCode/unlink', async (req, res) => {
@@ -742,7 +743,6 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/unlink', async (
   try {
     const col = getOperationsCollection()
 
-    // Quitar el targetTrackingCode del linkedTo del producto en esta operación
     const operation = await col.findOne({ trackingCode })
     if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
 
@@ -750,14 +750,14 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/unlink', async (
     const productIdx = products.findIndex((p) => p.productCode === productCode)
     if (productIdx === -1) { res.status(404).json({ message: `Producto "${productCode}" no encontrado.` }); return }
 
-    const currentLinked = products[productIdx].linkedTo ?? []
-    const newLinked = currentLinked.filter((tc) => tc !== targetTrackingCode.trim())
+    // Eliminar el producto de esta operación
+    const filtered = products.filter((p) => p.productCode !== productCode)
     await col.updateOne(
-      { trackingCode, 'lineaBlanca.productCode': productCode },
-      { $set: { [`lineaBlanca.${productIdx}.linkedTo`]: newLinked, updatedAt: new Date().toISOString() } },
+      { trackingCode },
+      { $set: { lineaBlanca: filtered, updatedAt: new Date().toISOString() } },
     )
 
-    // También quitar este trackingCode del linkedTo del producto en la operación target
+    // Quitar este trackingCode del linkedTo del producto en la operación vinculada
     const targetOp = await col.findOne({ trackingCode: targetTrackingCode.trim() })
     if (targetOp) {
       const targetProducts = (targetOp.lineaBlanca as LineaBlancaProduct[]) ?? []
@@ -772,7 +772,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/unlink', async (
       }
     }
 
-    res.json({ message: `Producto "${productCode}" desvinculado de ${targetTrackingCode}.` })
+    res.json({ message: `Producto "${productCode}" desvinculado y eliminado de esta operación.` })
   } catch (err) {
     console.error('[operations] Error al desvincular:', err)
     res.status(500).json({ message: 'Error al desvincular producto.' })
