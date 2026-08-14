@@ -81,7 +81,8 @@ export function WizardPage() {
         method: 'POST',
         body: { targetTrackingCode: linkedTrackingCode },
       })
-      setFeedback(`✓ Producto desvinculado de ${linkedTrackingCode}`)
+      setFeedback(`✓ Producto desvinculado y eliminado de este registro`)
+      if (activeLbProduct === productCode) setActiveLbProduct(null)
       await loadOperation()
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error al desvincular')
