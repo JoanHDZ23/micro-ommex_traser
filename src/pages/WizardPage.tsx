@@ -660,14 +660,36 @@ export function WizardPage() {
                   </div>
                   {/* Label data */}
                   {product.labelData && Object.values(product.labelData).some(Boolean) && (
-                    <div className="mt-2 pt-2 border-t border-[var(--color-border)] grid grid-cols-2 gap-x-3 gap-y-0.5">
-                      {product.labelData.poNumber && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">PO:</span> {product.labelData.poNumber}</p>}
-                      {product.labelData.sku && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">SKU:</span> {product.labelData.sku}</p>}
-                      {product.labelData.sscc && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">SSCC:</span> {product.labelData.sscc}</p>}
-                      {product.labelData.np && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">NP:</span> {product.labelData.np}</p>}
-                      {product.labelData.destinatario && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Dest:</span> {product.labelData.destinatario}</p>}
-                      {product.labelData.transportadora && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">Transp:</span> {product.labelData.transportadora}</p>}
-                      {product.labelData.descripcion && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Desc:</span> {product.labelData.descripcion}</p>}
+                    <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                        {product.labelData.poNumber && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">PO:</span> {product.labelData.poNumber}</p>}
+                        {product.labelData.sku && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">SKU:</span> {product.labelData.sku}</p>}
+                        {product.labelData.sscc && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">SSCC:</span> {product.labelData.sscc}</p>}
+                        {product.labelData.np && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">NP:</span> {product.labelData.np}</p>}
+                        {product.labelData.destinatario && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Dest:</span> {product.labelData.destinatario}</p>}
+                        {product.labelData.transportadora && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">Transp:</span> {product.labelData.transportadora}</p>}
+                        {product.labelData.descripcion && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Desc:</span> {product.labelData.descripcion}</p>}
+                      </div>
+                      <button onClick={() => {
+                        const desc = prompt('Descripción del producto:', product.labelData?.descripcion ?? '')
+                        if (desc === null) return
+                        const sku = prompt('SKU:', product.labelData?.sku ?? '')
+                        if (sku === null) return
+                        const transp = prompt('Transportadora:', product.labelData?.transportadora ?? '')
+                        if (transp === null) return
+                        void (async () => {
+                          try {
+                            await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/label`, {
+                              method: 'PATCH',
+                              body: { labelData: { ...product.labelData, descripcion: desc, sku, transportadora: transp } },
+                            })
+                            setFeedback('✓ Datos actualizados')
+                            await loadOperation()
+                          } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
+                        })()
+                      }} className="text-[10px] text-[var(--color-primary)] font-medium mt-1 hover:underline">
+                        ✏️ Editar datos
+                      </button>
                     </div>
                   )}
                   {isActive && (
@@ -710,29 +732,67 @@ export function WizardPage() {
         {isCompleted && lbProducts.length > 0 && (
           <section className="space-y-2">
             <h4 className="text-xs font-semibold text-[var(--color-text-3)] uppercase">Productos ({lbProducts.length})</h4>
-            {lbProducts.map((p) => (
-              <div key={p.productCode} className="flex items-center gap-2 p-2.5 bg-[var(--color-surface)] rounded-lg border border-[var(--color-border)]">
-                <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                <span className="text-sm font-medium flex-1">{p.productCode}</span>
-                {p.isLineaBlanca && <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>}
-                {p.linkedTo && p.linkedTo.length > 0 && <span className="text-[9px] text-blue-500 font-medium">🔗{p.linkedTo.length}</span>}
-                <span className="text-[10px] text-[var(--color-text-3)]">{p.photos.length} fotos</span>
-                {/* Unlink */}
-                {p.linkedTo && p.linkedTo.length > 0 && (
-                  <button onClick={() => {
-                    if (confirm(`¿Desvincular producto ${p.productCode} de este registro?`))
-                      void handleUnlinkProduct(p.productCode, p.linkedTo![0])
-                  }} className="p-1 rounded text-orange-400 hover:text-orange-600 hover:bg-orange-50" title="Desvincular">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                {/* Link */}
-                <button onClick={() => { setLinkProductCode(p.productCode); void searchForLink('') }}
-                  className="p-1 rounded text-blue-400 hover:text-blue-600 hover:bg-blue-50" title="Vincular">
-                  <Link2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+            {lbProducts.map((p) => {
+              const isRenaming = renamingProduct === p.productCode
+              return (
+                <div key={p.productCode} className="p-3 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] space-y-2">
+                  {/* Header */}
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                    {isRenaming ? (
+                      <div className="flex items-center gap-1 flex-1">
+                        <input type="text" value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                          className="text-sm px-2 py-0.5 border border-[var(--color-primary)] rounded flex-1 focus:outline-none"
+                          autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void handleRenameProduct(p.productCode); if (e.key === 'Escape') setRenamingProduct(null) }} />
+                        <button onClick={() => void handleRenameProduct(p.productCode)} className="text-emerald-600 text-xs font-bold">✓</button>
+                        <button onClick={() => setRenamingProduct(null)} className="text-gray-400 text-xs">✕</button>
+                      </div>
+                    ) : (
+                      <span className="text-sm font-semibold flex-1">{p.productCode}</span>
+                    )}
+                    {p.isLineaBlanca && <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>}
+                    {p.linkedTo && p.linkedTo.length > 0 && <span className="text-[9px] text-blue-500 font-medium">🔗{p.linkedTo.length}</span>}
+                    <span className="text-[10px] text-[var(--color-text-3)]">{p.photos.length} fotos</span>
+                  </div>
+
+                  {/* Label data (editable display) */}
+                  {p.labelData && Object.values(p.labelData).some(Boolean) && (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 px-2 py-1.5 rounded bg-gray-50 border border-gray-100 text-[10px] text-gray-600">
+                      {p.labelData.sku && <p><span className="font-medium">SKU:</span> {p.labelData.sku}</p>}
+                      {p.labelData.poNumber && <p><span className="font-medium">PO:</span> {p.labelData.poNumber}</p>}
+                      {p.labelData.np && <p><span className="font-medium">NP:</span> {p.labelData.np}</p>}
+                      {p.labelData.sscc && <p><span className="font-medium">SSCC:</span> {p.labelData.sscc}</p>}
+                      {p.labelData.descripcion && <p className="col-span-2"><span className="font-medium">DESC:</span> {p.labelData.descripcion}</p>}
+                      {p.labelData.destinatario && <p className="col-span-2"><span className="font-medium">Dest:</span> {p.labelData.destinatario}</p>}
+                      {p.labelData.transportadora && <p><span className="font-medium">Transp:</span> {p.labelData.transportadora}</p>}
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex items-center gap-1 pt-1">
+                    {/* Rename */}
+                    <button onClick={() => { setRenamingProduct(p.productCode); setRenameValue(p.productCode) }}
+                      className="px-2 py-1 rounded text-[10px] text-gray-500 hover:text-[var(--color-primary)] hover:bg-gray-100 flex items-center gap-1">
+                      <Pencil className="w-3 h-3" /> Editar nombre
+                    </button>
+                    {/* Link */}
+                    <button onClick={() => { setLinkProductCode(p.productCode); void searchForLink('') }}
+                      className="px-2 py-1 rounded text-[10px] text-blue-500 hover:text-blue-700 hover:bg-blue-50 flex items-center gap-1">
+                      <Link2 className="w-3 h-3" /> Vincular
+                    </button>
+                    {/* Unlink */}
+                    {p.linkedTo && p.linkedTo.length > 0 && (
+                      <button onClick={() => {
+                        if (confirm(`¿Desvincular y quitar "${p.productCode}" de este registro?`))
+                          void handleUnlinkProduct(p.productCode, p.linkedTo![0])
+                      }} className="px-2 py-1 rounded text-[10px] text-orange-500 hover:text-orange-700 hover:bg-orange-50 flex items-center gap-1">
+                        <X className="w-3 h-3" /> Desvincular
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </section>
         )}
 
