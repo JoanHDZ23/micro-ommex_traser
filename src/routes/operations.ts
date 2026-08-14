@@ -821,3 +821,38 @@ operationsRouter.patch('/:trackingCode/linea-blanca/:productCode/rename', async 
     res.status(500).json({ message: 'Error al renombrar producto.' })
   }
 })
+
+/**
+ * PATCH /api/operations/:trackingCode/linea-blanca/:productCode/label
+ * Edita los datos de etiqueta de un producto.
+ * Body: { labelData: { sku?, descripcion?, poNumber?, ... } }
+ */
+operationsRouter.patch('/:trackingCode/linea-blanca/:productCode/label', async (req, res) => {
+  const { trackingCode, productCode } = req.params
+  const { labelData } = req.body ?? {}
+
+  if (!labelData || typeof labelData !== 'object') {
+    res.status(400).json({ message: 'labelData es requerido.' })
+    return
+  }
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const products = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
+    const productIdx = products.findIndex((p) => p.productCode === productCode)
+    if (productIdx === -1) { res.status(404).json({ message: `Producto "${productCode}" no encontrado.` }); return }
+
+    await col.updateOne(
+      { trackingCode, 'lineaBlanca.productCode': productCode },
+      { $set: { [`lineaBlanca.${productIdx}.labelData`]: labelData, updatedAt: new Date().toISOString() } },
+    )
+
+    res.json({ message: 'Datos de etiqueta actualizados.', labelData })
+  } catch (err) {
+    console.error('[operations] Error al editar etiqueta:', err)
+    res.status(500).json({ message: 'Error al editar datos de etiqueta.' })
+  }
+})
