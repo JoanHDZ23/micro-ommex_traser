@@ -715,7 +715,22 @@ export function WizardPage() {
                 <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                 <span className="text-sm font-medium flex-1">{p.productCode}</span>
                 {p.isLineaBlanca && <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>}
+                {p.linkedTo && p.linkedTo.length > 0 && <span className="text-[9px] text-blue-500 font-medium">🔗{p.linkedTo.length}</span>}
                 <span className="text-[10px] text-[var(--color-text-3)]">{p.photos.length} fotos</span>
+                {/* Unlink */}
+                {p.linkedTo && p.linkedTo.length > 0 && (
+                  <button onClick={() => {
+                    if (confirm(`¿Desvincular producto ${p.productCode} de este registro?`))
+                      void handleUnlinkProduct(p.productCode, p.linkedTo![0])
+                  }} className="p-1 rounded text-orange-400 hover:text-orange-600 hover:bg-orange-50" title="Desvincular">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {/* Link */}
+                <button onClick={() => { setLinkProductCode(p.productCode); void searchForLink('') }}
+                  className="p-1 rounded text-blue-400 hover:text-blue-600 hover:bg-blue-50" title="Vincular">
+                  <Link2 className="w-3.5 h-3.5" />
+                </button>
               </div>
             ))}
           </section>
