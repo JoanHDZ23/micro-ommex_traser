@@ -724,3 +724,103 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/link', async (re
     res.status(500).json({ message: 'Error al vincular producto.' })
   }
 })
+
+/**
+ * POST /api/operations/:trackingCode/linea-blanca/:productCode/unlink
+ * Desvincula un producto de otra operación.
+ * Body: { targetTrackingCode }
+ */
+operationsRouter.post('/:trackingCode/linea-blanca/:productCode/unlink', async (req, res) => {
+  const { trackingCode, productCode } = req.params
+  const { targetTrackingCode } = req.body ?? {}
+
+  if (!targetTrackingCode?.trim()) {
+    res.status(400).json({ message: 'targetTrackingCode es requerido.' })
+    return
+  }
+
+  try {
+    const col = getOperationsCollection()
+
+    // Quitar el targetTrackingCode del linkedTo del producto en esta operación
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const products = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
+    const productIdx = products.findIndex((p) => p.productCode === productCode)
+    if (productIdx === -1) { res.status(404).json({ message: `Producto "${productCode}" no encontrado.` }); return }
+
+    const currentLinked = products[productIdx].linkedTo ?? []
+    const newLinked = currentLinked.filter((tc) => tc !== targetTrackingCode.trim())
+    await col.updateOne(
+      { trackingCode, 'lineaBlanca.productCode': productCode },
+      { $set: { [`lineaBlanca.${productIdx}.linkedTo`]: newLinked, updatedAt: new Date().toISOString() } },
+    )
+
+    // También quitar este trackingCode del linkedTo del producto en la operación target
+    const targetOp = await col.findOne({ trackingCode: targetTrackingCode.trim() })
+    if (targetOp) {
+      const targetProducts = (targetOp.lineaBlanca as LineaBlancaProduct[]) ?? []
+      const targetPIdx = targetProducts.findIndex((p) => p.productCode === productCode)
+      if (targetPIdx !== -1) {
+        const targetLinked = targetProducts[targetPIdx].linkedTo ?? []
+        const newTargetLinked = targetLinked.filter((tc) => tc !== trackingCode)
+        await col.updateOne(
+          { trackingCode: targetTrackingCode.trim(), 'lineaBlanca.productCode': productCode },
+          { $set: { [`lineaBlanca.${targetPIdx}.linkedTo`]: newTargetLinked, updatedAt: new Date().toISOString() } },
+        )
+      }
+    }
+
+    res.json({ message: `Producto "${productCode}" desvinculado de ${targetTrackingCode}.` })
+  } catch (err) {
+    console.error('[operations] Error al desvincular:', err)
+    res.status(500).json({ message: 'Error al desvincular producto.' })
+  }
+})
+
+/**
+ * PATCH /api/operations/:trackingCode/linea-blanca/:productCode/rename
+ * Renombra un producto (cambia su productCode).
+ * Body: { newProductCode }
+ */
+operationsRouter.patch('/:trackingCode/linea-blanca/:productCode/rename', async (req, res) => {
+  const { trackingCode, productCode } = req.params
+  const { newProductCode } = req.body ?? {}
+
+  if (!newProductCode?.trim()) {
+    res.status(400).json({ message: 'newProductCode es requerido.' })
+    return
+  }
+
+  const newCode = newProductCode.trim()
+  if (newCode === productCode) {
+    res.json({ message: 'Sin cambios.' })
+    return
+  }
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const products = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
+    const productIdx = products.findIndex((p) => p.productCode === productCode)
+    if (productIdx === -1) { res.status(404).json({ message: `Producto "${productCode}" no encontrado.` }); return }
+
+    if (products.some((p) => p.productCode === newCode)) {
+      res.status(409).json({ message: `Ya existe un producto con código "${newCode}" en esta operación.` })
+      return
+    }
+
+    await col.updateOne(
+      { trackingCode, 'lineaBlanca.productCode': productCode },
+      { $set: { [`lineaBlanca.${productIdx}.productCode`]: newCode, updatedAt: new Date().toISOString() } },
+    )
+
+    res.json({ message: `Producto renombrado de "${productCode}" a "${newCode}".` })
+  } catch (err) {
+    console.error('[operations] Error al renombrar:', err)
+    res.status(500).json({ message: 'Error al renombrar producto.' })
+  }
+})
