@@ -73,6 +73,101 @@ export function WizardPage() {
     }
   }
 
+  // Unlink product from another operation
+  const handleUnlinkProduct = async (productCode: string, linkedTrackingCode: string) => {
+    if (!trackingCode) return
+    try {
+      await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/unlink`, {
+        method: 'POST',
+        body: { targetTrackingCode: linkedTrackingCode },
+      })
+      setFeedback(`✓ Producto desvinculado de ${linkedTrackingCode}`)
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al desvincular')
+    }
+  }
+
+  // Rename product
+  const [renamingProduct, setRenamingProduct] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+
+  const handleRenameProduct = async (oldCode: string) => {
+    if (!trackingCode || !renameValue.trim() || renameValue.trim() === oldCode) {
+      setRenamingProduct(null)
+      return
+    }
+    try {
+      await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(oldCode)}/rename`, {
+        method: 'PATCH',
+        body: { newProductCode: renameValue.trim() },
+      })
+      setFeedback(`✓ Producto renombrado a ${renameValue.trim()}`)
+      setRenamingProduct(null)
+      setRenameValue('')
+      if (activeLbProduct === oldCode) setActiveLbProduct(renameValue.trim())
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al renombrar')
+    }
+  }
+
+  // File picker for gallery photos
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const lbFileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, isProduct: boolean) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1] ?? ''
+      if (isProduct) {
+        void handleLbPhotoFromGallery(base64)
+      } else {
+        void handlePhotoFromGallery(base64)
+      }
+    }
+    reader.readAsDataURL(file)
+    e.target.value = '' // reset para poder seleccionar el mismo archivo
+  }
+
+  const handlePhotoFromGallery = async (base64: string) => {
+    if (!trackingCode) return
+    setUploading(true)
+    setFeedback(null)
+    try {
+      await apiRequest<UploadPhotoResponse>('/photos/upload', {
+        method: 'POST',
+        body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment: '' },
+      })
+      setFeedback('✓ Foto registrada')
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al subir foto.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleLbPhotoFromGallery = async (base64: string) => {
+    if (!trackingCode || !activeLbProduct) return
+    setUploading(true)
+    const photoCount = activeLbData?.photos.length ?? 0
+    try {
+      await apiRequest<UploadPhotoResponse>(
+        `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(activeLbProduct)}/photo`,
+        { method: 'POST', body: { stepIndex: photoCount, base64Image: base64, mimeType: 'image/jpeg', comment: '' } },
+      )
+      setFeedback(`✓ Foto de ${activeLbProduct}`)
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   const savePlate = async () => {
     if (!trackingCode || !plateValue.trim()) return
     try {
@@ -368,11 +463,18 @@ export function WizardPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {/* Take photo button */}
-            <button onClick={() => setShowCamera(true)} disabled={uploading}
-              className="w-full py-4 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50">
-              {uploading ? <><Loader2 className="w-5 h-5 animate-spin" /> Subiendo...</> : <><Camera className="w-5 h-5" /> Tomar foto</>}
-            </button>
+            {/* Take photo / Select from gallery */}
+            <div className="grid grid-cols-2 gap-2">
+              <button onClick={() => setShowCamera(true)} disabled={uploading}
+                className="py-3.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50">
+                {uploading ? <><Loader2 className="w-5 h-5 animate-spin" /> Subiendo...</> : <><Camera className="w-5 h-5" /> Tomar foto</>}
+              </button>
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                className="py-3.5 rounded-xl border-2 border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50">
+                📁 Seleccionar foto
+              </button>
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, false)} />
 
             {/* Finalize */}
             {(operation.photos.length > 0 || lbProducts.length > 0) && (
@@ -492,6 +594,7 @@ export function WizardPage() {
             {lbProducts.map((product) => {
               const isActive = activeLbProduct === product.productCode
               const isDone = product.status === 'COMPLETADO'
+              const isRenaming = renamingProduct === product.productCode
               return (
                 <div key={product.productCode} className={`p-3 rounded-xl border transition-all ${isActive ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]' : isDone ? 'border-emerald-200 bg-emerald-50' : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
                   <div className="flex items-center justify-between">
@@ -500,7 +603,17 @@ export function WizardPage() {
                         {isDone ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Package className="w-3.5 h-3.5" />}
                       </div>
                       <div>
-                        <p className="text-sm font-semibold text-[var(--color-text)]">{product.productCode}</p>
+                        {isRenaming ? (
+                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                            <input type="text" value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                              className="text-sm px-2 py-0.5 border border-[var(--color-primary)] rounded w-28 focus:outline-none"
+                              autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void handleRenameProduct(product.productCode); if (e.key === 'Escape') setRenamingProduct(null) }} />
+                            <button onClick={(e) => { e.stopPropagation(); void handleRenameProduct(product.productCode) }} className="text-emerald-600 text-xs font-bold">✓</button>
+                            <button onClick={(e) => { e.stopPropagation(); setRenamingProduct(null) }} className="text-gray-400 text-xs">✕</button>
+                          </div>
+                        ) : (
+                          <p className="text-sm font-semibold text-[var(--color-text)]">{product.productCode}</p>
+                        )}
                         <p className="text-[10px] text-[var(--color-text-3)]">
                           {product.isLineaBlanca && <span className="text-purple-600 font-medium">L.B · </span>}
                           {product.linkedTo && product.linkedTo.length > 0 && <span className="text-blue-500 font-medium">🔗{product.linkedTo.length} · </span>}
@@ -508,24 +621,41 @@ export function WizardPage() {
                         </p>
                       </div>
                     </button>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${isDone ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                      {isDone ? 'Completo' : 'En proceso'}
-                    </span>
-                    <button onClick={() => { setLinkProductCode(product.productCode); void searchForLink('') }}
-                      className="p-1 rounded text-blue-400 hover:text-blue-600 hover:bg-blue-50" title="Vincular a otro registro">
-                      <Link2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button onClick={async () => {
-                      if (!confirm(`¿Eliminar producto ${product.productCode} y todas sus fotos?`)) return
-                      try {
-                        await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}`, { method: 'DELETE' })
-                        await loadOperation()
-                        setFeedback('✓ Producto eliminado')
-                        if (activeLbProduct === product.productCode) setActiveLbProduct(null)
-                      } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
-                    }} className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-0.5">
+                      {/* Rename */}
+                      <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
+                        className="p-1 rounded text-gray-400 hover:text-[var(--color-primary)] hover:bg-gray-100" title="Renombrar">
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      {/* Unlink (only if linked) */}
+                      {product.linkedTo && product.linkedTo.length > 0 && (
+                        <button onClick={() => {
+                          const target = product.linkedTo![0]
+                          if (confirm(`¿Desvincular producto de la operación ${target}?`))
+                            void handleUnlinkProduct(product.productCode, target)
+                        }}
+                          className="p-1 rounded text-orange-400 hover:text-orange-600 hover:bg-orange-50" title="Desvincular">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {/* Link */}
+                      <button onClick={() => { setLinkProductCode(product.productCode); void searchForLink('') }}
+                        className="p-1 rounded text-blue-400 hover:text-blue-600 hover:bg-blue-50" title="Vincular">
+                        <Link2 className="w-3.5 h-3.5" />
+                      </button>
+                      {/* Delete */}
+                      <button onClick={async () => {
+                        if (!confirm(`¿Eliminar producto ${product.productCode} y todas sus fotos?`)) return
+                        try {
+                          await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}`, { method: 'DELETE' })
+                          await loadOperation()
+                          setFeedback('✓ Producto eliminado')
+                          if (activeLbProduct === product.productCode) setActiveLbProduct(null)
+                        } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
+                      }} className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50" title="Eliminar">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                   {/* Label data */}
                   {product.labelData && Object.values(product.labelData).some(Boolean) && (
@@ -562,6 +692,11 @@ export function WizardPage() {
                         className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
                         <Camera className="w-4 h-4" /> Tomar foto ({product.photos.length})
                       </button>
+                      <button onClick={() => lbFileInputRef.current?.click()} disabled={uploading}
+                        className="w-full py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
+                        📁 Seleccionar de galería
+                      </button>
+                      <input ref={lbFileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, true)} />
                     </div>
                   )}
                 </div>
