@@ -994,7 +994,7 @@ export function WizardPage() {
 }
 
 
-// ── Barcode Scanner Component (optimized — no image processing) ──
+// ── Barcode Scanner Component (uses native BarcodeDetector when available, zxing as fallback) ──
 function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => void; onClose: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [scanning, setScanning] = useState(true)
@@ -1004,6 +1004,7 @@ function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => voi
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const controlsRef = useRef<{ stop: () => void } | null>(null)
+  const animRef = useRef<number>(0)
 
   const toggleTorch = async () => {
     const stream = streamRef.current
@@ -1019,7 +1020,44 @@ function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => voi
   useEffect(() => {
     let cancelled = false
 
-    const start = async () => {
+    const startNative = async () => {
+      // Usa BarcodeDetector nativo (Chrome Android 83+, muy rápido)
+      const BD = (window as unknown as { BarcodeDetector?: new (opts: { formats: string[] }) => { detect: (src: HTMLVideoElement) => Promise<Array<{ rawValue: string }>> } }).BarcodeDetector
+      if (!BD) return false
+
+      try {
+        const detector = new BD({ formats: ['code_128', 'code_39', 'code_93', 'ean_13', 'ean_8', 'itf', 'codabar', 'upc_a', 'upc_e', 'qr_code', 'data_matrix'] })
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        })
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return true }
+        streamRef.current = stream
+        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play() }
+
+        const scanLoop = async () => {
+          if (cancelled || !videoRef.current || videoRef.current.readyState < 2) {
+            if (!cancelled) animRef.current = requestAnimationFrame(() => void scanLoop())
+            return
+          }
+          try {
+            const barcodes = await detector.detect(videoRef.current)
+            if (barcodes.length > 0 && !cancelled) {
+              setScanning(false)
+              stream.getTracks().forEach((t) => t.stop())
+              streamRef.current = null
+              onResult(barcodes[0].rawValue)
+              return
+            }
+          } catch { /* detection failed this frame */ }
+          if (!cancelled) animRef.current = requestAnimationFrame(() => void scanLoop())
+        }
+        void scanLoop()
+        return true
+      } catch { return false }
+    }
+
+    const startZxing = async () => {
+      // Fallback: usa zxing (iOS, navegadores sin BarcodeDetector)
       try {
         const { BrowserMultiFormatReader } = await import('@zxing/browser')
         const { BarcodeFormat, DecodeHintType } = await import('@zxing/library')
@@ -1060,12 +1098,22 @@ function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => voi
       }
     }
 
-    void start()
-    return () => { cancelled = true; controlsRef.current?.stop(); streamRef.current?.getTracks().forEach((t) => t.stop()) }
+    const init = async () => {
+      const usedNative = await startNative()
+      if (!usedNative && !cancelled) await startZxing()
+    }
+    void init()
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(animRef.current)
+      controlsRef.current?.stop()
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleClose = () => { controlsRef.current?.stop(); streamRef.current?.getTracks().forEach((t) => t.stop()); onClose() }
+  const handleClose = () => { cancelAnimationFrame(animRef.current); controlsRef.current?.stop(); streamRef.current?.getTracks().forEach((t) => t.stop()); onClose() }
 
   return (
     <div className="camera-overlay">
