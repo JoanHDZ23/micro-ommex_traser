@@ -993,7 +993,8 @@ export function WizardPage() {
   )
 }
 
-// ── Barcode Scanner Component ──
+
+// ── Barcode Scanner Component (optimized — no image processing) ──
 function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => void; onClose: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [scanning, setScanning] = useState(true)
@@ -1001,10 +1002,8 @@ function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => voi
   const [manualInput, setManualInput] = useState(false)
   const [manualCode, setManualCode] = useState('')
   const videoRef = useRef<HTMLVideoElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const animRef = useRef<number>(0)
-  const decodingRef = useRef(false)
+  const controlsRef = useRef<{ stop: () => void } | null>(null)
 
   const toggleTorch = async () => {
     const stream = streamRef.current
@@ -1017,52 +1016,8 @@ function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => voi
     } catch { /* torch not supported */ }
   }
 
-  // Aplicar filtro de nitidez (sharpen kernel) al canvas
-  const sharpenImage = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-    const imageData = ctx.getImageData(0, 0, w, h)
-    const data = imageData.data
-    const copy = new Uint8ClampedArray(data)
-
-    // Sharpen kernel: aumenta bordes
-    // [  0, -1,  0 ]
-    // [ -1,  5, -1 ]
-    // [  0, -1,  0 ]
-    const kernel = [0, -1, 0, -1, 5, -1, 0, -1, 0]
-
-    for (let y = 1; y < h - 1; y++) {
-      for (let x = 1; x < w - 1; x++) {
-        for (let c = 0; c < 3; c++) {
-          let val = 0
-          for (let ky = -1; ky <= 1; ky++) {
-            for (let kx = -1; kx <= 1; kx++) {
-              const idx = ((y + ky) * w + (x + kx)) * 4 + c
-              val += copy[idx] * kernel[(ky + 1) * 3 + (kx + 1)]
-            }
-          }
-          data[(y * w + x) * 4 + c] = Math.min(255, Math.max(0, val))
-        }
-      }
-    }
-
-    ctx.putImageData(imageData, 0, 0)
-  }
-
-  // Aumentar contraste para resaltar barras negras vs fondo blanco
-  const boostContrast = (ctx: CanvasRenderingContext2D, w: number, h: number, factor: number) => {
-    const imageData = ctx.getImageData(0, 0, w, h)
-    const data = imageData.data
-    const intercept = 128 * (1 - factor)
-    for (let i = 0; i < data.length; i += 4) {
-      data[i] = Math.min(255, Math.max(0, data[i] * factor + intercept))
-      data[i + 1] = Math.min(255, Math.max(0, data[i + 1] * factor + intercept))
-      data[i + 2] = Math.min(255, Math.max(0, data[i + 2] * factor + intercept))
-    }
-    ctx.putImageData(imageData, 0, 0)
-  }
-
   useEffect(() => {
     let cancelled = false
-    let reader: InstanceType<typeof import('@zxing/browser').BrowserMultiFormatReader> | null = null
 
     const start = async () => {
       try {
@@ -1071,160 +1026,61 @@ function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => voi
 
         const hints = new Map()
         hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.CODE_128,
-          BarcodeFormat.CODE_39,
-          BarcodeFormat.CODE_93,
-          BarcodeFormat.EAN_13,
-          BarcodeFormat.EAN_8,
-          BarcodeFormat.ITF,
-          BarcodeFormat.CODABAR,
-          BarcodeFormat.UPC_A,
-          BarcodeFormat.UPC_E,
-          BarcodeFormat.QR_CODE,
-          BarcodeFormat.DATA_MATRIX,
+          BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.CODE_93,
+          BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.ITF,
+          BarcodeFormat.CODABAR, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
+          BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX,
         ])
         hints.set(DecodeHintType.TRY_HARDER, true)
-        hints.set(DecodeHintType.ASSUME_GS1, false)
 
-        reader = new BrowserMultiFormatReader(hints)
-
-        await new Promise((r) => setTimeout(r, 150))
+        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 100 })
         if (cancelled || !videoRef.current) return
 
-        // Obtener stream con alta resolución y autofoco
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'environment',
-            width: { ideal: 1920, min: 1280 },
-            height: { ideal: 1080, min: 720 },
-            focusMode: { ideal: 'continuous' },
-          } as MediaTrackConstraints,
-        })
-
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return }
-        streamRef.current = stream
-        videoRef.current.srcObject = stream
-        await videoRef.current.play()
-
-        // Loop de escaneo manual con procesamiento de imagen
-        const scanLoop = async () => {
-          if (cancelled || !videoRef.current || !canvasRef.current || !reader) return
-
-          const video = videoRef.current
-          const canvas = canvasRef.current
-          if (video.readyState < 2) { animRef.current = requestAnimationFrame(() => void scanLoop()); return }
-          if (decodingRef.current) { animRef.current = requestAnimationFrame(() => void scanLoop()); return }
-
-          decodingRef.current = true
-
-          const vw = video.videoWidth
-          const vh = video.videoHeight
-
-          // Recortar solo la zona central donde está el recuadro (~60% ancho, ~25% alto)
-          const cropX = Math.floor(vw * 0.15)
-          const cropY = Math.floor(vh * 0.35)
-          const cropW = Math.floor(vw * 0.7)
-          const cropH = Math.floor(vh * 0.3)
-
-          canvas.width = cropW
-          canvas.height = cropH
-          const ctx = canvas.getContext('2d', { willReadFrequently: true })!
-
-          // Intentar múltiples pasadas con distintos niveles de procesamiento
-          const attempts = [
-            { sharpen: false, contrast: 1.0 },   // raw
-            { sharpen: true, contrast: 1.5 },     // sharpen + contraste medio
-            { sharpen: true, contrast: 2.2 },     // sharpen + alto contraste
-          ]
-
-          for (const attempt of attempts) {
-            if (cancelled) break
-
-            // Dibujar frame recortado
-            ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
-
-            // Convertir a escala de grises para mejor lectura
-            const grayData = ctx.getImageData(0, 0, cropW, cropH)
-            const gd = grayData.data
-            for (let i = 0; i < gd.length; i += 4) {
-              const gray = gd[i] * 0.299 + gd[i + 1] * 0.587 + gd[i + 2] * 0.114
-              gd[i] = gd[i + 1] = gd[i + 2] = gray
+        const controls = await reader.decodeFromConstraints(
+          { video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } },
+          videoRef.current,
+          (result) => {
+            if (result && !cancelled) {
+              setScanning(false)
+              controls.stop()
+              controlsRef.current = null
+              const s = videoRef.current?.srcObject as MediaStream | null
+              s?.getTracks().forEach((t) => t.stop())
+              streamRef.current = null
+              onResult(result.getText())
             }
-            ctx.putImageData(grayData, 0, 0)
-
-            if (attempt.sharpen) sharpenImage(ctx, cropW, cropH)
-            if (attempt.contrast !== 1.0) boostContrast(ctx, cropW, cropH, attempt.contrast)
-
-            try {
-              const result = reader.decodeFromCanvas(canvas)
-              if (result && !cancelled) {
-                setScanning(false)
-                stream.getTracks().forEach((t) => t.stop())
-                streamRef.current = null
-                cancelAnimationFrame(animRef.current)
-                onResult(result.getText())
-                return
-              }
-            } catch {
-              // No barcode found in this attempt — continue
-            }
-          }
-
-          decodingRef.current = false
-          if (!cancelled) {
-            // ~80ms entre intentos para máxima velocidad
-            setTimeout(() => { animRef.current = requestAnimationFrame(() => void scanLoop()) }, 80)
-          }
-        }
-
-        void scanLoop()
+          },
+        )
+        if (cancelled) { controls.stop(); return }
+        controlsRef.current = controls
+        const s = videoRef.current?.srcObject as MediaStream | null
+        if (s) streamRef.current = s
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'No se pudo acceder a la cámara')
-        }
+        if (!cancelled) setError(err instanceof Error ? err.message : 'No se pudo acceder a la cámara')
       }
     }
 
     void start()
-
-    return () => {
-      cancelled = true
-      cancelAnimationFrame(animRef.current)
-      streamRef.current?.getTracks().forEach((t) => t.stop())
-      streamRef.current = null
-    }
+    return () => { cancelled = true; controlsRef.current?.stop(); streamRef.current?.getTracks().forEach((t) => t.stop()) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleClose = () => {
-    cancelAnimationFrame(animRef.current)
-    streamRef.current?.getTracks().forEach((t) => t.stop())
-    onClose()
-  }
+  const handleClose = () => { controlsRef.current?.stop(); streamRef.current?.getTracks().forEach((t) => t.stop()); onClose() }
 
   return (
     <div className="camera-overlay">
-      {/* Hidden canvas for image processing */}
-      <canvas ref={canvasRef} className="hidden" />
-
       <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-gradient-to-b from-black/60 to-transparent flex items-center justify-between">
         <div className="text-white">
           <p className="text-sm font-semibold">Escanear código de barras</p>
-          <p className="text-xs opacity-70">{scanning ? 'Apunta al código de la etiqueta' : 'Código detectado ✓'}</p>
+          <p className="text-xs opacity-70">{scanning ? 'Apunta al código' : '✓ Detectado'}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => void toggleTorch()}
-            className={`w-9 h-9 rounded-full flex items-center justify-center ${torchOn ? 'bg-yellow-400 text-black' : 'bg-white/20 text-white'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 18h6" /><path d="M10 22h4" /><path d="M12 2v1" /><path d="M12 7a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.4V17H10v-2.6A4 4 0 0 1 12 7Z" />
-            </svg>
+          <button onClick={() => void toggleTorch()} className={`w-9 h-9 rounded-full flex items-center justify-center ${torchOn ? 'bg-yellow-400 text-black' : 'bg-white/20 text-white'}`}>
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.4V17H10v-2.6A4 4 0 0 1 12 7Z"/></svg>
           </button>
-          <button onClick={handleClose} className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
-            <X className="w-5 h-5 text-white" />
-          </button>
+          <button onClick={handleClose} className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center"><X className="w-5 h-5 text-white" /></button>
         </div>
       </div>
-
       {error ? (
         <div className="flex-1 flex flex-col items-center justify-center p-6 text-white text-center text-sm gap-4">
           <p>{error}</p>
@@ -1233,26 +1089,17 @@ function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => voi
       ) : (
         <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover flex-1" />
       )}
-
-      {/* Scanning guide overlay */}
-      {!manualInput && (
+      {!manualInput && !error && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="w-80 h-28 border-2 border-red-400 rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.4)]">
-            {scanning && (
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full h-0.5 bg-red-400 animate-pulse" />
-              </div>
-            )}
+            {scanning && <div className="absolute inset-0 flex items-center"><div className="w-full h-0.5 bg-red-400 animate-pulse" /></div>}
           </div>
         </div>
       )}
-
-      {/* Bottom area */}
       <div className="absolute bottom-0 left-0 right-0 z-10 p-4 bg-gradient-to-t from-black/70 to-transparent space-y-3">
         {manualInput ? (
           <div className="flex gap-2">
-            <input type="text" value={manualCode} onChange={(e) => setManualCode(e.target.value)}
-              placeholder="Ingresa el código manualmente..."
+            <input type="text" value={manualCode} onChange={(e) => setManualCode(e.target.value)} placeholder="Código manual..."
               className="flex-1 px-3 py-2.5 rounded-lg bg-white text-sm text-black focus:outline-none"
               autoFocus onKeyDown={(e) => { if (e.key === 'Enter' && manualCode.trim()) { handleClose(); onResult(manualCode.trim()) } }} />
             <button onClick={() => { if (manualCode.trim()) { handleClose(); onResult(manualCode.trim()) } }}
@@ -1260,11 +1107,8 @@ function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => voi
           </div>
         ) : (
           <>
-            <p className="text-white text-xs text-center opacity-80">Coloca el código de barras dentro del recuadro</p>
-            <button onClick={() => setManualInput(true)}
-              className="w-full py-2.5 rounded-lg bg-white/15 text-white text-sm font-medium border border-white/30 backdrop-blur-sm">
-              Ingresar código manualmente
-            </button>
+            <p className="text-white text-xs text-center opacity-80">Coloca el código dentro del recuadro</p>
+            <button onClick={() => setManualInput(true)} className="w-full py-2.5 rounded-lg bg-white/15 text-white text-sm font-medium border border-white/30 backdrop-blur-sm">Ingresar manualmente</button>
           </>
         )}
       </div>
