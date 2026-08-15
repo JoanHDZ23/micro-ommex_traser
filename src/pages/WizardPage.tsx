@@ -344,39 +344,6 @@ export function WizardPage() {
     setScanOcrOpen(true)
   }
 
-  // Handle callback from native scanner app (via URL params)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const barcode = params.get('barcode')
-    const desc = params.get('desc')
-    if (barcode) {
-      setScannedCode(barcode)
-      setLbProductCode(barcode)
-      if (desc) {
-        setScanDesc(desc)
-        setLbLabelData({ descripcion: desc })
-      }
-      setScanConfirmOpen(true)
-      // Limpiar URL params sin recargar
-      window.history.replaceState({}, '', window.location.pathname)
-    }
-  }, [])
-
-  // Open native scanner app (if installed)
-  const openNativeScanner = () => {
-    const callbackUrl = `${window.location.origin}${window.location.pathname}${window.location.search}`
-    const nativeUrl = `ommex-scanner://scan?callback=${encodeURIComponent(callbackUrl)}`
-    // Try to open native app, fallback to web scanner after 1.5s
-    const start = Date.now()
-    window.location.href = nativeUrl
-    setTimeout(() => {
-      if (Date.now() - start < 2000) {
-        // Native app didn't open — use web scanner
-        setShowScanner(true)
-      }
-    }, 1500)
-  }
-
   const handleScanOcrCapture = async (base64: string) => {
     setScanOcrOpen(false)
     setOcrScanning(true)
@@ -595,7 +562,7 @@ export function WizardPage() {
               <input type="text" value={lbProductCode} onChange={(e) => setLbProductCode(e.target.value)}
                 placeholder="Código del producto..."
                 className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
-              <button onClick={openNativeScanner}
+              <button onClick={() => setShowScanner(true)}
                 className="px-3 py-2.5 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
                 <QrCode className="w-5 h-5" />
               </button>
