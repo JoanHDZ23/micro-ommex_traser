@@ -595,7 +595,6 @@ export function WizardPage() {
             {lbProducts.map((product) => {
               const isActive = activeLbProduct === product.productCode
               const isDone = product.status === 'COMPLETADO'
-              const isRenaming = renamingProduct === product.productCode
               return (
                 <div key={product.productCode} className={`p-3 rounded-xl border transition-all ${isActive ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]' : isDone ? 'border-emerald-200 bg-emerald-50' : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
                   <div className="flex items-center justify-between">
@@ -604,17 +603,7 @@ export function WizardPage() {
                         {isDone ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Package className="w-3.5 h-3.5" />}
                       </div>
                       <div>
-                        {isRenaming ? (
-                          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                            <input type="text" value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
-                              className="text-sm px-2 py-0.5 border border-[var(--color-primary)] rounded w-28 focus:outline-none"
-                              autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void handleRenameProduct(product.productCode); if (e.key === 'Escape') setRenamingProduct(null) }} />
-                            <button onClick={(e) => { e.stopPropagation(); void handleRenameProduct(product.productCode) }} className="text-emerald-600 text-xs font-bold">✓</button>
-                            <button onClick={(e) => { e.stopPropagation(); setRenamingProduct(null) }} className="text-gray-400 text-xs">✕</button>
-                          </div>
-                        ) : (
-                          <p className="text-sm font-semibold text-[var(--color-text)]">{product.productCode}</p>
-                        )}
+                        <p className="text-sm font-semibold text-[var(--color-text)]">{product.productCode}</p>
                         <p className="text-[10px] text-[var(--color-text-3)]">
                           {product.isLineaBlanca && <span className="text-purple-600 font-medium">L.B · </span>}
                           {product.linkedTo && product.linkedTo.length > 0 && <span className="text-blue-500 font-medium">🔗{product.linkedTo.length} · </span>}
@@ -727,23 +716,12 @@ export function WizardPage() {
           <section className="space-y-2">
             <h4 className="text-xs font-semibold text-[var(--color-text-3)] uppercase">Productos ({lbProducts.length})</h4>
             {lbProducts.map((p) => {
-              const isRenaming = renamingProduct === p.productCode
               return (
                 <div key={p.productCode} className="p-3 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] space-y-2">
                   {/* Header */}
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                    {isRenaming ? (
-                      <div className="flex items-center gap-1 flex-1">
-                        <input type="text" value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
-                          className="text-sm px-2 py-0.5 border border-[var(--color-primary)] rounded flex-1 focus:outline-none"
-                          autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void handleRenameProduct(p.productCode); if (e.key === 'Escape') setRenamingProduct(null) }} />
-                        <button onClick={() => void handleRenameProduct(p.productCode)} className="text-emerald-600 text-xs font-bold">✓</button>
-                        <button onClick={() => setRenamingProduct(null)} className="text-gray-400 text-xs">✕</button>
-                      </div>
-                    ) : (
-                      <span className="text-sm font-semibold flex-1">{p.productCode}</span>
-                    )}
+                    <span className="text-sm font-semibold flex-1">{p.productCode}</span>
                     {p.isLineaBlanca && <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>}
                     {p.linkedTo && p.linkedTo.length > 0 && <span className="text-[9px] text-blue-500 font-medium">🔗{p.linkedTo.length}</span>}
                     <span className="text-[10px] text-[var(--color-text-3)]">{p.photos.length} fotos</span>
@@ -925,6 +903,48 @@ export function WizardPage() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Rename product modal */}
+      {renamingProduct && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-[var(--color-surface)] rounded-2xl p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-[var(--color-text)]">Editar nombre del producto</h3>
+              <button onClick={() => setRenamingProduct(null)}
+                className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[var(--color-text-2)]">Nombre actual: <strong>{renamingProduct}</strong></p>
+
+            <fieldset className="space-y-1.5">
+              <label className="text-xs font-medium text-[var(--color-text-2)]">Nuevo nombre</label>
+              <input
+                type="text"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="Ingresa el nuevo nombre..."
+                className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') void handleRenameProduct(renamingProduct) }}
+              />
+            </fieldset>
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setRenamingProduct(null)}
+                className="flex-1 py-2.5 rounded-lg border border-[var(--color-border)] text-sm font-medium text-[var(--color-text-2)]">
+                Cancelar
+              </button>
+              <button onClick={() => void handleRenameProduct(renamingProduct)}
+                disabled={!renameValue.trim() || renameValue.trim() === renamingProduct}
+                className="flex-1 py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50">
+                Guardar
+              </button>
+            </div>
           </div>
         </div>
       )}
