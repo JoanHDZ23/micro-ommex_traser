@@ -628,28 +628,37 @@ export function WizardPage() {
                         className="p-1 rounded text-gray-400 hover:text-[var(--color-primary)] hover:bg-gray-100" title="Renombrar">
                         <Pencil className="w-3 h-3" />
                       </button>
-                      {/* Remove from this record (unlink if linked, delete otherwise) */}
-                      <button onClick={async () => {
-                        if (!confirm(`¿Quitar "${product.productCode}" de este registro?`)) return
-                        try {
-                          if (product.linkedTo && product.linkedTo.length > 0) {
-                            await handleUnlinkProduct(product.productCode, product.linkedTo[0])
-                          } else {
-                            await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}`, { method: 'DELETE' })
-                            setFeedback('✓ Producto eliminado')
-                            if (activeLbProduct === product.productCode) setActiveLbProduct(null)
-                            await loadOperation()
-                          }
-                        } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
-                      }}
-                        className="p-1 rounded text-orange-400 hover:text-orange-600 hover:bg-orange-50" title="Quitar de este registro">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
+                      {/* Unlink: only for linked products — removes from this record */}
+                      {product.linkedTo && product.linkedTo.length > 0 && (
+                        <button onClick={async () => {
+                          if (!confirm(`¿Quitar "${product.productCode}" de este registro?`)) return
+                          try {
+                            await handleUnlinkProduct(product.productCode, product.linkedTo![0])
+                          } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
+                        }}
+                          className="p-1 rounded text-orange-400 hover:text-orange-600 hover:bg-orange-50" title="Quitar de este registro">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       {/* Link */}
                       <button onClick={() => { setLinkProductCode(product.productCode); void searchForLink('') }}
                         className="p-1 rounded text-blue-400 hover:text-blue-600 hover:bg-blue-50" title="Vincular">
                         <Link2 className="w-3.5 h-3.5" />
                       </button>
+                      {/* Delete: for non-linked products — deletes permanently */}
+                      {(!product.linkedTo || product.linkedTo.length === 0) && (
+                        <button onClick={async () => {
+                          if (!confirm(`¿Eliminar producto ${product.productCode} y todas sus fotos?`)) return
+                          try {
+                            await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}`, { method: 'DELETE' })
+                            await loadOperation()
+                            setFeedback('✓ Producto eliminado')
+                            if (activeLbProduct === product.productCode) setActiveLbProduct(null)
+                          } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
+                        }} className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50" title="Eliminar">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                   {/* Label data */}
