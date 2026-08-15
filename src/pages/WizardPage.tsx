@@ -117,58 +117,62 @@ export function WizardPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const lbFileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, isProduct: boolean) => {
+  // Native camera / gallery capture with comment modal
+  const [capturedPreview, setCapturedPreview] = useState<string | null>(null)
+  const [capturedBase64, setCapturedBase64] = useState<string>('')
+  const [capturedIsProduct, setCapturedIsProduct] = useState(false)
+  const [capturedComment, setCapturedComment] = useState('')
+
+  const handleNativeCapture = (e: React.ChangeEvent<HTMLInputElement>, isProduct: boolean) => {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
     reader.onload = () => {
-      const base64 = (reader.result as string).split(',')[1] ?? ''
-      if (isProduct) {
-        void handleLbPhotoFromGallery(base64)
-      } else {
-        void handlePhotoFromGallery(base64)
-      }
+      const dataUrl = reader.result as string
+      const base64 = dataUrl.split(',')[1] ?? ''
+      setCapturedPreview(dataUrl)
+      setCapturedBase64(base64)
+      setCapturedIsProduct(isProduct)
+      setCapturedComment('')
     }
     reader.readAsDataURL(file)
-    e.target.value = '' // reset para poder seleccionar el mismo archivo
+    e.target.value = '' // reset
   }
 
-  const handlePhotoFromGallery = async (base64: string) => {
-    if (!trackingCode) return
-    setUploading(true)
-    setFeedback(null)
-    try {
-      await apiRequest<UploadPhotoResponse>('/photos/upload', {
-        method: 'POST',
-        body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment: '' },
-      })
-      setFeedback('✓ Foto registrada')
-      await loadOperation()
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'Error al subir foto.')
-    } finally {
-      setUploading(false)
+  const confirmCapturedPhoto = async () => {
+    if (!capturedBase64) return
+    setCapturedPreview(null)
+    if (capturedIsProduct) {
+      if (!trackingCode || !activeLbProduct) return
+      setUploading(true)
+      const photoCount = activeLbData?.photos.length ?? 0
+      try {
+        await apiRequest<UploadPhotoResponse>(
+          `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(activeLbProduct)}/photo`,
+          { method: 'POST', body: { stepIndex: photoCount, base64Image: capturedBase64, mimeType: 'image/jpeg', comment: capturedComment.trim() } },
+        )
+        setFeedback(`✓ Foto de ${activeLbProduct}`)
+        await loadOperation()
+      } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error.') }
+      finally { setUploading(false) }
+    } else {
+      if (!trackingCode) return
+      setUploading(true)
+      try {
+        await apiRequest<UploadPhotoResponse>('/photos/upload', {
+          method: 'POST',
+          body: { trackingCode, stepIndex: 0, base64Image: capturedBase64, mimeType: 'image/jpeg', comment: capturedComment.trim() },
+        })
+        setFeedback('✓ Foto registrada')
+        await loadOperation()
+      } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error al subir foto.') }
+      finally { setUploading(false) }
     }
+    setCapturedBase64('')
+    setCapturedComment('')
   }
 
-  const handleLbPhotoFromGallery = async (base64: string) => {
-    if (!trackingCode || !activeLbProduct) return
-    setUploading(true)
-    const photoCount = activeLbData?.photos.length ?? 0
-    try {
-      await apiRequest<UploadPhotoResponse>(
-        `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(activeLbProduct)}/photo`,
-        { method: 'POST', body: { stepIndex: photoCount, base64Image: base64, mimeType: 'image/jpeg', comment: '' } },
-      )
-      setFeedback(`✓ Foto de ${activeLbProduct}`)
-      await loadOperation()
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'Error.')
-    } finally {
-      setUploading(false)
-    }
-  }
-
+  
   const savePlate = async () => {
     if (!trackingCode || !plateValue.trim()) return
     try {
@@ -464,18 +468,19 @@ export function WizardPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {/* Take photo / Select from gallery */}
+            {/* Take photo (native camera) / Select from gallery */}
             <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => setShowCamera(true)} disabled={uploading}
-                className="py-3.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50">
+              <label className="py-3.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer">
                 {uploading ? <><Loader2 className="w-5 h-5 animate-spin" /> Subiendo...</> : <><Camera className="w-5 h-5" /> Tomar foto</>}
-              </button>
-              <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
-                className="py-3.5 rounded-xl border-2 border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50">
+                <input type="file" accept="image/*" capture="environment" className="hidden"
+                  disabled={uploading} onChange={(e) => handleNativeCapture(e, false)} />
+              </label>
+              <label className="py-3.5 rounded-xl border-2 border-[var(--color-primary)] text-[var(--color-primary)] font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] cursor-pointer">
                 📁 Seleccionar foto
-              </button>
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+                  disabled={uploading} onChange={(e) => handleNativeCapture(e, false)} />
+              </label>
             </div>
-            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, false)} />
 
             {/* Finalize */}
             {(operation.photos.length > 0 || lbProducts.length > 0) && (
@@ -694,15 +699,16 @@ export function WizardPage() {
                           ))}
                         </div>
                       )}
-                      <button onClick={() => setLbCameraOpen(true)} disabled={uploading}
-                        className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
+                      <label className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                         <Camera className="w-4 h-4" /> Tomar foto ({product.photos.length})
-                      </button>
-                      <button onClick={() => lbFileInputRef.current?.click()} disabled={uploading}
-                        className="w-full py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
+                        <input type="file" accept="image/*" capture="environment" className="hidden"
+                          disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
+                      </label>
+                      <label className="w-full py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                         📁 Seleccionar de galería
-                      </button>
-                      <input ref={lbFileInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, true)} />
+                        <input ref={lbFileInputRef} type="file" accept="image/*" className="hidden"
+                          disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
+                      </label>
                     </div>
                   )}
                 </div>
@@ -903,6 +909,41 @@ export function WizardPage() {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Photo preview + comment modal */}
+      {capturedPreview && (
+        <div className="fixed inset-0 z-[95] bg-black/80 flex flex-col">
+          {/* Preview image */}
+          <div className="flex-1 flex items-center justify-center p-4">
+            <img src={capturedPreview} alt="Foto capturada" className="max-w-full max-h-full object-contain rounded-lg" />
+          </div>
+
+          {/* Comment + actions */}
+          <div className="p-4 bg-black/60 backdrop-blur space-y-3">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={capturedComment}
+                onChange={(e) => setCapturedComment(e.target.value)}
+                placeholder="Agregar comentario (opcional)..."
+                className="flex-1 px-3 py-2.5 rounded-lg bg-white/15 border border-white/20 text-white text-sm placeholder:text-white/50 focus:outline-none focus:ring-1 focus:ring-white/40"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') void confirmCapturedPhoto() }}
+              />
+            </div>
+            <div className="flex items-center justify-center gap-4">
+              <button onClick={() => { setCapturedPreview(null); setCapturedBase64('') }}
+                className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
+                <X className="w-5 h-5 text-white" />
+              </button>
+              <button onClick={() => void confirmCapturedPhoto()}
+                className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg">
+                <CheckCircle2 className="w-7 h-7 text-white" />
+              </button>
+            </div>
           </div>
         </div>
       )}
