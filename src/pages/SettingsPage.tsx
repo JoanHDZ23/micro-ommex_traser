@@ -70,7 +70,7 @@ export function SettingsPage() {
           Pega la URL de la carpeta de Google Drive donde se guardarán las fotos. Asegúrate de que el correo del Apps Script tenga acceso de editor a esa carpeta.
         </p>
 
-        <fieldset className="space-y-1.5">
+        <div className="space-y-1.5">
           <label className="text-xs font-medium text-[var(--color-text-2)]">URL de la carpeta de Drive</label>
           <input
             type="url"
@@ -82,7 +82,7 @@ export function SettingsPage() {
           <p className="text-[10px] text-[var(--color-text-3)]">
             Ejemplo: <code>https://drive.google.com/drive/folders/1BxiMVs0XRA...</code>
           </p>
-        </fieldset>
+        </div>
       </section>
 
       {/* Open drive link */}
@@ -111,7 +111,7 @@ export function SettingsPage() {
       {feedback && (
         <div className={`flex items-start gap-2 p-3 rounded-xl text-sm ${feedback.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
           <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <p>{feedback}</p>
+          <span>{feedback}</span>
         </div>
       )}
     </div>
