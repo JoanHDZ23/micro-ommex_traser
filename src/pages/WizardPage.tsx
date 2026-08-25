@@ -145,6 +145,15 @@ export function WizardPage() {
     const comment = capturedComment.trim()
     const productCode = capturedIsProduct ? activeLbProduct ?? undefined : undefined
 
+    // Check for duplicates
+    const existing = localPhotos.find((p) => p.base64.slice(0, 100) === capturedBase64.slice(0, 100))
+    if (existing) {
+      setFeedback('⚠️ Esta foto ya fue tomada')
+      setCapturedBase64('')
+      setCapturedComment('')
+      return
+    }
+
     // 1. Cache local (instantáneo)
     const cached = await cachePhoto({ trackingCode, base64: capturedBase64, comment, productCode })
     setLocalPhotos((prev) => [...prev, cached])
@@ -218,12 +227,19 @@ export function WizardPage() {
     setShowCamera(false)
     setFeedback(null)
 
-    // 1. Guardar en cache local (instantáneo — no espera red)
+    // Check for duplicates (same base64 already in cache)
+    const existing = localPhotos.find((p) => p.base64.slice(0, 100) === base64.slice(0, 100))
+    if (existing) {
+      setFeedback('⚠️ Esta foto ya fue tomada')
+      return
+    }
+
+    // 1. Guardar en cache local (instantáneo)
     const cached = await cachePhoto({ trackingCode, base64, comment })
     setLocalPhotos((prev) => [...prev, cached])
     setFeedback('✓ Foto guardada')
 
-    // 2. Subir a Drive en background (no bloquea UI)
+    // 2. Subir a Drive en background
     void (async () => {
       try {
         await apiRequest<UploadPhotoResponse>('/photos/upload', {
@@ -232,9 +248,7 @@ export function WizardPage() {
         })
         await import('../lib/photo-cache').then((m) => m.markAsUploaded(cached.id))
         await loadOperation()
-      } catch {
-        // Se reintentará automáticamente en el background interval
-      }
+      } catch { /* retry via background interval */ }
     })()
   }
 
@@ -343,73 +357,24 @@ export function WizardPage() {
 
   // ── Barcode scanner ──
   const [scannedCode, setScannedCode] = useState('')
-  const [scanOcrOpen, setScanOcrOpen] = useState(false)
-  const [ocrScanning, setOcrScanning] = useState(false)
   const [scanObservation, setScanObservation] = useState('')
-  const [scanDesc, setScanDesc] = useState('')
   const [scanConfirmOpen, setScanConfirmOpen] = useState(false)
 
   const handleScanResult = (code: string) => {
     setShowScanner(false)
     setScannedCode(code)
     setLbProductCode(code)
-    // Abre cámara para leer descripción con OCR
-    setScanOcrOpen(true)
-  }
-
-  const handleScanOcrCapture = async (base64: string) => {
-    setScanOcrOpen(false)
-    setOcrScanning(true)
-    try {
-      const { extractTextFromLabel, parseLabelText } = await import('../lib/ocr-scanner')
-      const rawText = await extractTextFromLabel(base64)
-      console.log('[OCR scan] Texto:', rawText)
-      const parsed = parseLabelText(rawText)
-
-      // Extraer DESC como nombre del producto
-      const desc = parsed.descripcion ?? ''
-      setScanDesc(desc)
-
-      // Guardar label data
-      const labelData: LabelData = {}
-      if (parsed.poNumber) labelData.poNumber = parsed.poNumber
-      if (parsed.sku) labelData.sku = parsed.sku
-      if (parsed.sscc) labelData.sscc = parsed.sscc
-      if (parsed.np) labelData.np = parsed.np
-      if (parsed.destinatario) labelData.destinatario = parsed.destinatario
-      if (parsed.transportadora) labelData.transportadora = parsed.transportadora
-      if (parsed.codigoEtiqueta) labelData.codigoEtiqueta = parsed.codigoEtiqueta
-      if (parsed.complemento) labelData.complemento = parsed.complemento
-      if (desc) labelData.descripcion = desc
-      if (Object.keys(labelData).length > 0) setLbLabelData(labelData)
-
-      // Mostrar formulario de confirmación con observación
-      setScanConfirmOpen(true)
-    } catch {
-      // Si OCR falla, permitir agregar con solo el código
-      setScanConfirmOpen(true)
-    } finally {
-      setOcrScanning(false)
-    }
+    setScanConfirmOpen(true)
   }
 
   const confirmScannedProduct = () => {
     const code = scannedCode || lbProductCode
     if (!code) return
-    // Agregar la observación como parte del labelData.descripcion
-    if (scanObservation.trim()) {
-      const current = lbLabelData ?? {}
-      current.descripcion = scanObservation.trim() + (scanDesc ? ` — ${scanDesc}` : '')
-      setLbLabelData(current)
-    } else if (scanDesc) {
-      const current = lbLabelData ?? {}
-      current.descripcion = scanDesc
-      setLbLabelData(current)
-    }
+    // El nombre del producto = código + observación
+    const productName = scanObservation.trim() ? `${code} ${scanObservation.trim()}` : code
     setScanConfirmOpen(false)
     setScanObservation('')
-    setScanDesc('')
-    void handleAddProduct(code)
+    void handleAddProduct(productName)
   }
 
   const handleShare = () => {
@@ -801,7 +766,7 @@ export function WizardPage() {
       {!isCompleted && (
         <div className="sticky bottom-0 z-20 bg-[#1f2c34] px-2 py-2 border-t border-[#2a3942]">
           <div className="flex items-end gap-2">
-            {/* Attach file */}
+            {/* Attach file (gallery) */}
             <label className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center cursor-pointer flex-shrink-0">
               <Plus className="w-5 h-5 text-[#8696a0]" />
               <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => handleNativeCapture(e, false)} />
@@ -817,10 +782,12 @@ export function WizardPage() {
                 style={{ height: 'auto' }}
               />
             </div>
-            {/* Camera button */}
-            <button onClick={() => setShowCamera(true)} className="w-9 h-9 rounded-full bg-[#005c4b] flex items-center justify-center flex-shrink-0">
+            {/* Camera button — uses native camera via capture */}
+            <label className="w-9 h-9 rounded-full bg-[#005c4b] flex items-center justify-center cursor-pointer flex-shrink-0">
               <Camera className="w-5 h-5 text-white" />
-            </button>
+              <input type="file" accept="image/*" capture="environment" className="hidden"
+                onChange={(e) => handleNativeCapture(e, false)} />
+            </label>
           </div>
           {/* Quick actions row */}
           {(operation.photos.length > 0 || lbProducts.length > 0) && (
@@ -851,41 +818,26 @@ export function WizardPage() {
       {/* Barcode Scanner */}
       {showScanner && <BarcodeScanner onResult={handleScanResult} onClose={() => setShowScanner(false)} />}
 
-      {/* OCR after barcode scan — reads product description */}
-      {scanOcrOpen && (
-        <CameraCapture stepName="Foto de la etiqueta (leer descripción)" stepIndex={0}
-          onCapture={(b64) => void handleScanOcrCapture(b64)}
-          onCancel={() => { setScanOcrOpen(false); setScanConfirmOpen(true) }} />
-      )}
-
       {/* Confirm scanned product */}
-      {(scanConfirmOpen || ocrScanning) && (
+      {scanConfirmOpen && (
         <div className="fixed inset-0 z-[90] bg-black/50 flex items-end justify-center p-4">
           <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl p-4 space-y-3 shadow-xl">
-            {ocrScanning ? (
-              <div className="flex items-center justify-center gap-2 py-6">
-                <Loader2 className="w-5 h-5 animate-spin text-[var(--color-primary)]" />
-                <span className="text-sm text-[var(--color-text-2)]">Leyendo etiqueta...</span>
-              </div>
-            ) : (
-              <>
             <h3 className="text-sm font-bold text-[var(--color-text)]">Producto escaneado</h3>
-            <p className="text-xs text-[var(--color-text-2)]">Código: <strong>{scannedCode}</strong></p>
-            {scanDesc && <p className="text-xs text-emerald-700 bg-emerald-50 px-2 py-1 rounded">DESC: {scanDesc}</p>}
+            <div className="px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
+              <span className="text-lg font-bold text-[var(--color-primary)]">{scannedCode}</span>
+            </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-[var(--color-text-2)]">Observación (título del producto)</label>
+              <label className="text-xs font-medium text-[var(--color-text-2)]">Nombre del producto</label>
               <input type="text" value={scanObservation} onChange={(e) => setScanObservation(e.target.value)}
-                placeholder="Ej: Daño en esquina, Producto completo..."
+                placeholder="Ej: NEVERA ELECTROLUX 522LB..."
                 className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" autoFocus />
             </div>
             <div className="flex gap-2 pt-1">
-              <button onClick={() => { setScanConfirmOpen(false); setScanDesc(''); setScanObservation('') }}
+              <button onClick={() => { setScanConfirmOpen(false); setScanObservation('') }}
                 className="flex-1 py-2.5 rounded-lg border border-[var(--color-border)] text-sm font-medium text-[var(--color-text-2)]">Cancelar</button>
               <button onClick={confirmScannedProduct}
-                className="flex-1 py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium">Agregar producto</button>
+                className="flex-1 py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium">Agregar</button>
             </div>
-              </>
-            )}
           </div>
         </div>
       )}
