@@ -1,9 +1,24 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Loader2 } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Loader2, X } from 'lucide-react'
 import { apiRequest, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
 import { getCompanyId, getOperatorName } from '../lib/context'
+
+// Saved plates in localStorage
+const PLATES_KEY = 'ommex_saved_plates'
+function getSavedPlates(): string[] {
+  try { return JSON.parse(localStorage.getItem(PLATES_KEY) ?? '[]') } catch { return [] }
+}
+function savePlateToStorage(plate: string) {
+  const plates = getSavedPlates().filter((p) => p !== plate)
+  plates.unshift(plate)
+  if (plates.length > 20) plates.pop()
+  localStorage.setItem(PLATES_KEY, JSON.stringify(plates))
+}
+function removeSavedPlate(plate: string) {
+  localStorage.setItem(PLATES_KEY, JSON.stringify(getSavedPlates().filter((p) => p !== plate)))
+}
 
 export function NewOperationPage() {
   const navigate = useNavigate()
@@ -19,6 +34,7 @@ export function NewOperationPage() {
   const [showPlate, setShowPlate] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [savedPlates, setSavedPlates] = useState<string[]>(() => getSavedPlates())
 
   const canSubmit = form.operatorName.trim() && (showPlate ? form.vehiclePlate?.trim() : true)
 
@@ -33,6 +49,11 @@ export function NewOperationPage() {
       const payload: CreateOperationPayload = {
         ...form,
         vehiclePlate: showPlate ? form.vehiclePlate : undefined,
+      }
+      // Save plate for reuse
+      if (showPlate && form.vehiclePlate?.trim()) {
+        savePlateToStorage(form.vehiclePlate.trim())
+        setSavedPlates(getSavedPlates())
       }
       const result = await apiRequest<Operation>('/operations', {
         method: 'POST',
@@ -115,15 +136,38 @@ export function NewOperationPage() {
           </label>
 
           {showPlate && (
-            <input
-              type="text"
-              value={form.vehiclePlate ?? ''}
-              onChange={(e) => setForm((f) => ({ ...f, vehiclePlate: e.target.value.toUpperCase() }))}
-              placeholder="Ej: ABC123"
-              maxLength={10}
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]"
-              autoComplete="off"
-            />
+            <div className="space-y-2">
+              <input
+                type="text"
+                value={form.vehiclePlate ?? ''}
+                onChange={(e) => setForm((f) => ({ ...f, vehiclePlate: e.target.value.toUpperCase() }))}
+                placeholder="Ej: ABC123"
+                maxLength={10}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]"
+                autoComplete="off"
+              />
+              {/* Saved plates */}
+              {savedPlates.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {savedPlates.slice(0, 8).map((plate) => (
+                    <div key={plate} className="flex items-center gap-0.5">
+                      <button type="button" onClick={() => setForm((f) => ({ ...f, vehiclePlate: plate }))}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                          form.vehiclePlate === plate
+                            ? 'bg-[var(--color-primary)] text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}>
+                        {plate}
+                      </button>
+                      <button type="button" onClick={() => { removeSavedPlate(plate); setSavedPlates(getSavedPlates()) }}
+                        className="w-4 h-4 rounded-full text-gray-400 hover:text-red-500 flex items-center justify-center">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </fieldset>
 
