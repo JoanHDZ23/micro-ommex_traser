@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Calendar, Camera, CheckCircle2, Clock, Download, Loader2, MapPin, Package, Share2, User } from 'lucide-react'
+import { Calendar, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, Loader2, MapPin, Package, Share2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 
 function getDriveImageUrl(photo: PhotoRecord, size = 800): string | null {
@@ -23,6 +23,9 @@ export function SharePage() {
   const [operation, setOperation] = useState<Operation | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [lightboxPhoto, setLightboxPhoto] = useState<PhotoRecord | null>(null)
+  const [lightboxAll, setLightboxAll] = useState<PhotoRecord[]>([])
+  const [lightboxIdx, setLightboxIdx] = useState(0)
 
   const load = useCallback(async () => {
     if (!trackingCode) return
@@ -122,7 +125,7 @@ export function SharePage() {
             </h4>
             <div className="grid grid-cols-2 gap-2">
               {operation.photos.map((photo, i) => (
-                <PhotoCard key={i} photo={photo} />
+                <PhotoCard key={i} photo={photo} onClick={() => { setLightboxAll(operation.photos); setLightboxIdx(i); setLightboxPhoto(photo) }} />
               ))}
             </div>
           </section>
@@ -144,7 +147,8 @@ export function SharePage() {
                       const url = getDriveImageUrl(ph, 400)
                       const isLast = idx === 3 && product.photos.length > 4
                       return (
-                        <div key={idx} className="aspect-square relative bg-gray-100">
+                        <div key={idx} className="aspect-square relative bg-gray-100 cursor-pointer"
+                          onClick={() => { setLightboxAll(product.photos); setLightboxIdx(idx); setLightboxPhoto(ph) }}>
                           {url && (
                             <img src={url} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" loading="lazy"
                               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
@@ -226,16 +230,67 @@ export function SharePage() {
           Ommex Tracer · Registro fotográfico de operaciones
         </footer>
       </div>
+
+      {/* Lightbox */}
+      {lightboxPhoto && (
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col" onClick={() => setLightboxPhoto(null)}>
+          {/* Header */}
+          <div className="flex items-center justify-between p-3 text-white">
+            <div>
+              <span className="text-xs opacity-70">{lightboxIdx + 1} / {lightboxAll.length}</span>
+              {lightboxPhoto.comment && <span className="text-sm block mt-0.5">{lightboxPhoto.comment}</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              {getDownloadUrl(lightboxPhoto) && (
+                <a href={getDownloadUrl(lightboxPhoto)!} target="_blank" rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
+                  <Download className="w-4 h-4" />
+                </a>
+              )}
+              <button className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Image */}
+          <div className="flex-1 flex items-center justify-center p-2 relative" onClick={(e) => e.stopPropagation()}>
+            {getDriveImageUrl(lightboxPhoto, 1200) && (
+              <img src={getDriveImageUrl(lightboxPhoto, 1200)!} alt="Foto"
+                className="max-w-full max-h-full object-contain rounded-lg" />
+            )}
+            {/* Nav arrows */}
+            {lightboxAll.length > 1 && (
+              <>
+                <button onClick={(e) => { e.stopPropagation(); const prev = (lightboxIdx - 1 + lightboxAll.length) % lightboxAll.length; setLightboxIdx(prev); setLightboxPhoto(lightboxAll[prev]) }}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
+                  <ChevronLeft className="w-6 h-6 text-white" />
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); const next = (lightboxIdx + 1) % lightboxAll.length; setLightboxIdx(next); setLightboxPhoto(lightboxAll[next]) }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
+                  <ChevronRight className="w-6 h-6 text-white" />
+                </button>
+              </>
+            )}
+          </div>
+
+          {/* Timestamp */}
+          <div className="text-center pb-4 text-[10px] text-white/50">
+            {new Date(lightboxPhoto.timestamp).toLocaleString('es-CO', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function PhotoCard({ photo }: { photo: PhotoRecord }) {
+function PhotoCard({ photo, onClick }: { photo: PhotoRecord; onClick?: () => void }) {
   const url = getDriveImageUrl(photo)
   const downloadUrl = getDownloadUrl(photo)
   const title = photo.comment || photo.stepName
   return (
-    <div className="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm">
+    <div className="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm cursor-pointer" onClick={onClick}>
       <div className="aspect-[4/3] bg-gray-100 relative">
         {url ? (
           <img src={url} alt={title} className="w-full h-full object-cover" loading="lazy"
