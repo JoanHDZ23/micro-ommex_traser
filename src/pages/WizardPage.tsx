@@ -679,11 +679,37 @@ export function WizardPage() {
                     {/* Expanded: photo list + add photo */}
                     {isActive && (
                       <div className="px-2.5 pb-2 space-y-2 border-t border-[#c6e9b0]">
-                        <div className="flex items-center gap-2 pt-2">
-                          <button onClick={() => setLbCameraOpen(true)}
-                            className="flex-1 py-2 rounded-lg bg-[#075e54] text-white text-xs font-medium flex items-center justify-center gap-1.5">
-                            <Camera className="w-3.5 h-3.5" /> Tomar foto
-                          </button>
+                        {/* Individual photos with delete */}
+                        {photos.length > 0 && (
+                          <div className="grid grid-cols-3 gap-1 pt-2">
+                            {photos.map((ph, phIdx) => (
+                              <div key={phIdx} className="relative aspect-square rounded overflow-hidden bg-gray-200">
+                                {ph.fileId && ph.fileId !== 'pending' ? (
+                                  <img src={`https://lh3.googleusercontent.com/d/${ph.fileId}=w200`}
+                                    className="w-full h-full object-cover" loading="lazy"
+                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-gray-400 text-[9px]">🕐</div>
+                                )}
+                                <button onClick={async () => {
+                                  try {
+                                    await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${phIdx}`, { method: 'DELETE' })
+                                    await loadOperation()
+                                  } catch { /* silent */ }
+                                }} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/50 flex items-center justify-center">
+                                  <X className="w-2.5 h-2.5 text-white" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {/* Add photo buttons */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <label className="flex-1 py-2 rounded-lg bg-[#075e54] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                            <Camera className="w-3.5 h-3.5" /> Foto
+                            <input type="file" accept="image/*" capture="environment" className="hidden"
+                              disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
+                          </label>
                           <label className="flex-1 py-2 rounded-lg border border-[#075e54] text-[#075e54] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                             📁 Galería
                             <input ref={lbFileInputRef} type="file" accept="image/*" className="hidden"
