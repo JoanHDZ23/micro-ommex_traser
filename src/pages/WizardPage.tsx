@@ -29,6 +29,7 @@ export function WizardPage() {
   const [editComment, setEditComment] = useState('')
 
   // Plate editing removed — handled in header
+  const [chatMessage, setChatMessage] = useState('')
 
   // Link product to another operation
   const [linkProductCode, setLinkProductCode] = useState<string | null>(null)
@@ -130,7 +131,8 @@ export function WizardPage() {
       setCapturedPreview(dataUrl)
       setCapturedBase64(base64)
       setCapturedIsProduct(isProduct)
-      setCapturedComment('')
+      setCapturedComment(chatMessage) // Pre-fill with chat message
+      setChatMessage('')
     }
     reader.readAsDataURL(file)
     e.target.value = '' // reset
@@ -752,22 +754,37 @@ export function WizardPage() {
 
       {/* WhatsApp-style bottom input bar */}
       {!isCompleted && (
-        <div className="sticky bottom-0 z-20 bg-[#1f2c34] px-3 py-2.5 flex items-center gap-2 border-t border-[#2a3942]">
-          <label className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center cursor-pointer">
-            <Plus className="w-5 h-5 text-[#8696a0]" />
-            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => handleNativeCapture(e, false)} />
-          </label>
-          <button onClick={() => setShowCamera(true)} className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center">
-            <Camera className="w-5 h-5 text-[#8696a0]" />
-          </button>
-          <div className="flex-1 px-3 py-2 rounded-full bg-[#2a3942] text-[#8696a0] text-xs">
-            Adjunta foto o documento...
-          </div>
-          {(operation.photos.length > 0 || lbProducts.length > 0) && (
-            <button onClick={() => void handleFinalize()} disabled={uploading}
-              className="w-9 h-9 rounded-full bg-[#005c4b] flex items-center justify-center disabled:opacity-50">
-              <CheckCircle2 className="w-5 h-5 text-white" />
+        <div className="sticky bottom-0 z-20 bg-[#1f2c34] px-2 py-2 border-t border-[#2a3942]">
+          <div className="flex items-end gap-2">
+            {/* Attach file */}
+            <label className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center cursor-pointer flex-shrink-0">
+              <Plus className="w-5 h-5 text-[#8696a0]" />
+              <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => handleNativeCapture(e, false)} />
+            </label>
+            {/* Message input */}
+            <div className="flex-1 flex items-end bg-[#2a3942] rounded-2xl px-3 py-1.5 min-h-[36px]">
+              <textarea
+                value={chatMessage}
+                onChange={(e) => { setChatMessage(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px' }}
+                placeholder="Escribe un comentario..."
+                rows={1}
+                className="flex-1 bg-transparent text-[#e9edef] text-sm placeholder:text-[#8696a0] resize-none outline-none max-h-[100px]"
+                style={{ height: 'auto' }}
+              />
+            </div>
+            {/* Camera button */}
+            <button onClick={() => setShowCamera(true)} className="w-9 h-9 rounded-full bg-[#005c4b] flex items-center justify-center flex-shrink-0">
+              <Camera className="w-5 h-5 text-white" />
             </button>
+          </div>
+          {/* Quick actions row */}
+          {(operation.photos.length > 0 || lbProducts.length > 0) && (
+            <div className="flex items-center justify-end mt-2 gap-2">
+              <button onClick={() => void handleFinalize()} disabled={uploading}
+                className="px-4 py-1.5 rounded-full bg-[#005c4b] text-white text-[11px] font-medium flex items-center gap-1.5 disabled:opacity-50">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Completar ({operation.photos.length + lbProducts.reduce((s, p) => s + p.photos.length, 0)} fotos)
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -775,7 +792,7 @@ export function WizardPage() {
       {/* Camera for general photos */}
       {showCamera && (
         <CameraCapture stepName="Registro fotográfico" stepIndex={0}
-          onCapture={(b64, cmt) => void handlePhotoCapture(b64, cmt)}
+          onCapture={(b64, cmt) => { void handlePhotoCapture(b64, cmt || chatMessage); setChatMessage('') }}
           onCancel={() => setShowCamera(false)} />
       )}
 
