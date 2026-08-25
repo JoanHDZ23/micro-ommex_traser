@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Camera, CheckCircle2, ChevronLeft, ChevronRight, Download, Loader2, Share2, X } from 'lucide-react'
+import { Calendar, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, Loader2, MapPin, Package, Share2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 
 function getDriveImageUrl(photo: PhotoRecord, size = 800): string | null {
@@ -23,7 +23,8 @@ export function SharePage() {
   const [operation, setOperation] = useState<Operation | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [lightboxPhotos, setLightboxPhotos] = useState<PhotoRecord[]>([])
+  const [lightboxPhoto, setLightboxPhoto] = useState<PhotoRecord | null>(null)
+  const [lightboxAll, setLightboxAll] = useState<PhotoRecord[]>([])
   const [lightboxIdx, setLightboxIdx] = useState(0)
 
   const load = useCallback(async () => {
@@ -41,189 +42,289 @@ export function SharePage() {
 
   useEffect(() => { void load() }, [load])
 
-  const openLightbox = (photos: PhotoRecord[], idx: number) => {
-    setLightboxPhotos(photos)
-    setLightboxIdx(idx)
+  if (loading) {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center bg-gray-50">
+        <Loader2 className="w-8 h-8 animate-spin text-[var(--color-primary)]" />
+      </div>
+    )
   }
 
-  if (loading) return <div className="min-h-[100dvh] flex items-center justify-center bg-[#0b141a]"><Loader2 className="w-8 h-8 animate-spin text-[#00a884]" /></div>
-  if (error || !operation) return (
-    <div className="min-h-[100dvh] flex items-center justify-center bg-[#0b141a] p-6">
-      <div className="text-center"><Camera className="w-12 h-12 mx-auto text-[#3b4a54] mb-3" /><span className="text-sm text-[#8696a0]">{error ?? 'Registro no encontrado'}</span></div>
-    </div>
-  )
+  if (error || !operation) {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center bg-gray-50 p-6">
+        <div className="text-center">
+          <Camera className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+          <p className="text-sm text-gray-500">{error ?? 'Registro no encontrado'}</p>
+        </div>
+      </div>
+    )
+  }
 
   const date = new Date(operation.createdAt)
-  const allProducts = operation.lineaBlanca ?? []
+  const allPhotos = [
+    ...operation.photos,
+    ...(operation.lineaBlanca ?? []).flatMap((p) => p.photos),
+  ]
+  const totalPhotos = allPhotos.length
 
   const handleShare = () => {
     const url = window.location.href
-    const text = `📋 *${operation.trackingCode}*\n${operation.operationType}\nOperador: ${operation.operatorName}\n${allProducts.length} productos\n\n${url}`
-    if (typeof navigator.share === 'function') void navigator.share({ title: operation.trackingCode, text, url })
-    else window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank')
+    const text = `📋 *Registro ${operation.trackingCode}*\n${operation.operationType}\nOperador: ${operation.operatorName}\n${totalPhotos} fotos\n\n${url}`
+    if (typeof navigator.share === 'function') {
+      void navigator.share({ title: `Registro ${operation.trackingCode}`, text, url })
+    } else {
+      const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
+      window.open(waUrl, '_blank')
+    }
   }
 
   return (
-    <div className="min-h-[100dvh] flex flex-col" style={{ backgroundColor: '#0b141a' }}>
-      {/* WhatsApp-style header */}
-      <div className="sticky top-0 z-10 bg-[#1f2c34] px-3 py-2.5 flex items-center gap-3 shadow">
-        <div className="w-10 h-10 rounded-full bg-[#00a884] flex items-center justify-center text-white font-bold text-sm">
-          {operation.operatorName.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase()}
-        </div>
-        <div className="flex-1 min-w-0">
-          <span className="text-sm font-semibold text-[#e9edef] block truncate">{operation.trackingCode}</span>
-          <span className="text-[11px] text-[#8696a0]">{operation.operatorName} · {date.toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })}</span>
-        </div>
-        <button onClick={handleShare} className="w-9 h-9 rounded-full flex items-center justify-center text-[#aebac1]">
-          <Share2 className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* Chat body */}
-      <div className="flex-1 p-3 space-y-2 overflow-y-auto" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'200\' height=\'200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cdefs%3E%3Cpattern id=\'p\' width=\'40\' height=\'40\' patternUnits=\'userSpaceOnUse\'%3E%3Cpath d=\'M0 20h40M20 0v40\' stroke=\'%23ffffff\' stroke-opacity=\'.02\' fill=\'none\'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width=\'200\' height=\'200\' fill=\'url(%23p)\'/%3E%3C/svg%3E")' }}>
-
-        {/* Info bubble */}
-        <div className="flex justify-center">
-          <div className="bg-[#182229] text-[#8696a0] text-[10px] px-3 py-1 rounded-lg">
-            {operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''} · {operation.status === 'COMPLETADO' ? '✓ Completado' : 'En proceso'}
-          </div>
-        </div>
-
-        {/* General photos as bubbles */}
-        {operation.photos.map((photo, i) => (
-          <div key={`p-${i}`} className="flex justify-end">
-            <div className="max-w-[80%] bg-[#005c4b] rounded-lg rounded-tr-none overflow-hidden shadow">
-              {getDriveImageUrl(photo, 400) && (
-                <button onClick={() => openLightbox(operation.photos, i)} className="w-full">
-                  <img src={getDriveImageUrl(photo, 400)!} alt="" className="w-full max-h-64 object-cover"
-                    loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                </button>
-              )}
-              <div className="px-2 py-1">
-                {photo.comment && <span className="text-[12px] text-[#e9edef] block">{photo.comment}</span>}
-                <div className="flex items-center justify-end gap-1">
-                  <span className="text-[9px] text-[#ffffff80]">{new Date(photo.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}</span>
-                  <CheckCircle2 className="w-3 h-3 text-[#53bdeb]" />
-                </div>
-              </div>
+    <div className="min-h-[100dvh] bg-gray-50">
+      {/* Header */}
+      <header className="bg-[#075e54] text-white px-4 py-5">
+        <div className="max-w-lg mx-auto">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[10px] opacity-60 uppercase tracking-wide">Registro fotográfico</p>
+              <h1 className="text-lg font-bold mt-0.5">{operation.trackingCode}</h1>
+              <p className="text-xs opacity-80 mt-0.5">{operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''}</p>
             </div>
+            <button onClick={handleShare} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+              <Share2 className="w-5 h-5" />
+            </button>
           </div>
-        ))}
+        </div>
+      </header>
 
-        {/* Products as WhatsApp message bubbles */}
-        {allProducts.map((product) => {
-          const photos = product.photos ?? []
-          const desc = product.labelData?.descripcion ?? ''
-          const maxShow = 4
-          const visiblePhotos = photos.slice(0, maxShow)
-          const extraCount = photos.length > maxShow ? photos.length - maxShow + 1 : 0
+      <div className="p-4 space-y-4 max-w-lg mx-auto">
+        {/* Info cards */}
+        <div className="grid grid-cols-2 gap-2">
+          <InfoChip icon={User} label="Operador" value={operation.operatorName} />
+          <InfoChip icon={Calendar} label="Fecha" value={date.toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })} />
+          {operation.vehiclePlate && <InfoChip icon={MapPin} label="Placa" value={operation.vehiclePlate} />}
+          <InfoChip icon={Clock} label="Hora" value={date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} />
+        </div>
 
-          return (
-            <div key={product.productCode} className="flex justify-end">
-              <div className="max-w-[85%] bg-[#005c4b] rounded-lg rounded-tr-none overflow-hidden shadow">
-                {/* Photo grid */}
-                {photos.length > 0 && (
-                  <div className="grid gap-0.5" style={{ gridTemplateColumns: photos.length === 1 ? '1fr' : '1fr 1fr' }}>
-                    {(extraCount > 0 ? visiblePhotos.slice(0, maxShow - 1) : visiblePhotos).map((ph, idx) => {
+        {/* Summary bar */}
+        <div className="flex items-center justify-between px-3 py-2.5 bg-white rounded-xl border border-gray-200">
+          <span className="text-xs text-gray-600">{totalPhotos} fotos · {(operation.lineaBlanca ?? []).length} productos</span>
+          <span className={`text-[10px] font-medium px-2.5 py-0.5 rounded-full ${
+            operation.status === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+          }`}>
+            {operation.status === 'COMPLETADO' ? '✓ Completado' : 'En proceso'}
+          </span>
+        </div>
+
+        {/* Fotos generales */}
+        {operation.photos.length > 0 && (
+          <section className="space-y-3">
+            <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              Fotos del registro ({operation.photos.length})
+            </h4>
+            <div className="grid grid-cols-2 gap-2">
+              {operation.photos.map((photo, i) => (
+                <PhotoCard key={i} photo={photo} onClick={() => { setLightboxAll(operation.photos); setLightboxIdx(i); setLightboxPhoto(photo) }} />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Productos con fotos */}
+        {(operation.lineaBlanca ?? []).length > 0 && (
+          <section className="space-y-4">
+            <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Package className="w-4 h-4 text-[#075e54]" />
+              Productos ({operation.lineaBlanca.length})
+            </h4>
+            {operation.lineaBlanca.map((product) => (
+              <div key={product.productCode} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                {/* Product photo grid */}
+                {product.photos.length > 0 && (
+                  <div className="grid gap-0.5" style={{ gridTemplateColumns: product.photos.length === 1 ? '1fr' : '1fr 1fr' }}>
+                    {product.photos.slice(0, 4).map((ph, idx) => {
                       const url = getDriveImageUrl(ph, 400)
+                      const isLast = idx === 3 && product.photos.length > 4
                       return (
-                        <button key={idx} onClick={() => openLightbox(photos, idx)} className="aspect-square relative bg-[#1f2c34]">
-                          {url && <img src={url} className="w-full h-full object-cover" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />}
-                        </button>
+                        <div key={idx} className="aspect-square relative bg-gray-100 cursor-pointer"
+                          onClick={() => { setLightboxAll(product.photos); setLightboxIdx(idx); setLightboxPhoto(ph) }}>
+                          {url && (
+                            <img src={url} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" loading="lazy"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                          )}
+                          {isLast && (
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                              <span className="text-white text-xl font-bold">+{product.photos.length - 3}</span>
+                            </div>
+                          )}
+                          {/* Download button per photo */}
+                          {getDownloadUrl(ph) && (
+                            <a href={getDownloadUrl(ph)!} target="_blank" rel="noopener noreferrer"
+                              className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-black/40 flex items-center justify-center">
+                              <Download className="w-3 h-3 text-white" />
+                            </a>
+                          )}
+                        </div>
                       )
                     })}
-                    {extraCount > 0 && (
-                      <button onClick={() => openLightbox(photos, maxShow - 1)} className="aspect-square relative bg-[#1f2c34]">
-                        {getDriveImageUrl(photos[maxShow - 1], 400) && (
-                          <img src={getDriveImageUrl(photos[maxShow - 1], 400)!} className="w-full h-full object-cover opacity-50" loading="lazy" />
-                        )}
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <span className="text-white text-xl font-bold">+{extraCount}</span>
-                        </div>
+                  </div>
+                )}
+                {/* Product info */}
+                <div className="p-3 space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-[#075e54]">{product.productCode}</span>
+                    {product.isLineaBlanca && <span className="text-[8px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>}
+                  </div>
+                  {product.labelData?.descripcion && (
+                    <p className="text-xs text-gray-700">{product.labelData.descripcion}</p>
+                  )}
+                  {product.labelData && Object.keys(product.labelData).filter((k) => k !== 'descripcion' && product.labelData![k as keyof typeof product.labelData]).length > 0 && (
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
+                      {product.labelData.sku && <span><b>SKU:</b> {product.labelData.sku}</span>}
+                      {product.labelData.sscc && <span><b>SSCC:</b> {product.labelData.sscc}</span>}
+                      {product.labelData.transportadora && <span><b>Transp:</b> {product.labelData.transportadora}</span>}
+                      {product.labelData.poNumber && <span><b>PO:</b> {product.labelData.poNumber}</span>}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[10px] text-gray-400">{product.photos.length} fotos</span>
+                    {/* Download all photos of this product */}
+                    {product.photos.length > 0 && product.photos.some((p) => p.fileId && p.fileId !== 'pending') && (
+                      <button onClick={() => {
+                        product.photos.forEach((ph) => {
+                          const dl = getDownloadUrl(ph)
+                          if (dl) window.open(dl, '_blank')
+                        })
+                      }} className="text-[10px] text-[#075e54] font-medium flex items-center gap-1 hover:underline">
+                        <Download className="w-3 h-3" /> Descargar todas
                       </button>
                     )}
                   </div>
-                )}
-                {/* Text */}
-                <div className="px-2.5 py-1.5">
-                  <span className="text-[13px] font-bold text-[#53bdeb] block">{product.productCode}</span>
-                  {desc && <span className="text-[12px] text-[#e9edef] block">{desc}</span>}
-                  {product.labelData?.sku && <span className="text-[10px] text-[#ffffff80] block">SKU: {product.labelData.sku}</span>}
-                  <div className="flex items-center justify-end gap-1 mt-0.5">
-                    <span className="text-[9px] text-[#ffffff80]">
-                      {new Date(product.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <CheckCircle2 className="w-3 h-3 text-[#53bdeb]" />
-                  </div>
                 </div>
               </div>
-            </div>
-          )
-        })}
+            ))}
+          </section>
+        )}
 
-        {/* End bubble */}
-        <div className="flex justify-center pt-2">
-          <div className="bg-[#182229] text-[#8696a0] text-[10px] px-3 py-1 rounded-lg">
-            {operation.photos.length + allProducts.reduce((s, p) => s + p.photos.length, 0)} fotos registradas
-          </div>
-        </div>
-      </div>
+        {/* Download all button */}
+        {totalPhotos > 0 && (
+          <button onClick={() => {
+            allPhotos.forEach((ph) => {
+              const dl = getDownloadUrl(ph)
+              if (dl) window.open(dl, '_blank')
+            })
+          }} className="w-full py-3 rounded-xl bg-[#075e54] text-white font-semibold text-sm flex items-center justify-center gap-2">
+            <Download className="w-4 h-4" /> Descargar todas las fotos ({totalPhotos})
+          </button>
+        )}
 
-      {/* Bottom bar */}
-      <div className="bg-[#1f2c34] px-3 py-2.5 flex items-center gap-2 border-t border-[#2a3942]">
-        <button onClick={handleShare} className="flex-1 py-2.5 rounded-full bg-[#00a884] text-white text-sm font-medium flex items-center justify-center gap-2">
+        {/* Share button */}
+        <button onClick={handleShare}
+          className="w-full py-3 rounded-xl bg-[#25d366] text-white font-semibold text-sm flex items-center justify-center gap-2">
           <Share2 className="w-4 h-4" /> Compartir por WhatsApp
         </button>
-        <button onClick={() => {
-          const allPhotos = [...operation.photos, ...allProducts.flatMap((p) => p.photos)]
-          allPhotos.forEach((ph) => { const dl = getDownloadUrl(ph); if (dl) window.open(dl, '_blank') })
-        }} className="w-10 h-10 rounded-full bg-[#2a3942] flex items-center justify-center">
-          <Download className="w-5 h-5 text-[#00a884]" />
-        </button>
+
+        {/* Footer */}
+        <footer className="text-center py-4 text-[10px] text-gray-400">
+          Ommex Tracer · Registro fotográfico de operaciones
+        </footer>
       </div>
 
       {/* Lightbox */}
-      {lightboxPhotos.length > 0 && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col">
-          <div className="flex items-center justify-between p-3">
-            <span className="text-xs text-white/60">{lightboxIdx + 1} / {lightboxPhotos.length}</span>
-            <div className="flex gap-2">
-              {getDownloadUrl(lightboxPhotos[lightboxIdx]) && (
-                <a href={getDownloadUrl(lightboxPhotos[lightboxIdx])!} target="_blank" rel="noopener noreferrer"
+      {lightboxPhoto && (
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col" onClick={() => setLightboxPhoto(null)}>
+          {/* Header */}
+          <div className="flex items-center justify-between p-3 text-white">
+            <div>
+              <span className="text-xs opacity-70">{lightboxIdx + 1} / {lightboxAll.length}</span>
+              {lightboxPhoto.comment && <span className="text-sm block mt-0.5">{lightboxPhoto.comment}</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              {getDownloadUrl(lightboxPhoto) && (
+                <a href={getDownloadUrl(lightboxPhoto)!} target="_blank" rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
                   className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
-                  <Download className="w-4 h-4 text-white" />
+                  <Download className="w-4 h-4" />
                 </a>
               )}
-              <button onClick={() => setLightboxPhotos([])} className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
-                <X className="w-5 h-5 text-white" />
+              <button className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
+                <X className="w-5 h-5" />
               </button>
             </div>
           </div>
-          <div className="flex-1 flex items-center justify-center relative px-2">
-            {getDriveImageUrl(lightboxPhotos[lightboxIdx], 1200) && (
-              <img src={getDriveImageUrl(lightboxPhotos[lightboxIdx], 1200)!} className="max-w-full max-h-full object-contain" />
+
+          {/* Image */}
+          <div className="flex-1 flex items-center justify-center p-2 relative" onClick={(e) => e.stopPropagation()}>
+            {getDriveImageUrl(lightboxPhoto, 1600) && (
+              <img src={getDriveImageUrl(lightboxPhoto, 1600)!} alt="Foto"
+                className="w-full h-full object-contain" />
             )}
-            {lightboxPhotos.length > 1 && (
+            {/* Nav arrows */}
+            {lightboxAll.length > 1 && (
               <>
-                <button onClick={() => setLightboxIdx((lightboxIdx - 1 + lightboxPhotos.length) % lightboxPhotos.length)}
-                  className="absolute left-1 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/50 flex items-center justify-center">
+                <button onClick={(e) => { e.stopPropagation(); const prev = (lightboxIdx - 1 + lightboxAll.length) % lightboxAll.length; setLightboxIdx(prev); setLightboxPhoto(lightboxAll[prev]) }}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
                   <ChevronLeft className="w-6 h-6 text-white" />
                 </button>
-                <button onClick={() => setLightboxIdx((lightboxIdx + 1) % lightboxPhotos.length)}
-                  className="absolute right-1 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/50 flex items-center justify-center">
+                <button onClick={(e) => { e.stopPropagation(); const next = (lightboxIdx + 1) % lightboxAll.length; setLightboxIdx(next); setLightboxPhoto(lightboxAll[next]) }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
                   <ChevronRight className="w-6 h-6 text-white" />
                 </button>
               </>
             )}
           </div>
-          <div className="p-3 text-center">
-            {lightboxPhotos[lightboxIdx]?.comment && <span className="text-sm text-white block">{lightboxPhotos[lightboxIdx].comment}</span>}
-            <span className="text-[10px] text-white/50">
-              {new Date(lightboxPhotos[lightboxIdx]?.timestamp).toLocaleString('es-CO', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}
-            </span>
+
+          {/* Timestamp */}
+          <div className="text-center pb-4 text-[10px] text-white/50">
+            {new Date(lightboxPhoto.timestamp).toLocaleString('es-CO', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function PhotoCard({ photo, onClick }: { photo: PhotoRecord; onClick?: () => void }) {
+  const url = getDriveImageUrl(photo)
+  const downloadUrl = getDownloadUrl(photo)
+  const title = photo.comment || photo.stepName
+  return (
+    <div className="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm cursor-pointer" onClick={onClick}>
+      <div className="aspect-[4/3] bg-gray-100 relative">
+        {url ? (
+          <img src={url} alt={title} className="w-full h-full object-cover" loading="lazy"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <Camera className="w-6 h-6 text-gray-300" />
+          </div>
+        )}
+        {downloadUrl && (
+          <a href={downloadUrl} target="_blank" rel="noopener noreferrer"
+            className="absolute bottom-1.5 right-1.5 w-7 h-7 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
+            <Download className="w-3.5 h-3.5 text-white" />
+          </a>
+        )}
+      </div>
+      <div className="px-2.5 py-2">
+        <p className="text-[11px] font-medium text-gray-700 truncate">{title}</p>
+        <p className="text-[9px] text-gray-400 mt-0.5">
+          {new Date(photo.timestamp).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function InfoChip({ icon: Icon, label, value }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2 p-2.5 bg-white rounded-xl border border-gray-200">
+      <Icon className="w-4 h-4 text-gray-400" />
+      <div className="min-w-0">
+        <p className="text-[9px] text-gray-400 uppercase">{label}</p>
+        <p className="text-xs font-semibold text-gray-800 truncate">{value}</p>
+      </div>
     </div>
   )
 }
