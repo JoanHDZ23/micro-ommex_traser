@@ -656,11 +656,10 @@ export function WizardPage() {
                     {isActive && (
                       <div className="px-2.5 pb-2 space-y-2 border-t border-[#c6e9b0]">
                         <div className="flex items-center gap-2 pt-2">
-                          <label className="flex-1 py-2 rounded-lg bg-[#075e54] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                          <button onClick={() => setLbCameraOpen(true)}
+                            className="flex-1 py-2 rounded-lg bg-[#075e54] text-white text-xs font-medium flex items-center justify-center gap-1.5">
                             <Camera className="w-3.5 h-3.5" /> Tomar foto
-                            <input type="file" accept="image/*" capture="environment" className="hidden"
-                              disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
-                          </label>
+                          </button>
                           <label className="flex-1 py-2 rounded-lg border border-[#075e54] text-[#075e54] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                             📁 Galería
                             <input ref={lbFileInputRef} type="file" accept="image/*" className="hidden"
@@ -758,10 +757,9 @@ export function WizardPage() {
             <Plus className="w-5 h-5 text-[#8696a0]" />
             <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => handleNativeCapture(e, false)} />
           </label>
-          <label className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center cursor-pointer">
+          <button onClick={() => setShowCamera(true)} className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center">
             <Camera className="w-5 h-5 text-[#8696a0]" />
-            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleNativeCapture(e, false)} />
-          </label>
+          </button>
           <div className="flex-1 px-3 py-2 rounded-full bg-[#2a3942] text-[#8696a0] text-xs">
             Adjunta foto o documento...
           </div>
