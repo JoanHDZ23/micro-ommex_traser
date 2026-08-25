@@ -629,35 +629,73 @@ export function WizardPage() {
               </div>
             )}
 
-            {/* Product list */}
+            {/* Product list — WhatsApp style */}
             {lbProducts.map((product) => {
               const isActive = activeLbProduct === product.productCode
-              const isDone = product.status === 'COMPLETADO'
+              const photos = product.photos ?? []
+              const maxShow = 4
+              const extraCount = photos.length > maxShow ? photos.length - maxShow + 1 : 0
+              const visiblePhotos = extraCount > 0 ? photos.slice(0, maxShow - 1) : photos.slice(0, maxShow)
+              const lastVisiblePhoto = extraCount > 0 ? photos[maxShow - 1] : null
+              const desc = product.labelData?.descripcion ?? ''
+              const createdTime = product.createdAt ? new Date(product.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''
+
               return (
-                <div key={product.productCode} className={`p-3 rounded-xl border transition-all ${isActive ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]' : isDone ? 'border-emerald-200 bg-emerald-50' : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
-                  <div className="flex items-center justify-between">
-                    <button type="button" onClick={() => setActiveLbProduct(isActive ? null : product.productCode)} className="flex items-center gap-2 text-left">
-                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isDone ? 'bg-emerald-500 text-white' : 'bg-gray-100 text-gray-600'}`}>
-                        {isDone ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Package className="w-3.5 h-3.5" />}
-                      </div>
-                      <div>
-                        <p className="text-sm font-semibold text-[var(--color-text)]">{product.productCode}</p>
-                        <p className="text-[10px] text-[var(--color-text-3)]">
-                          {product.isLineaBlanca && <span className="text-purple-600 font-medium">L.B · </span>}
-                          {product.linkedTo && product.linkedTo.length > 0 && <span className="text-blue-500 font-medium">🔗{product.linkedTo.length} · </span>}
-                          {product.photos.length} fotos
-                        </p>
-                      </div>
-                    </button>
-                    <div className="flex items-center gap-0.5">
-                      {/* Rename */}
-                      <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
-                        className="p-1 rounded text-gray-400 hover:text-[var(--color-primary)] hover:bg-gray-100" title="Renombrar">
-                        <Pencil className="w-3 h-3" />
+                <div key={product.productCode} className="flex justify-end">
+                  <div className="w-[92%] bg-[#dcf8c6] rounded-lg rounded-tr-none shadow-sm overflow-hidden relative">
+                    {/* Photo grid */}
+                    {photos.length > 0 && (
+                      <button type="button" onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
+                        className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: photos.length === 1 ? '1fr' : '1fr 1fr' }}>
+                        {visiblePhotos.map((ph, idx) => (
+                          <div key={idx} className="aspect-square bg-gray-200 rounded overflow-hidden relative">
+                            {ph.fileId && ph.fileId !== 'pending' ? (
+                              <img src={`https://lh3.googleusercontent.com/d/${ph.fileId}=w400`}
+                                className="w-full h-full object-cover" loading="lazy"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-gray-400">
+                                <Camera className="w-6 h-6" />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                        {lastVisiblePhoto && (
+                          <div className="aspect-square bg-gray-200 rounded overflow-hidden relative">
+                            {lastVisiblePhoto.fileId && lastVisiblePhoto.fileId !== 'pending' ? (
+                              <img src={`https://lh3.googleusercontent.com/d/${lastVisiblePhoto.fileId}=w400`}
+                                className="w-full h-full object-cover opacity-60" loading="lazy"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                            ) : null}
+                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                              <span className="text-white text-2xl font-bold">+{extraCount}</span>
+                            </div>
+                          </div>
+                        )}
                       </button>
-                      {/* Remove from this record */}
+                    )}
+
+                    {/* Text content */}
+                    <div className="px-2.5 py-1.5">
+                      {/* Product code as colored title */}
+                      <span className="text-[13px] font-bold text-[#075e54]">{product.productCode}</span>
+                      {/* Description */}
+                      {desc && <span className="text-[12.5px] text-gray-800 block">{desc}</span>}
+                      {/* Time + check */}
+                      <div className="flex items-center justify-end gap-1 mt-0.5">
+                        <span className="text-[10px] text-gray-500">{createdTime}</span>
+                        <CheckCircle2 className="w-3 h-3 text-[#53bdeb]" />
+                      </div>
+                    </div>
+
+                    {/* Action buttons — top right */}
+                    <div className="absolute top-1 right-1 flex gap-0.5">
+                      <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
+                        className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
+                        <Pencil className="w-3 h-3 text-white" />
+                      </button>
                       <button onClick={async () => {
-                        if (!confirm(`¿Quitar "${product.productCode}" de este registro?`)) return
+                        if (!confirm(`¿Quitar "${product.productCode}"?`)) return
                         try {
                           if (product.linkedTo && product.linkedTo.length > 0) {
                             await handleUnlinkProduct(product.productCode, product.linkedTo[0])
@@ -668,82 +706,42 @@ export function WizardPage() {
                             await loadOperation()
                           }
                         } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
-                      }}
-                        className="p-1 rounded text-red-400 hover:text-red-600 hover:bg-red-50" title="Quitar de este registro">
-                        <Trash2 className="w-3.5 h-3.5" />
+                      }} className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
+                        <Trash2 className="w-3 h-3 text-white" />
                       </button>
-                      {/* Link */}
-                      <button onClick={() => { setLinkProductCode(product.productCode); void searchForLink('') }}
-                        className="p-1 rounded text-blue-400 hover:text-blue-600 hover:bg-blue-50" title="Vincular">
-                        <Link2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                  {/* Label data */}
-                  {product.labelData && Object.values(product.labelData).some(Boolean) && (
-                    <div className="mt-2 pt-2 border-t border-[var(--color-border)]">
-                      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                        {product.labelData.poNumber && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">PO:</span> {product.labelData.poNumber}</p>}
-                        {product.labelData.sku && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">SKU:</span> {product.labelData.sku}</p>}
-                        {product.labelData.sscc && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">SSCC:</span> {product.labelData.sscc}</p>}
-                        {product.labelData.np && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">NP:</span> {product.labelData.np}</p>}
-                        {product.labelData.destinatario && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Dest:</span> {product.labelData.destinatario}</p>}
-                        {product.labelData.transportadora && <p className="text-[10px] text-[var(--color-text-3)]"><span className="font-medium">Transp:</span> {product.labelData.transportadora}</p>}
-                        {product.labelData.descripcion && <p className="text-[10px] text-[var(--color-text-3)] col-span-2"><span className="font-medium">Desc:</span> {product.labelData.descripcion}</p>}
-                      </div>
+                      {/* Share this product via WhatsApp */}
                       <button onClick={() => {
-                        const desc = prompt('Descripción del producto:', product.labelData?.descripcion ?? '')
-                        if (desc === null) return
-                        const sku = prompt('SKU:', product.labelData?.sku ?? '')
-                        if (sku === null) return
-                        const transp = prompt('Transportadora:', product.labelData?.transportadora ?? '')
-                        if (transp === null) return
-                        void (async () => {
-                          try {
-                            await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/label`, {
-                              method: 'PATCH',
-                              body: { labelData: { ...product.labelData, descripcion: desc, sku, transportadora: transp } },
-                            })
-                            setFeedback('✓ Datos actualizados')
-                            await loadOperation()
-                          } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
-                        })()
-                      }} className="text-[10px] text-[var(--color-primary)] font-medium mt-1 hover:underline">
-                        ✏️ Editar datos
+                        const shareUrl = `${window.location.origin}/share/${trackingCode}`
+                        const text = `📦 *${product.productCode}*\n${desc ? desc + '\n' : ''}${photos.length} fotos\n\n${shareUrl}`
+                        const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
+                        window.open(waUrl, '_blank')
+                      }} className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
+                        <Share2 className="w-3 h-3 text-white" />
                       </button>
                     </div>
-                  )}
-                  {isActive && (
-                    <div className="mt-2 pt-2 border-t border-[var(--color-border)] space-y-2">
-                      {/* Photos of this product */}
-                      {product.photos.length > 0 && (
-                        <div className="space-y-1">
-                          {product.photos.map((ph, phIdx) => (
-                            <div key={phIdx} className="flex items-center gap-2 text-[10px] text-[var(--color-text-2)] bg-gray-50 rounded px-2 py-1">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />
-                              <span className="flex-1 truncate">{ph.comment || ph.stepName}</span>
-                              <button onClick={async () => {
-                                try {
-                                  await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${phIdx}`, { method: 'DELETE' })
-                                  await loadOperation()
-                                } catch { /* silent */ }
-                              }} className="p-0.5 text-red-400 hover:text-red-600"><Trash2 className="w-3 h-3" /></button>
-                            </div>
-                          ))}
+
+                    {/* Expanded: photo list + add photo */}
+                    {isActive && (
+                      <div className="px-2.5 pb-2 space-y-2 border-t border-[#c6e9b0]">
+                        <div className="flex items-center gap-2 pt-2">
+                          <label className="flex-1 py-2 rounded-lg bg-[#075e54] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                            <Camera className="w-3.5 h-3.5" /> Tomar foto
+                            <input type="file" accept="image/*" capture="environment" className="hidden"
+                              disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
+                          </label>
+                          <label className="flex-1 py-2 rounded-lg border border-[#075e54] text-[#075e54] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                            📁 Galería
+                            <input ref={lbFileInputRef} type="file" accept="image/*" className="hidden"
+                              disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
+                          </label>
+                          <button onClick={() => { setLinkProductCode(product.productCode); void searchForLink('') }}
+                            className="px-3 py-2 rounded-lg bg-blue-50 text-blue-600 text-xs font-medium">
+                            🔗
+                          </button>
                         </div>
-                      )}
-                      <label className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5 cursor-pointer">
-                        <Camera className="w-4 h-4" /> Tomar foto ({product.photos.length})
-                        <input type="file" accept="image/*" capture="environment" className="hidden"
-                          disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
-                      </label>
-                      <label className="w-full py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
-                        📁 Seleccionar de galería
-                        <input ref={lbFileInputRef} type="file" accept="image/*" className="hidden"
-                          disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
-                      </label>
-                    </div>
-                  )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )
             })}
