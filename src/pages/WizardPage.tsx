@@ -448,14 +448,14 @@ export function WizardPage() {
                   const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
                   window.open(waUrl, '_blank')
                 }
-              }} className="px-2 py-1 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary)] text-[10px] font-medium flex items-center gap-1">
+              }} className="px-2 py-1 rounded-lg bg-[var(--color-primary-bg)] text-[var(--color-primary)] text-[10px] font-medium flex items-center gap-1 border border-[var(--color-primary)]/20">
                 <Share2 className="w-3 h-3" /> Compartir
               </button>
             </div>
             <div className="space-y-2 rounded-xl p-3">
               {operation.photos.map((photo, i) => (
                 <div key={i} className="flex justify-end">
-                  <div className="max-w-[85%] bg-[var(--color-primary)] rounded-lg rounded-tr-none p-2 shadow-sm relative">
+                  <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
                     {/* Photo thumbnail */}
                     {photo.fileId && photo.fileId !== 'pending' && (
                       <img
@@ -514,7 +514,7 @@ export function WizardPage() {
           <div className="space-y-2">
             {localPhotos.filter((p) => !p.uploaded && !p.productCode).map((photo) => (
               <div key={photo.id} className="flex justify-end">
-                <div className="max-w-[85%] bg-[var(--color-primary)] rounded-lg rounded-tr-none p-2 shadow-sm relative">
+                <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
                   <img src={photo.dataUrl} alt="Pendiente" className="w-full rounded-md mb-1.5 max-h-48 object-cover" />
                   {photo.comment && <span className="text-xs text-gray-800 block">{photo.comment}</span>}
                   <div className="flex items-center justify-end gap-1 mt-0.5">
@@ -588,7 +588,7 @@ export function WizardPage() {
 
               return (
                 <div key={product.productCode} className="flex justify-end">
-                  <div className="w-[92%] bg-[var(--color-primary)] rounded-lg rounded-tr-none shadow-sm overflow-hidden relative">
+                  <div className="w-[92%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none shadow-sm overflow-hidden relative">
                     {/* Photo grid */}
                     {photos.length > 0 && (
                       <button type="button" onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
@@ -643,7 +643,7 @@ export function WizardPage() {
                     {/* Action buttons — top right */}
                     <div className="absolute top-1 right-1 flex gap-0.5">
                       <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
-                        className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center">
+                        className="w-6 h-6 rounded-full bg-white/80 shadow flex items-center justify-center">
                         <Pencil className="w-3 h-3 text-white" />
                       </button>
                       <button onClick={async () => {
@@ -658,7 +658,7 @@ export function WizardPage() {
                             await loadOperation()
                           }
                         } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
-                      }} className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center">
+                      }} className="w-6 h-6 rounded-full bg-white/80 shadow flex items-center justify-center">
                         <Trash2 className="w-3 h-3 text-white" />
                       </button>
                       {/* Share this product via WhatsApp — sends photos if supported */}
@@ -691,7 +691,7 @@ export function WizardPage() {
                           .join('\n')
                         const fullText = `${text}\n\n${photoLinks}`
                         window.open(`https://wa.me/?text=${encodeURIComponent(fullText)}`, '_blank')
-                      }} className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center">
+                      }} className="w-6 h-6 rounded-full bg-white/80 shadow flex items-center justify-center">
                         <Share2 className="w-3 h-3 text-white" />
                       </button>
                     </div>
