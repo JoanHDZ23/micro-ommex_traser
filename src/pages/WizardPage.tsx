@@ -668,16 +668,36 @@ export function WizardPage() {
                       }} className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
                         <Trash2 className="w-3 h-3 text-white" />
                       </button>
-                      {/* Share this product via WhatsApp — includes photo links */}
-                      <button onClick={() => {
+                      {/* Share this product via WhatsApp — sends photos if supported */}
+                      <button onClick={async () => {
                         const shareUrl = `${window.location.origin}/share/${trackingCode}`
+                        const text = `📦 *${product.productCode}*\n${desc ? desc + '\n' : ''}${photos.length} fotos\n\n🔗 ${shareUrl}`
+
+                        // Try sharing actual images (mobile only)
+                        if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
+                          try {
+                            const imageFiles: File[] = []
+                            for (const ph of photos.filter((p) => p.fileId && p.fileId !== 'pending').slice(0, 10)) {
+                              const imgUrl = `https://lh3.googleusercontent.com/d/${ph.fileId}=w800`
+                              const resp = await fetch(imgUrl)
+                              if (resp.ok) {
+                                const blob = await resp.blob()
+                                imageFiles.push(new File([blob], `${product.productCode}_${imageFiles.length + 1}.jpg`, { type: 'image/jpeg' }))
+                              }
+                            }
+                            if (imageFiles.length > 0 && navigator.canShare({ files: imageFiles })) {
+                              await navigator.share({ text, files: imageFiles })
+                              return
+                            }
+                          } catch { /* fallback to text-only */ }
+                        }
+                        // Fallback: WhatsApp link with photo URLs
                         const photoLinks = photos
                           .filter((p) => p.fileId && p.fileId !== 'pending')
                           .map((p, i) => `📷 Foto ${i + 1}: https://drive.google.com/file/d/${p.fileId}/view`)
                           .join('\n')
-                        const text = `📦 *${product.productCode}*\n${desc ? desc + '\n' : ''}${photos.length} fotos\n\n${photoLinks ? photoLinks + '\n\n' : ''}🔗 Ver registro: ${shareUrl}`
-                        const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
-                        window.open(waUrl, '_blank')
+                        const fullText = `${text}\n\n${photoLinks}`
+                        window.open(`https://wa.me/?text=${encodeURIComponent(fullText)}`, '_blank')
                       }} className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
                         <Share2 className="w-3 h-3 text-white" />
                       </button>
