@@ -148,15 +148,6 @@ export function WizardPage() {
     const comment = capturedComment.trim()
     const productCode = capturedIsProduct ? activeLbProduct ?? undefined : undefined
 
-    // Check for duplicates
-    const existing = localPhotos.find((p) => p.base64.slice(0, 100) === capturedBase64.slice(0, 100))
-    if (existing) {
-      setFeedback('⚠️ Esta foto ya fue tomada')
-      setCapturedBase64('')
-      setCapturedComment('')
-      return
-    }
-
     // 1. Cache local (instantáneo)
     const cached = await cachePhoto({ trackingCode, base64: capturedBase64, comment, productCode })
     setLocalPhotos((prev) => [...prev, cached])
@@ -229,13 +220,6 @@ export function WizardPage() {
     if (!trackingCode) return
     setShowCamera(false)
     setFeedback(null)
-
-    // Check for duplicates (same base64 already in cache)
-    const existing = localPhotos.find((p) => p.base64.slice(0, 100) === base64.slice(0, 100))
-    if (existing) {
-      setFeedback('⚠️ Esta foto ya fue tomada')
-      return
-    }
 
     // 1. Guardar en cache local (instantáneo)
     const cached = await cachePhoto({ trackingCode, base64, comment })
