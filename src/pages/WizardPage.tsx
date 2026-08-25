@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Link2, Loader2, Package, Pencil, Plus, QrCode, Search, Share2, Trash2, X } from 'lucide-react'
 import { apiRequest, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
-import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, uploadPendingInBackground, type CachedPhoto } from '../lib/photo-cache'
+import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 
 export function WizardPage() {
@@ -172,9 +172,10 @@ export function WizardPage() {
             body: { trackingCode, stepIndex: 0, base64Image: base64Copy, mimeType: 'image/jpeg', comment },
           })
         }
-        await import('../lib/photo-cache').then((m) => m.markAsUploaded(cached.id))
+        await markAsUploaded(cached.id)
+        setLocalPhotos((prev) => prev.filter((p) => p.id !== cached.id))
         await loadOperation()
-      } catch { /* retry via background interval */ }
+      } catch { /* will show as pending with 🕐 */ }
     })()
   }
 
@@ -198,22 +199,22 @@ export function WizardPage() {
 
   useEffect(() => { void loadOperation() }, [loadOperation])
 
-  // ── Local photo cache + background upload ──
+  // ── Local photo cache ──
   const [localPhotos, setLocalPhotos] = useState<CachedPhoto[]>([])
 
+  // Clean expired photos on mount
+  useEffect(() => { void cleanExpiredPhotos() }, [])
+
+  // When operation loads from server, remove local photos that are already uploaded
   useEffect(() => {
-    if (!trackingCode) return
-    // Load cached photos for this operation
-    void getCachedPhotos(trackingCode).then(setLocalPhotos)
-    // Clean expired (24h+) photos
-    void cleanExpiredPhotos()
-    // Upload pending photos in background
-    const interval = setInterval(() => {
-      void uploadPendingInBackground(apiRequest as unknown as (url: string, opts: unknown) => Promise<unknown>)
-        .then((count) => { if (count > 0) void loadOperation() })
-    }, 10_000) // retry every 10s
-    return () => clearInterval(interval)
-  }, [trackingCode, loadOperation])
+    if (!operation || !trackingCode) return
+    void getCachedPhotos(trackingCode).then((cached) => {
+      // Only keep photos that are NOT yet on the server (still pending)
+      const serverTimestamps = new Set(operation.photos.map((p) => p.timestamp))
+      const pending = cached.filter((c) => !c.uploaded && !serverTimestamps.has(new Date(c.timestamp).toISOString()))
+      setLocalPhotos(pending)
+    })
+  }, [operation, trackingCode])
 
   // ── Photo capture (free-form) ──
   const handlePhotoCapture = async (base64: string, comment: string) => {
@@ -233,9 +234,11 @@ export function WizardPage() {
           method: 'POST',
           body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment },
         })
-        await import('../lib/photo-cache').then((m) => m.markAsUploaded(cached.id))
+        await markAsUploaded(cached.id)
+        // Remove from local state since server now has it
+        setLocalPhotos((prev) => prev.filter((p) => p.id !== cached.id))
         await loadOperation()
-      } catch { /* retry via background interval */ }
+      } catch { /* will show as pending with 🕐 */ }
     })()
   }
 
