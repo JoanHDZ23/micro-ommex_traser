@@ -255,10 +255,10 @@ export function SharePage() {
           </div>
 
           {/* Image */}
-          <div className="flex-1 flex items-center justify-center p-2 relative" onClick={(e) => e.stopPropagation()}>
-            {getDriveImageUrl(lightboxPhoto, 1600) && (
-              <img src={getDriveImageUrl(lightboxPhoto, 1600)!} alt="Foto"
-                className="w-full h-full object-contain" />
+          <div className="flex-1 flex items-center justify-center p-4 relative" onClick={(e) => e.stopPropagation()}>
+            {getDriveImageUrl(lightboxPhoto, 1200) && (
+              <img src={getDriveImageUrl(lightboxPhoto, 1200)!} alt="Foto"
+                className="max-w-full max-h-[80vh] object-contain rounded" />
             )}
             {/* Nav arrows */}
             {lightboxAll.length > 1 && (
