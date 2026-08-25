@@ -388,39 +388,39 @@ export function WizardPage() {
   return (
     <>
       {/* WhatsApp-style dark header */}
-      <div className="sticky top-0 z-20 bg-[#1f2c34] px-3 py-2.5 flex items-center gap-3 shadow-md">
+      <div className="sticky top-0 z-20 bg-white px-3 py-2.5 flex items-center gap-3 shadow-md">
         <button onClick={() => navigate('/')} className="w-8 h-8 flex items-center justify-center">
-          <ArrowLeft className="w-5 h-5 text-[#aebac1]" />
+          <ArrowLeft className="w-5 h-5 text-gray-600" />
         </button>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-[#e9edef] truncate">{operation.trackingCode}</h2>
+          <h2 className="text-sm font-semibold text-gray-800 truncate">{operation.trackingCode}</h2>
           <button onClick={() => {
             const newPlate = prompt('Placa del vehículo:', operation.vehiclePlate ?? '')
             if (newPlate !== null) {
               void apiRequest(`/operations/${trackingCode}`, { method: 'PATCH', body: { vehiclePlate: newPlate.trim().toUpperCase() } }).then(() => loadOperation())
             }
-          }} className="text-[11px] text-[#8696a0] flex items-center gap-1 hover:text-[#00a884]">
+          }} className="text-[11px] text-gray-500 flex items-center gap-1 hover:text-[var(--color-primary)]">
             {operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''} · {operation.photos.length} fotos · {lbProducts.length} productos
             <Pencil className="w-2.5 h-2.5 opacity-50" />
           </button>
         </div>
         {isCompleted ? (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-900/50 text-emerald-300 font-medium">✓ Completo</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">✓ Completo</span>
         ) : (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-900/50 text-amber-300 font-medium">En proceso</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">En proceso</span>
         )}
       </div>
 
       {/* Chat body */}
-      <div className="flex-1 min-h-[60vh] p-3 space-y-3 bg-[#111b21]">
+      <div className="flex-1 min-h-[60vh] p-3 space-y-3 bg-gray-50">
 
         {/* Completed actions */}
         {isCompleted && (
           <div className="flex gap-2">
-            <button onClick={handleShare} className="flex-1 py-2 rounded-lg bg-[#005c4b] text-white text-xs font-medium flex items-center justify-center gap-1.5">
+            <button onClick={handleShare} className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5">
               <Share2 className="w-3.5 h-3.5" /> Compartir
             </button>
-            <button onClick={() => void handleReopen()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-[#1f2c34] text-[#aebac1] text-xs font-medium flex items-center justify-center gap-1.5 border border-[#2a3942]">
+            <button onClick={() => void handleReopen()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-white text-gray-600 text-xs font-medium flex items-center justify-center gap-1.5 border border-gray-200">
               <Edit3 className="w-3.5 h-3.5" /> Editar
             </button>
           </div>
@@ -428,7 +428,7 @@ export function WizardPage() {
 
         {/* Feedback */}
         {feedback && (
-          <div className={`flex items-start gap-2 p-2.5 rounded-lg text-xs ${feedback.startsWith('✓') ? 'bg-[#005c4b]/30 text-emerald-300' : 'bg-red-900/30 text-red-300'}`}>
+          <div className={`flex items-start gap-2 p-2.5 rounded-lg text-xs ${feedback.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
             {feedback.startsWith('✓') ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5" />}
             <span>{feedback}</span>
           </div>
@@ -438,7 +438,7 @@ export function WizardPage() {
         {operation.photos.length > 0 && (
           <section className="space-y-2">
             <div className="flex items-center justify-between">
-              <h4 className="text-[10px] font-semibold text-[#8696a0] uppercase">Fotos ({operation.photos.length})</h4>
+              <h4 className="text-[10px] font-semibold text-gray-500 uppercase">Fotos ({operation.photos.length})</h4>
               <button onClick={() => {
                 const msgs = operation.photos.map((p, i) => `${i + 1}. ${p.comment || p.stepName} (${new Date(p.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })})`).join('\n')
                 const text = `📋 *${operation.trackingCode}*\n${operation.operationType}\n\n${msgs}\n\n${operation.photos.length} fotos registradas`
@@ -448,14 +448,14 @@ export function WizardPage() {
                   const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
                   window.open(waUrl, '_blank')
                 }
-              }} className="px-2 py-1 rounded-lg bg-[#005c4b] text-[#00a884] text-[10px] font-medium flex items-center gap-1">
+              }} className="px-2 py-1 rounded-lg bg-[var(--color-primary)] text-[var(--color-primary)] text-[10px] font-medium flex items-center gap-1">
                 <Share2 className="w-3 h-3" /> Compartir
               </button>
             </div>
             <div className="space-y-2 rounded-xl p-3">
               {operation.photos.map((photo, i) => (
                 <div key={i} className="flex justify-end">
-                  <div className="max-w-[85%] bg-[#005c4b] rounded-lg rounded-tr-none p-2 shadow-sm relative">
+                  <div className="max-w-[85%] bg-[var(--color-primary)] rounded-lg rounded-tr-none p-2 shadow-sm relative">
                     {/* Photo thumbnail */}
                     {photo.fileId && photo.fileId !== 'pending' && (
                       <img
@@ -475,9 +475,9 @@ export function WizardPage() {
                         <button onClick={() => void handleEditComment(i)} className="text-emerald-600"><CheckCircle2 className="w-3.5 h-3.5" /></button>
                       </div>
                     ) : (
-                      <span className="text-xs text-[#e9edef]">{photo.comment || photo.stepName}</span>
+                      <span className="text-xs text-gray-800">{photo.comment || photo.stepName}</span>
                     )}
-                    {photo.productCode && <span className="text-[9px] text-[#ffffff80] block">📦 {photo.productCode}</span>}
+                    {photo.productCode && <span className="text-[9px] text-gray-400 block">📦 {photo.productCode}</span>}
                     {/* Time + actions */}
                     <div className="flex items-center justify-end gap-1 mt-0.5">
                       <span className="text-[9px] text-gray-500">
@@ -486,7 +486,7 @@ export function WizardPage() {
                       {photo.fileId === 'pending' ? (
                         <span className="text-[9px] text-gray-400">🕐</span>
                       ) : (
-                        <CheckCircle2 className="w-2.5 h-2.5 text-[#53bdeb]" />
+                        <CheckCircle2 className="w-2.5 h-2.5 text-[var(--color-primary)]" />
                       )}
                     </div>
                     {/* Context actions on tap */}
@@ -514,9 +514,9 @@ export function WizardPage() {
           <div className="space-y-2">
             {localPhotos.filter((p) => !p.uploaded && !p.productCode).map((photo) => (
               <div key={photo.id} className="flex justify-end">
-                <div className="max-w-[85%] bg-[#005c4b] rounded-lg rounded-tr-none p-2 shadow-sm relative">
+                <div className="max-w-[85%] bg-[var(--color-primary)] rounded-lg rounded-tr-none p-2 shadow-sm relative">
                   <img src={photo.dataUrl} alt="Pendiente" className="w-full rounded-md mb-1.5 max-h-48 object-cover" />
-                  {photo.comment && <span className="text-xs text-[#e9edef] block">{photo.comment}</span>}
+                  {photo.comment && <span className="text-xs text-gray-800 block">{photo.comment}</span>}
                   <div className="flex items-center justify-end gap-1 mt-0.5">
                     <span className="text-[9px] text-gray-500">
                       {new Date(photo.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
@@ -532,7 +532,7 @@ export function WizardPage() {
         {/* ── Productos / Escáner ── */}
         {!isCompleted && (
           <section className="space-y-3">
-            <h4 className="text-[10px] font-semibold text-[#8696a0] uppercase flex items-center gap-1.5">
+            <h4 className="text-[10px] font-semibold text-gray-500 uppercase flex items-center gap-1.5">
               <Package className="w-3.5 h-3.5" /> Productos ({lbProducts.length})
             </h4>
 
@@ -588,7 +588,7 @@ export function WizardPage() {
 
               return (
                 <div key={product.productCode} className="flex justify-end">
-                  <div className="w-[92%] bg-[#005c4b] rounded-lg rounded-tr-none shadow-sm overflow-hidden relative">
+                  <div className="w-[92%] bg-[var(--color-primary)] rounded-lg rounded-tr-none shadow-sm overflow-hidden relative">
                     {/* Photo grid */}
                     {photos.length > 0 && (
                       <button type="button" onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
@@ -613,7 +613,7 @@ export function WizardPage() {
                                 className="w-full h-full object-cover opacity-60" loading="lazy"
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                             ) : null}
-                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                            <div className="absolute inset-0 bg-gray-700 flex items-center justify-center">
                               <span className="text-white text-2xl font-bold">+{extraCount}</span>
                             </div>
                           </div>
@@ -626,8 +626,8 @@ export function WizardPage() {
                       {/* Product name — tap to edit */}
                       <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
                         className="text-left w-full">
-                        <span className="text-[13px] font-bold text-[#53bdeb]">{product.productCode}</span>
-                        {desc && <span className="text-[12.5px] text-[#e9edef] block">{desc}</span>}
+                        <span className="text-[13px] font-bold text-[var(--color-primary)]">{product.productCode}</span>
+                        {desc && <span className="text-[12.5px] text-gray-800 block">{desc}</span>}
                       </button>
                       {/* Time + status */}
                       <div className="flex items-center justify-end gap-1 mt-0.5">
@@ -635,7 +635,7 @@ export function WizardPage() {
                         {photos.some((p) => p.fileId === 'pending') ? (
                           <span className="text-[10px] text-gray-400">🕐</span>
                         ) : (
-                          <CheckCircle2 className="w-3 h-3 text-[#53bdeb]" />
+                          <CheckCircle2 className="w-3 h-3 text-[var(--color-primary)]" />
                         )}
                       </div>
                     </div>
@@ -643,7 +643,7 @@ export function WizardPage() {
                     {/* Action buttons — top right */}
                     <div className="absolute top-1 right-1 flex gap-0.5">
                       <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
-                        className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
+                        className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center">
                         <Pencil className="w-3 h-3 text-white" />
                       </button>
                       <button onClick={async () => {
@@ -658,7 +658,7 @@ export function WizardPage() {
                             await loadOperation()
                           }
                         } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
-                      }} className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
+                      }} className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center">
                         <Trash2 className="w-3 h-3 text-white" />
                       </button>
                       {/* Share this product via WhatsApp — sends photos if supported */}
@@ -691,14 +691,14 @@ export function WizardPage() {
                           .join('\n')
                         const fullText = `${text}\n\n${photoLinks}`
                         window.open(`https://wa.me/?text=${encodeURIComponent(fullText)}`, '_blank')
-                      }} className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
+                      }} className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center">
                         <Share2 className="w-3 h-3 text-white" />
                       </button>
                     </div>
 
                     {/* Expanded: photo list + add photo */}
                     {isActive && (
-                      <div className="px-2.5 pb-2 space-y-2 border-t border-[#1f3530]">
+                      <div className="px-2.5 pb-2 space-y-2 border-t border-gray-200">
                         {/* Individual photos with delete */}
                         {photos.length > 0 && (
                           <div className="grid grid-cols-3 gap-1 pt-2">
@@ -716,7 +716,7 @@ export function WizardPage() {
                                     await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${phIdx}`, { method: 'DELETE' })
                                     await loadOperation()
                                   } catch { /* silent */ }
-                                }} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/50 flex items-center justify-center">
+                                }} className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-gray-700 flex items-center justify-center">
                                   <X className="w-2.5 h-2.5 text-white" />
                                 </button>
                               </div>
@@ -725,12 +725,12 @@ export function WizardPage() {
                         )}
                         {/* Add photo buttons */}
                         <div className="flex items-center gap-2 pt-1">
-                          <label className="flex-1 py-2 rounded-lg bg-[#00a884] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                          <label className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                             <Camera className="w-3.5 h-3.5" /> Foto
                             <input type="file" accept="image/*" capture="environment" className="hidden"
                               disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
                           </label>
-                          <label className="flex-1 py-2 rounded-lg border border-[#075e54] text-[#00a884] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                          <label className="flex-1 py-2 rounded-lg border border-[#075e54] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                             📁 Galería
                             <input ref={lbFileInputRef} type="file" accept="image/*" className="hidden"
                               disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
@@ -814,7 +814,7 @@ export function WizardPage() {
               setFeedback(`✓ ${r.updated} foto(s) sincronizada(s)`)
               await loadOperation()
             } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error al sincronizar') }
-          }} className="w-full py-2 rounded-lg border border-[#2a3942] text-[#53bdeb] font-medium text-xs flex items-center justify-center gap-2">
+          }} className="w-full py-2 rounded-lg border border-gray-200 text-[var(--color-primary)] font-medium text-xs flex items-center justify-center gap-2">
             🔄 Sincronizar con Drive
           </button>
         )}
@@ -822,25 +822,25 @@ export function WizardPage() {
 
       {/* WhatsApp-style bottom input bar */}
       {!isCompleted && (
-        <div className="sticky bottom-0 z-20 bg-[#1f2c34] px-2 py-2 border-t border-[#2a3942]">
+        <div className="sticky bottom-0 z-20 bg-white px-2 py-2 border-t border-gray-200">
           {/* Templates panel */}
           {showTemplates && (
-            <div className="mb-2 p-2 bg-[#2a3942] rounded-xl max-h-32 overflow-y-auto space-y-1">
+            <div className="mb-2 p-2 bg-gray-100 rounded-xl max-h-32 overflow-y-auto space-y-1">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[9px] text-[#8696a0] uppercase font-semibold">Textos guardados</span>
-                <button onClick={() => setShowTemplates(false)} className="text-[#8696a0]"><X className="w-3.5 h-3.5" /></button>
+                <span className="text-[9px] text-gray-500 uppercase font-semibold">Textos guardados</span>
+                <button onClick={() => setShowTemplates(false)} className="text-gray-500"><X className="w-3.5 h-3.5" /></button>
               </div>
               {templates.length === 0 ? (
-                <span className="text-[10px] text-[#8696a0]">Escribe un texto y se guardará automáticamente</span>
+                <span className="text-[10px] text-gray-500">Escribe un texto y se guardará automáticamente</span>
               ) : (
                 templates.map((tpl) => (
                   <div key={tpl.id} className="flex items-center gap-1">
                     <button onClick={() => { setChatMessage(tpl.text); setShowTemplates(false) }}
-                      className="flex-1 text-left px-2 py-1.5 rounded bg-[#1f2c34] text-[11px] text-[#e9edef] truncate hover:bg-[#3b4a54]">
+                      className="flex-1 text-left px-2 py-1.5 rounded bg-white text-[11px] text-gray-800 truncate hover:bg-[#3b4a54]">
                       {tpl.text}
                     </button>
                     <button onClick={() => { deleteTemplate(tpl.id); setTemplates(getFrequentTemplates()) }}
-                      className="p-1 text-[#8696a0] hover:text-red-400">
+                      className="p-1 text-gray-500 hover:text-red-400">
                       <X className="w-3 h-3" />
                     </button>
                   </div>
@@ -850,13 +850,13 @@ export function WizardPage() {
           )}
           <div className="flex items-end gap-2">
             {/* Attach file (gallery) */}
-            <label className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center cursor-pointer flex-shrink-0">
-              <Plus className="w-5 h-5 text-[#8696a0]" />
+            <label className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center cursor-pointer flex-shrink-0">
+              <Plus className="w-5 h-5 text-gray-500" />
               <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => handleNativeCapture(e, false)} />
             </label>
             {/* Message input */}
-            <div className="flex-1 flex items-end bg-[#2a3942] rounded-2xl px-3 py-1.5 min-h-[36px]">
-              <button onClick={() => setShowTemplates(!showTemplates)} className="mr-1.5 text-[#8696a0] flex-shrink-0 pb-0.5">
+            <div className="flex-1 flex items-end bg-gray-100 rounded-2xl px-3 py-1.5 min-h-[36px]">
+              <button onClick={() => setShowTemplates(!showTemplates)} className="mr-1.5 text-gray-500 flex-shrink-0 pb-0.5">
                 <Package className="w-4 h-4" />
               </button>
               <textarea
@@ -865,12 +865,12 @@ export function WizardPage() {
                 onBlur={() => { if (chatMessage.trim().length > 3) { saveTemplate(chatMessage.trim()); setTemplates(getFrequentTemplates()) } }}
                 placeholder="Escribe un comentario..."
                 rows={1}
-                className="flex-1 bg-transparent text-[#e9edef] text-sm placeholder:text-[#8696a0] resize-none outline-none max-h-[100px]"
+                className="flex-1 bg-transparent text-gray-800 text-sm placeholder:text-gray-500 resize-none outline-none max-h-[100px]"
                 style={{ height: 'auto' }}
               />
             </div>
             {/* Camera button */}
-            <label className="w-9 h-9 rounded-full bg-[#005c4b] flex items-center justify-center cursor-pointer flex-shrink-0">
+            <label className="w-9 h-9 rounded-full bg-[var(--color-primary)] flex items-center justify-center cursor-pointer flex-shrink-0">
               <Camera className="w-5 h-5 text-white" />
               <input type="file" accept="image/*" capture="environment" className="hidden"
                 onChange={(e) => handleNativeCapture(e, false)} />
@@ -880,7 +880,7 @@ export function WizardPage() {
           {(operation.photos.length > 0 || lbProducts.length > 0) && (
             <div className="flex items-center justify-end mt-2 gap-2">
               <button onClick={() => void handleFinalize()} disabled={uploading}
-                className="px-4 py-1.5 rounded-full bg-[#005c4b] text-white text-[11px] font-medium flex items-center gap-1.5 disabled:opacity-50">
+                className="px-4 py-1.5 rounded-full bg-[var(--color-primary)] text-white text-[11px] font-medium flex items-center gap-1.5 disabled:opacity-50">
                 <CheckCircle2 className="w-3.5 h-3.5" /> Completar ({operation.photos.length + lbProducts.reduce((s, p) => s + p.photos.length, 0)} fotos)
               </button>
             </div>
@@ -907,7 +907,7 @@ export function WizardPage() {
 
       {/* Confirm scanned product */}
       {scanConfirmOpen && (
-        <div className="fixed inset-0 z-[90] bg-black/50 flex items-end justify-center p-4">
+        <div className="fixed inset-0 z-[90] bg-gray-700 flex items-end justify-center p-4">
           <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl p-4 space-y-3 shadow-xl">
             <h3 className="text-sm font-bold text-[var(--color-text)]">Producto escaneado</h3>
             <div className="px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
@@ -931,7 +931,7 @@ export function WizardPage() {
 
       {/* Link product to another operation modal */}
       {linkProductCode && (
-        <div className="fixed inset-0 z-[90] bg-black/50 flex items-end justify-center p-4">
+        <div className="fixed inset-0 z-[90] bg-gray-700 flex items-end justify-center p-4">
           <div className="w-full max-w-md bg-[var(--color-surface)] rounded-2xl p-4 space-y-3 shadow-xl max-h-[80vh] overflow-y-auto">
             <div className="flex items-center justify-between">
               <div>
@@ -1035,7 +1035,7 @@ export function WizardPage() {
 
       {/* Rename product modal */}
       {renamingProduct && (
-        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[90] bg-gray-700 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-[var(--color-surface)] rounded-2xl p-5 space-y-4 shadow-xl">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-[var(--color-text)]">Editar nombre del producto</h3>
