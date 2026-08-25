@@ -28,9 +28,7 @@ export function WizardPage() {
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
   const [editComment, setEditComment] = useState('')
 
-  // Plate editing
-  const [editingPlate, setEditingPlate] = useState(false)
-  const [plateValue, setPlateValue] = useState('')
+  // Plate editing removed — handled in header
 
   // Link product to another operation
   const [linkProductCode, setLinkProductCode] = useState<string | null>(null)
@@ -169,19 +167,6 @@ export function WizardPage() {
     }
     setCapturedBase64('')
     setCapturedComment('')
-  }
-
-  
-  const savePlate = async () => {
-    if (!trackingCode || !plateValue.trim()) return
-    try {
-      await apiRequest(`/operations/${trackingCode}`, { method: 'PATCH', body: { vehiclePlate: plateValue.trim() } })
-      await loadOperation()
-      setEditingPlate(false)
-      setFeedback('✓ Placa actualizada')
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'Error')
-    }
   }
 
   const isCompleted = operation?.status === 'COMPLETADO'
@@ -418,70 +403,44 @@ export function WizardPage() {
 
   return (
     <>
-      <div className="p-4 space-y-4">
-        {/* Header */}
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate('/')} className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center">
-            <ArrowLeft className="w-5 h-5 text-gray-600" />
-          </button>
-          <div className="flex-1 min-w-0">
-            <h2 className="text-base font-bold text-[var(--color-text)] truncate">{operation.trackingCode}</h2>
-            {editingPlate ? (
-              <div className="flex items-center gap-1 mt-0.5">
-                <input type="text" value={plateValue} onChange={(e) => setPlateValue(e.target.value.toUpperCase())}
-                  className="px-2 py-0.5 text-xs border border-[var(--color-primary)] rounded w-24 uppercase focus:outline-none"
-                  autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void savePlate(); if (e.key === 'Escape') setEditingPlate(false) }} />
-                <button onClick={() => void savePlate()} className="text-[10px] text-[var(--color-primary)] font-medium">✓</button>
-                <button onClick={() => setEditingPlate(false)} className="text-[10px] text-[var(--color-text-3)]">✕</button>
-              </div>
-            ) : (
-              <button onClick={() => { setPlateValue(operation.vehiclePlate ?? ''); setEditingPlate(true) }}
-                className="text-xs text-[var(--color-text-2)] hover:text-[var(--color-primary)] flex items-center gap-1">
-                {operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''} <Pencil className="w-3 h-3 opacity-50" />
-              </button>
-            )}
-          </div>
-          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${isCompleted ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-            {isCompleted ? 'Completado' : 'En proceso'}
+      {/* WhatsApp-style dark header */}
+      <div className="sticky top-0 z-20 bg-[#1f2c34] px-3 py-2.5 flex items-center gap-3 shadow-md">
+        <button onClick={() => navigate('/')} className="w-8 h-8 flex items-center justify-center">
+          <ArrowLeft className="w-5 h-5 text-[#aebac1]" />
+        </button>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-sm font-semibold text-[#e9edef] truncate">{operation.trackingCode}</h2>
+          <span className="text-[11px] text-[#8696a0]">
+            {operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''} · {operation.photos.length} fotos · {lbProducts.length} productos
           </span>
         </div>
-
-        {/* Status + actions */}
         {isCompleted ? (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 p-4 bg-emerald-50 rounded-xl border border-emerald-200">
-              <CheckCircle2 className="w-7 h-7 text-emerald-500" />
-              <div>
-                <p className="text-sm font-semibold text-emerald-800">Registro completo</p>
-                <p className="text-xs text-emerald-600">{operation.photos.length} fotos · {lbProducts.length} productos</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={handleShare} className="py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium flex items-center justify-center gap-1.5">
-                <Share2 className="w-4 h-4" /> Compartir
-              </button>
-              <button onClick={() => void handleReopen()} disabled={uploading} className="py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-text)] text-sm font-medium flex items-center justify-center gap-1.5">
-                <Edit3 className="w-4 h-4" /> Editar
-              </button>
-            </div>
-          </div>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-900/50 text-emerald-300 font-medium">✓ Completo</span>
         ) : (
-          <div className="space-y-3">
-            {/* Finalize — visible at top when there are photos */}
-            {(operation.photos.length > 0 || lbProducts.length > 0) && (
-              <button onClick={() => void handleFinalize()} disabled={uploading}
-                className="w-full py-3 rounded-xl bg-emerald-600 text-white font-medium text-sm flex items-center justify-center gap-2 disabled:opacity-50">
-                <CheckCircle2 className="w-4 h-4" /> Completar registro ({operation.photos.length} fotos)
-              </button>
-            )}
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-900/50 text-amber-300 font-medium">En proceso</span>
+        )}
+      </div>
+
+      {/* Chat body with WhatsApp dark wallpaper */}
+      <div className="flex-1 min-h-[60vh] p-3 space-y-3" style={{ backgroundColor: '#0b141a', backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'200\' height=\'200\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cdefs%3E%3Cpattern id=\'p\' width=\'40\' height=\'40\' patternUnits=\'userSpaceOnUse\'%3E%3Cpath d=\'M0 20h40M20 0v40\' stroke=\'%23ffffff\' stroke-opacity=\'.02\' fill=\'none\'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width=\'200\' height=\'200\' fill=\'url(%23p)\'/%3E%3C/svg%3E")' }}>
+
+        {/* Completed actions */}
+        {isCompleted && (
+          <div className="flex gap-2">
+            <button onClick={handleShare} className="flex-1 py-2 rounded-lg bg-[#005c4b] text-white text-xs font-medium flex items-center justify-center gap-1.5">
+              <Share2 className="w-3.5 h-3.5" /> Compartir
+            </button>
+            <button onClick={() => void handleReopen()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-[#1f2c34] text-[#aebac1] text-xs font-medium flex items-center justify-center gap-1.5 border border-[#2a3942]">
+              <Edit3 className="w-3.5 h-3.5" /> Editar
+            </button>
           </div>
         )}
 
         {/* Feedback */}
         {feedback && (
-          <div className={`flex items-start gap-2 p-3 rounded-xl text-sm ${feedback.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-            {feedback.startsWith('✓') ? <CheckCircle2 className="w-4 h-4 mt-0.5" /> : <AlertCircle className="w-4 h-4 mt-0.5" />}
-            <p>{feedback}</p>
+          <div className={`flex items-start gap-2 p-2.5 rounded-lg text-xs ${feedback.startsWith('✓') ? 'bg-[#005c4b]/30 text-emerald-300' : 'bg-red-900/30 text-red-300'}`}>
+            {feedback.startsWith('✓') ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5" />}
+            <span>{feedback}</span>
           </div>
         )}
 
@@ -489,7 +448,7 @@ export function WizardPage() {
         {operation.photos.length > 0 && (
           <section className="space-y-2">
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-semibold text-[var(--color-text-3)] uppercase">Registro ({operation.photos.length})</h4>
+              <h4 className="text-[10px] font-semibold text-[#8696a0] uppercase">Fotos ({operation.photos.length})</h4>
               <button onClick={() => {
                 const msgs = operation.photos.map((p, i) => `${i + 1}. ${p.comment || p.stepName} (${new Date(p.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })})`).join('\n')
                 const text = `📋 *${operation.trackingCode}*\n${operation.operationType}\n\n${msgs}\n\n${operation.photos.length} fotos registradas`
@@ -556,37 +515,10 @@ export function WizardPage() {
           </section>
         )}
 
-        {/* WhatsApp-style input bar */}
-        {!isCompleted && (
-          <div className="flex items-center gap-2 p-2 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
-            {/* Attach button */}
-            <label className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center cursor-pointer flex-shrink-0">
-              <Plus className="w-5 h-5 text-gray-500" />
-              <input type="file" accept="image/*,application/pdf" className="hidden"
-                onChange={(e) => handleNativeCapture(e, false)} />
-            </label>
-            {/* Camera button */}
-            <label className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center cursor-pointer flex-shrink-0">
-              <Camera className="w-5 h-5 text-gray-500" />
-              <input type="file" accept="image/*" capture="environment" className="hidden"
-                onChange={(e) => handleNativeCapture(e, false)} />
-            </label>
-            {/* Message hint */}
-            <span className="flex-1 text-xs text-gray-400 px-2">Adjunta foto o documento...</span>
-            {/* Finalize */}
-            {(operation.photos.length > 0 || lbProducts.length > 0) && (
-              <button onClick={() => void handleFinalize()} disabled={uploading}
-                className="px-3 py-2 rounded-full bg-emerald-500 text-white text-xs font-medium flex items-center gap-1 disabled:opacity-50">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Completar
-              </button>
-            )}
-          </div>
-        )}
-
         {/* ── Productos / Escáner ── */}
         {!isCompleted && (
-          <section className="space-y-3 pt-2 border-t border-[var(--color-border)]">
-            <h4 className="text-xs font-semibold text-[var(--color-text-3)] uppercase flex items-center gap-1.5">
+          <section className="space-y-3">
+            <h4 className="text-[10px] font-semibold text-[#8696a0] uppercase flex items-center gap-1.5">
               <Package className="w-3.5 h-3.5" /> Productos ({lbProducts.length})
             </h4>
 
@@ -813,11 +745,34 @@ export function WizardPage() {
               setFeedback(`✓ ${r.updated} foto(s) sincronizada(s)`)
               await loadOperation()
             } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error al sincronizar') }
-          }} className="w-full py-2.5 rounded-xl border border-blue-200 text-blue-600 font-medium text-sm flex items-center justify-center gap-2 hover:bg-blue-50 transition-colors">
-            🔄 Sincronizar fotos con Drive
+          }} className="w-full py-2 rounded-lg border border-[#2a3942] text-[#53bdeb] font-medium text-xs flex items-center justify-center gap-2">
+            🔄 Sincronizar con Drive
           </button>
         )}
       </div>
+
+      {/* WhatsApp-style bottom input bar */}
+      {!isCompleted && (
+        <div className="sticky bottom-0 z-20 bg-[#1f2c34] px-3 py-2.5 flex items-center gap-2 border-t border-[#2a3942]">
+          <label className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center cursor-pointer">
+            <Plus className="w-5 h-5 text-[#8696a0]" />
+            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => handleNativeCapture(e, false)} />
+          </label>
+          <label className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center cursor-pointer">
+            <Camera className="w-5 h-5 text-[#8696a0]" />
+            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => handleNativeCapture(e, false)} />
+          </label>
+          <div className="flex-1 px-3 py-2 rounded-full bg-[#2a3942] text-[#8696a0] text-xs">
+            Adjunta foto o documento...
+          </div>
+          {(operation.photos.length > 0 || lbProducts.length > 0) && (
+            <button onClick={() => void handleFinalize()} disabled={uploading}
+              className="w-9 h-9 rounded-full bg-[#005c4b] flex items-center justify-center disabled:opacity-50">
+              <CheckCircle2 className="w-5 h-5 text-white" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Camera for general photos */}
       {showCamera && (
