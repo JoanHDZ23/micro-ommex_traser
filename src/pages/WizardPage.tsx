@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Link2, Loader2, Package, Pencil, Plus, QrCode, Search, Share2, Trash2, X } from 'lucide-react'
 import { apiRequest, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
+import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, uploadPendingInBackground, type CachedPhoto } from '../lib/photo-cache'
 
 export function WizardPage() {
   const { trackingCode } = useParams<{ trackingCode: string }>()
@@ -139,36 +140,39 @@ export function WizardPage() {
   }
 
   const confirmCapturedPhoto = async () => {
-    if (!capturedBase64) return
+    if (!capturedBase64 || !trackingCode) return
     setCapturedPreview(null)
-    if (capturedIsProduct) {
-      if (!trackingCode || !activeLbProduct) return
-      setUploading(true)
-      const photoCount = activeLbData?.photos.length ?? 0
-      try {
-        await apiRequest<UploadPhotoResponse>(
-          `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(activeLbProduct)}/photo`,
-          { method: 'POST', body: { stepIndex: photoCount, base64Image: capturedBase64, mimeType: 'image/jpeg', comment: capturedComment.trim() } },
-        )
-        setFeedback(`✓ Foto de ${activeLbProduct}`)
-        await loadOperation()
-      } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error.') }
-      finally { setUploading(false) }
-    } else {
-      if (!trackingCode) return
-      setUploading(true)
-      try {
-        await apiRequest<UploadPhotoResponse>('/photos/upload', {
-          method: 'POST',
-          body: { trackingCode, stepIndex: 0, base64Image: capturedBase64, mimeType: 'image/jpeg', comment: capturedComment.trim() },
-        })
-        setFeedback('✓ Foto registrada')
-        await loadOperation()
-      } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error al subir foto.') }
-      finally { setUploading(false) }
-    }
+    const comment = capturedComment.trim()
+    const productCode = capturedIsProduct ? activeLbProduct ?? undefined : undefined
+
+    // 1. Cache local (instantáneo)
+    const cached = await cachePhoto({ trackingCode, base64: capturedBase64, comment, productCode })
+    setLocalPhotos((prev) => [...prev, cached])
+    setFeedback('✓ Foto guardada')
+
+    // 2. Upload en background
+    const base64Copy = capturedBase64
     setCapturedBase64('')
     setCapturedComment('')
+
+    void (async () => {
+      try {
+        if (productCode) {
+          const photoCount = activeLbData?.photos.length ?? 0
+          await apiRequest<UploadPhotoResponse>(
+            `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo`,
+            { method: 'POST', body: { stepIndex: photoCount, base64Image: base64Copy, mimeType: 'image/jpeg', comment } },
+          )
+        } else {
+          await apiRequest<UploadPhotoResponse>('/photos/upload', {
+            method: 'POST',
+            body: { trackingCode, stepIndex: 0, base64Image: base64Copy, mimeType: 'image/jpeg', comment },
+          })
+        }
+        await import('../lib/photo-cache').then((m) => m.markAsUploaded(cached.id))
+        await loadOperation()
+      } catch { /* retry via background interval */ }
+    })()
   }
 
   const isCompleted = operation?.status === 'COMPLETADO'
@@ -191,24 +195,47 @@ export function WizardPage() {
 
   useEffect(() => { void loadOperation() }, [loadOperation])
 
+  // ── Local photo cache + background upload ──
+  const [localPhotos, setLocalPhotos] = useState<CachedPhoto[]>([])
+
+  useEffect(() => {
+    if (!trackingCode) return
+    // Load cached photos for this operation
+    void getCachedPhotos(trackingCode).then(setLocalPhotos)
+    // Clean expired (24h+) photos
+    void cleanExpiredPhotos()
+    // Upload pending photos in background
+    const interval = setInterval(() => {
+      void uploadPendingInBackground(apiRequest as unknown as (url: string, opts: unknown) => Promise<unknown>)
+        .then((count) => { if (count > 0) void loadOperation() })
+    }, 10_000) // retry every 10s
+    return () => clearInterval(interval)
+  }, [trackingCode, loadOperation])
+
   // ── Photo capture (free-form) ──
   const handlePhotoCapture = async (base64: string, comment: string) => {
     if (!trackingCode) return
     setShowCamera(false)
-    setUploading(true)
     setFeedback(null)
-    try {
-      await apiRequest<UploadPhotoResponse>('/photos/upload', {
-        method: 'POST',
-        body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment },
-      })
-      setFeedback('✓ Foto registrada')
-      await loadOperation()
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'Error al subir foto.')
-    } finally {
-      setUploading(false)
-    }
+
+    // 1. Guardar en cache local (instantáneo — no espera red)
+    const cached = await cachePhoto({ trackingCode, base64, comment })
+    setLocalPhotos((prev) => [...prev, cached])
+    setFeedback('✓ Foto guardada')
+
+    // 2. Subir a Drive en background (no bloquea UI)
+    void (async () => {
+      try {
+        await apiRequest<UploadPhotoResponse>('/photos/upload', {
+          method: 'POST',
+          body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment },
+        })
+        await import('../lib/photo-cache').then((m) => m.markAsUploaded(cached.id))
+        await loadOperation()
+      } catch {
+        // Se reintentará automáticamente en el background interval
+      }
+    })()
   }
 
   // ── Línea Blanca ──
@@ -515,6 +542,24 @@ export function WizardPage() {
               ))}
             </div>
           </section>
+        )}
+
+        {/* Local cached photos (pending upload) */}
+        {localPhotos.filter((p) => !p.uploaded && !p.productCode).length > 0 && (
+          <div className="space-y-2">
+            {localPhotos.filter((p) => !p.uploaded && !p.productCode).map((photo) => (
+              <div key={photo.id} className="flex justify-end">
+                <div className="max-w-[85%] bg-[#dcf8c6] rounded-lg rounded-tr-none p-2 shadow-sm relative opacity-80">
+                  <img src={photo.dataUrl} alt="Subiendo..." className="w-full rounded-md mb-1.5 max-h-48 object-cover" />
+                  {photo.comment && <span className="text-xs text-gray-800 block">{photo.comment}</span>}
+                  <div className="flex items-center justify-end gap-1 mt-0.5">
+                    <Loader2 className="w-2.5 h-2.5 text-gray-400 animate-spin" />
+                    <span className="text-[9px] text-gray-500">Subiendo...</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
 
         {/* ── Productos / Escáner ── */}
