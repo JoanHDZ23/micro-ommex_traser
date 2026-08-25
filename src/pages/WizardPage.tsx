@@ -4,6 +4,7 @@ import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Link2, Loader2, Pa
 import { apiRequest, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, uploadPendingInBackground, type CachedPhoto } from '../lib/photo-cache'
+import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 
 export function WizardPage() {
   const { trackingCode } = useParams<{ trackingCode: string }>()
@@ -31,6 +32,8 @@ export function WizardPage() {
 
   // Plate editing removed — handled in header
   const [chatMessage, setChatMessage] = useState('')
+  const [showTemplates, setShowTemplates] = useState(false)
+  const [templates, setTemplates] = useState<TextTemplate[]>(() => getFrequentTemplates())
 
   // Link product to another operation
   const [linkProductCode, setLinkProductCode] = useState<string | null>(null)
@@ -665,10 +668,14 @@ export function WizardPage() {
                       }} className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
                         <Trash2 className="w-3 h-3 text-white" />
                       </button>
-                      {/* Share this product via WhatsApp */}
+                      {/* Share this product via WhatsApp — includes photo links */}
                       <button onClick={() => {
                         const shareUrl = `${window.location.origin}/share/${trackingCode}`
-                        const text = `📦 *${product.productCode}*\n${desc ? desc + '\n' : ''}${photos.length} fotos\n\n${shareUrl}`
+                        const photoLinks = photos
+                          .filter((p) => p.fileId && p.fileId !== 'pending')
+                          .map((p, i) => `📷 Foto ${i + 1}: https://drive.google.com/file/d/${p.fileId}/view`)
+                          .join('\n')
+                        const text = `📦 *${product.productCode}*\n${desc ? desc + '\n' : ''}${photos.length} fotos\n\n${photoLinks ? photoLinks + '\n\n' : ''}🔗 Ver registro: ${shareUrl}`
                         const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
                         window.open(waUrl, '_blank')
                       }} className="w-6 h-6 rounded-full bg-black/30 flex items-center justify-center">
@@ -803,6 +810,31 @@ export function WizardPage() {
       {/* WhatsApp-style bottom input bar */}
       {!isCompleted && (
         <div className="sticky bottom-0 z-20 bg-[#1f2c34] px-2 py-2 border-t border-[#2a3942]">
+          {/* Templates panel */}
+          {showTemplates && (
+            <div className="mb-2 p-2 bg-[#2a3942] rounded-xl max-h-32 overflow-y-auto space-y-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[9px] text-[#8696a0] uppercase font-semibold">Textos guardados</span>
+                <button onClick={() => setShowTemplates(false)} className="text-[#8696a0]"><X className="w-3.5 h-3.5" /></button>
+              </div>
+              {templates.length === 0 ? (
+                <span className="text-[10px] text-[#8696a0]">Escribe un texto y se guardará automáticamente</span>
+              ) : (
+                templates.map((tpl) => (
+                  <div key={tpl.id} className="flex items-center gap-1">
+                    <button onClick={() => { setChatMessage(tpl.text); setShowTemplates(false) }}
+                      className="flex-1 text-left px-2 py-1.5 rounded bg-[#1f2c34] text-[11px] text-[#e9edef] truncate hover:bg-[#3b4a54]">
+                      {tpl.text}
+                    </button>
+                    <button onClick={() => { deleteTemplate(tpl.id); setTemplates(getFrequentTemplates()) }}
+                      className="p-1 text-[#8696a0] hover:text-red-400">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
           <div className="flex items-end gap-2">
             {/* Attach file (gallery) */}
             <label className="w-9 h-9 rounded-full bg-[#2a3942] flex items-center justify-center cursor-pointer flex-shrink-0">
@@ -811,16 +843,20 @@ export function WizardPage() {
             </label>
             {/* Message input */}
             <div className="flex-1 flex items-end bg-[#2a3942] rounded-2xl px-3 py-1.5 min-h-[36px]">
+              <button onClick={() => setShowTemplates(!showTemplates)} className="mr-1.5 text-[#8696a0] flex-shrink-0 pb-0.5">
+                <Package className="w-4 h-4" />
+              </button>
               <textarea
                 value={chatMessage}
                 onChange={(e) => { setChatMessage(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px' }}
+                onBlur={() => { if (chatMessage.trim().length > 3) { saveTemplate(chatMessage.trim()); setTemplates(getFrequentTemplates()) } }}
                 placeholder="Escribe un comentario..."
                 rows={1}
                 className="flex-1 bg-transparent text-[#e9edef] text-sm placeholder:text-[#8696a0] resize-none outline-none max-h-[100px]"
                 style={{ height: 'auto' }}
               />
             </div>
-            {/* Camera button — uses native camera via capture */}
+            {/* Camera button */}
             <label className="w-9 h-9 rounded-full bg-[#005c4b] flex items-center justify-center cursor-pointer flex-shrink-0">
               <Camera className="w-5 h-5 text-white" />
               <input type="file" accept="image/*" capture="environment" className="hidden"
