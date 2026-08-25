@@ -487,7 +487,11 @@ export function WizardPage() {
                       <span className="text-[9px] text-gray-500">
                         {new Date(photo.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
                       </span>
-                      <CheckCircle2 className="w-2.5 h-2.5 text-blue-400" />
+                      {photo.fileId === 'pending' ? (
+                        <span className="text-[9px] text-gray-400">🕐</span>
+                      ) : (
+                        <CheckCircle2 className="w-2.5 h-2.5 text-[#53bdeb]" />
+                      )}
                     </div>
                     {/* Context actions on tap */}
                     {!isCompleted && editingPhotoIdx !== i && (
@@ -514,12 +518,14 @@ export function WizardPage() {
           <div className="space-y-2">
             {localPhotos.filter((p) => !p.uploaded && !p.productCode).map((photo) => (
               <div key={photo.id} className="flex justify-end">
-                <div className="max-w-[85%] bg-[#dcf8c6] rounded-lg rounded-tr-none p-2 shadow-sm relative opacity-80">
-                  <img src={photo.dataUrl} alt="Subiendo..." className="w-full rounded-md mb-1.5 max-h-48 object-cover" />
+                <div className="max-w-[85%] bg-[#dcf8c6] rounded-lg rounded-tr-none p-2 shadow-sm relative">
+                  <img src={photo.dataUrl} alt="Pendiente" className="w-full rounded-md mb-1.5 max-h-48 object-cover" />
                   {photo.comment && <span className="text-xs text-gray-800 block">{photo.comment}</span>}
                   <div className="flex items-center justify-end gap-1 mt-0.5">
-                    <Loader2 className="w-2.5 h-2.5 text-gray-400 animate-spin" />
-                    <span className="text-[9px] text-gray-500">Subiendo...</span>
+                    <span className="text-[9px] text-gray-500">
+                      {new Date(photo.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    <span className="text-[10px] text-gray-400">🕐</span>
                   </div>
                 </div>
               </div>
@@ -621,14 +627,20 @@ export function WizardPage() {
 
                     {/* Text content */}
                     <div className="px-2.5 py-1.5">
-                      {/* Product code as colored title */}
-                      <span className="text-[13px] font-bold text-[#075e54]">{product.productCode}</span>
-                      {/* Description */}
-                      {desc && <span className="text-[12.5px] text-gray-800 block">{desc}</span>}
-                      {/* Time + check */}
+                      {/* Product name — tap to edit */}
+                      <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
+                        className="text-left w-full">
+                        <span className="text-[13px] font-bold text-[#075e54]">{product.productCode}</span>
+                        {desc && <span className="text-[12.5px] text-gray-800 block">{desc}</span>}
+                      </button>
+                      {/* Time + status */}
                       <div className="flex items-center justify-end gap-1 mt-0.5">
                         <span className="text-[10px] text-gray-500">{createdTime}</span>
-                        <CheckCircle2 className="w-3 h-3 text-[#53bdeb]" />
+                        {photos.some((p) => p.fileId === 'pending') ? (
+                          <span className="text-[10px] text-gray-400">🕐</span>
+                        ) : (
+                          <CheckCircle2 className="w-3 h-3 text-[#53bdeb]" />
+                        )}
                       </div>
                     </div>
 
