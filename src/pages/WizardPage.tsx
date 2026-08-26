@@ -34,6 +34,8 @@ export function WizardPage() {
   const [chatMessage, setChatMessage] = useState('')
   const [showTemplates, setShowTemplates] = useState(false)
   const [templates, setTemplates] = useState<TextTemplate[]>(() => getFrequentTemplates())
+  const [showPlusMenu, setShowPlusMenu] = useState(false)
+  const [showAddProductModal, setShowAddProductModal] = useState(false)
 
   // Link product to another operation
   const [linkProductCode, setLinkProductCode] = useState<string | null>(null)
@@ -529,51 +531,9 @@ export function WizardPage() {
           </div>
         )}
 
-        {/* ── Productos / Escáner ── */}
-        {!isCompleted && (
-          <section className="space-y-3">
-            <h4 className="text-[10px] font-semibold text-gray-500 uppercase flex items-center gap-1.5">
-              <Package className="w-3.5 h-3.5" /> Productos ({lbProducts.length})
-            </h4>
-
-            {/* Add product */}
-            <div className="flex gap-2">
-              <input type="text" value={lbProductCode} onChange={(e) => setLbProductCode(e.target.value)}
-                placeholder="Código del producto..."
-                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm bg-[var(--color-surface)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
-              <button onClick={() => setShowScanner(true)}
-                className="px-3 py-2.5 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
-                <QrCode className="w-5 h-5" />
-              </button>
-              <button onClick={() => void handleAddProduct(lbProductCode)} disabled={!lbProductCode.trim() || lbAdding}
-                className="px-3 py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 flex items-center gap-1">
-                {lbAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              </button>
-            </div>
-
-            {/* Tipo de producto */}
-            <label className="flex items-center gap-2 cursor-pointer px-1">
-              <input type="checkbox" checked={lbIsLineaBlanca} onChange={(e) => setLbIsLineaBlanca(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 accent-[var(--color-primary)]" />
-              <span className="text-xs text-[var(--color-text-2)]">Marcar como <strong>Línea Blanca</strong></span>
-            </label>
-
-            {/* Parsed label data preview */}
-            {lbLabelData && Object.values(lbLabelData).some(Boolean) && (
-              <div className="p-2 rounded-lg bg-blue-50 border border-blue-200 space-y-0.5">
-                <p className="text-[10px] font-semibold text-blue-700 uppercase">Datos de etiqueta detectados</p>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                  {lbLabelData.poNumber && <p className="text-[10px] text-blue-600"><span className="font-medium">PO:</span> {lbLabelData.poNumber}</p>}
-                  {lbLabelData.sku && <p className="text-[10px] text-blue-600"><span className="font-medium">SKU:</span> {lbLabelData.sku}</p>}
-                  {lbLabelData.sscc && <p className="text-[10px] text-blue-600"><span className="font-medium">SSCC:</span> {lbLabelData.sscc}</p>}
-                  {lbLabelData.np && <p className="text-[10px] text-blue-600"><span className="font-medium">NP:</span> {lbLabelData.np}</p>}
-                  {lbLabelData.destinatario && <p className="text-[10px] text-blue-600 col-span-2"><span className="font-medium">Dest:</span> {lbLabelData.destinatario}</p>}
-                  {lbLabelData.transportadora && <p className="text-[10px] text-blue-600"><span className="font-medium">Transp:</span> {lbLabelData.transportadora}</p>}
-                  {lbLabelData.descripcion && <p className="text-[10px] text-blue-600 col-span-2"><span className="font-medium">Desc:</span> {lbLabelData.descripcion}</p>}
-                </div>
-                <button onClick={() => setLbLabelData(null)} className="text-[10px] text-blue-500 underline">Descartar</button>
-              </div>
-            )}
+        {/* ── Productos ── */}
+        {!isCompleted && lbProducts.length > 0 && (
+          <section className="space-y-3 pb-24">
 
             {/* Product list — WhatsApp style */}
             {lbProducts.map((product) => {
@@ -820,27 +780,40 @@ export function WizardPage() {
         )}
       </div>
 
-      {/* WhatsApp-style bottom input bar */}
+      {/* Fixed bottom input bar */}
       {!isCompleted && (
-        <div className="sticky bottom-0 z-20 bg-white px-2 py-2 border-t border-gray-200">
+        <div className="fixed bottom-0 left-0 right-0 z-20 bg-white px-2 py-2 border-t border-gray-200 shadow-lg">
+          {/* Plus menu popup */}
+          {showPlusMenu && (
+            <div className="absolute bottom-full left-2 mb-2 bg-white rounded-xl shadow-lg border border-gray-200 p-1 min-w-[180px]">
+              <button onClick={() => { setShowPlusMenu(false); setShowAddProductModal(true) }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                <Package className="w-4 h-4 text-[var(--color-primary)]" /> Agregar producto
+              </button>
+              <label className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                <Camera className="w-4 h-4 text-emerald-500" /> Seleccionar imagen
+                <input type="file" accept="image/*" className="hidden" onChange={(e) => { setShowPlusMenu(false); handleNativeCapture(e, false) }} />
+              </label>
+            </div>
+          )}
           {/* Templates panel */}
           {showTemplates && (
-            <div className="mb-2 p-2 bg-gray-100 rounded-xl max-h-32 overflow-y-auto space-y-1">
+            <div className="mb-2 p-2 bg-gray-50 rounded-xl max-h-32 overflow-y-auto space-y-1 border border-gray-200">
               <div className="flex items-center justify-between mb-1">
                 <span className="text-[9px] text-gray-500 uppercase font-semibold">Textos guardados</span>
-                <button onClick={() => setShowTemplates(false)} className="text-gray-500"><X className="w-3.5 h-3.5" /></button>
+                <button onClick={() => setShowTemplates(false)} className="text-gray-400"><X className="w-3.5 h-3.5" /></button>
               </div>
               {templates.length === 0 ? (
-                <span className="text-[10px] text-gray-500">Escribe un texto y se guardará automáticamente</span>
+                <span className="text-[10px] text-gray-400">Escribe un texto y se guardará automáticamente</span>
               ) : (
                 templates.map((tpl) => (
                   <div key={tpl.id} className="flex items-center gap-1">
                     <button onClick={() => { setChatMessage(tpl.text); setShowTemplates(false) }}
-                      className="flex-1 text-left px-2 py-1.5 rounded bg-white text-[11px] text-gray-800 truncate hover:bg-[#3b4a54]">
+                      className="flex-1 text-left px-2 py-1.5 rounded bg-white border border-gray-100 text-[11px] text-gray-700 truncate hover:bg-gray-50">
                       {tpl.text}
                     </button>
                     <button onClick={() => { deleteTemplate(tpl.id); setTemplates(getFrequentTemplates()) }}
-                      className="p-1 text-gray-500 hover:text-red-400">
+                      className="p-1 text-gray-400 hover:text-red-400">
                       <X className="w-3 h-3" />
                     </button>
                   </div>
@@ -849,14 +822,14 @@ export function WizardPage() {
             </div>
           )}
           <div className="flex items-end gap-2">
-            {/* Attach file (gallery) */}
-            <label className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center cursor-pointer flex-shrink-0">
-              <Plus className="w-5 h-5 text-gray-500" />
-              <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => handleNativeCapture(e, false)} />
-            </label>
+            {/* + button with menu */}
+            <button onClick={() => setShowPlusMenu(!showPlusMenu)}
+              className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+              <Plus className="w-5 h-5 text-gray-600" />
+            </button>
             {/* Message input */}
             <div className="flex-1 flex items-end bg-gray-100 rounded-2xl px-3 py-1.5 min-h-[36px]">
-              <button onClick={() => setShowTemplates(!showTemplates)} className="mr-1.5 text-gray-500 flex-shrink-0 pb-0.5">
+              <button onClick={() => setShowTemplates(!showTemplates)} className="mr-1.5 text-gray-400 flex-shrink-0 pb-0.5">
                 <Package className="w-4 h-4" />
               </button>
               <textarea
@@ -865,7 +838,7 @@ export function WizardPage() {
                 onBlur={() => { if (chatMessage.trim().length > 3) { saveTemplate(chatMessage.trim()); setTemplates(getFrequentTemplates()) } }}
                 placeholder="Escribe un comentario..."
                 rows={1}
-                className="flex-1 bg-transparent text-gray-800 text-sm placeholder:text-gray-500 resize-none outline-none max-h-[100px]"
+                className="flex-1 bg-transparent text-gray-800 text-sm placeholder:text-gray-400 resize-none outline-none max-h-[100px]"
                 style={{ height: 'auto' }}
               />
             </div>
@@ -876,7 +849,7 @@ export function WizardPage() {
                 onChange={(e) => handleNativeCapture(e, false)} />
             </label>
           </div>
-          {/* Quick actions row */}
+          {/* Quick actions */}
           {(operation.photos.length > 0 || lbProducts.length > 0) && (
             <div className="flex items-center justify-end mt-2 gap-2">
               <button onClick={() => void handleFinalize()} disabled={uploading}
@@ -885,6 +858,38 @@ export function WizardPage() {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Add product modal */}
+      {showAddProductModal && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-800">Agregar producto</h3>
+              <button onClick={() => setShowAddProductModal(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <input type="text" value={lbProductCode} onChange={(e) => setLbProductCode(e.target.value)}
+                  placeholder="Código o nombre del producto..."
+                  className="flex-1 px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                  autoFocus />
+                <button onClick={() => { setShowAddProductModal(false); setShowScanner(true) }}
+                  className="px-3 py-2.5 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+                  <QrCode className="w-5 h-5" />
+                </button>
+              </div>
+              <button onClick={() => { setShowAddProductModal(false); void handleAddProduct(lbProductCode) }}
+                disabled={!lbProductCode.trim() || lbAdding}
+                className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
+                {lbAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                Agregar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
