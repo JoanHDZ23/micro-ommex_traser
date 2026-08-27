@@ -9,7 +9,7 @@
 const DB_NAME = 'ommex-photo-cache'
 const STORE_NAME = 'photos'
 const DB_VERSION = 1
-const EXPIRY_MS = 24 * 60 * 60 * 1000 // 24 horas
+const EXPIRY_MS = 1 * 60 * 60 * 1000 // 1 hora (se borra al subir, esto es solo por si falla)
 
 export interface CachedPhoto {
   id: string // trackingCode_stepIndex_timestamp
@@ -38,17 +38,17 @@ function openDB(): Promise<IDBDatabase> {
   })
 }
 
-/** Guarda una foto en cache local (instantáneo) */
+/** Guarda una foto en cache local (instantáneo). Se borra al subir a Drive. */
 export async function cachePhoto(photo: Omit<CachedPhoto, 'id' | 'timestamp' | 'uploaded' | 'dataUrl'>): Promise<CachedPhoto> {
   const db = await openDB()
   const timestamp = Date.now()
   const id = `${photo.trackingCode}_${photo.productCode ?? 'general'}_${timestamp}`
-  const dataUrl = `data:image/jpeg;base64,${photo.base64}`
 
   const cached: CachedPhoto = {
     ...photo,
     id,
-    dataUrl,
+    dataUrl: `data:image/jpeg;base64,${photo.base64}`,
+    base64: photo.base64,
     timestamp,
     uploaded: false,
   }
@@ -61,19 +61,12 @@ export async function cachePhoto(photo: Omit<CachedPhoto, 'id' | 'timestamp' | '
   })
 }
 
-/** Marca una foto como subida */
+/** Marca una foto como subida y la ELIMINA de IndexedDB para liberar espacio */
 export async function markAsUploaded(id: string): Promise<void> {
   const db = await openDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    const req = store.get(id)
-    req.onsuccess = () => {
-      if (req.result) {
-        req.result.uploaded = true
-        store.put(req.result)
-      }
-    }
+    tx.objectStore(STORE_NAME).delete(id)
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
