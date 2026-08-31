@@ -187,7 +187,8 @@ export function WizardPage() {
 
   const loadOperation = useCallback(async () => {
     if (!trackingCode) return
-    setLoading(true)
+    // Solo mostrar loading en la carga inicial (cuando no hay operación aún)
+    setOperation((prev) => { if (!prev) setLoading(true); return prev })
     try {
       const op = await apiRequest<Operation>(`/operations/${trackingCode}`)
       setOperation(op)

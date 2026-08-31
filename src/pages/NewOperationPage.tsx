@@ -1,24 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Loader2, X } from 'lucide-react'
 import { apiRequest, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
 import { getCompanyId, getOperatorName } from '../lib/context'
 
-// Saved plates in localStorage
-const PLATES_KEY = 'ommex_saved_plates'
-function getSavedPlates(): string[] {
-  try { return JSON.parse(localStorage.getItem(PLATES_KEY) ?? '[]') } catch { return [] }
-}
-function savePlateToStorage(plate: string) {
-  const plates = getSavedPlates().filter((p) => p !== plate)
-  plates.unshift(plate)
-  if (plates.length > 20) plates.pop()
-  localStorage.setItem(PLATES_KEY, JSON.stringify(plates))
-}
-function removeSavedPlate(plate: string) {
-  localStorage.setItem(PLATES_KEY, JSON.stringify(getSavedPlates().filter((p) => p !== plate)))
-}
+
 
 export function NewOperationPage() {
   const navigate = useNavigate()
@@ -34,7 +21,16 @@ export function NewOperationPage() {
   const [showPlate, setShowPlate] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [savedPlates, setSavedPlates] = useState<string[]>(() => getSavedPlates())
+  const [savedPlates, setSavedPlates] = useState<string[]>([])
+  const companyId = getCompanyId()
+
+  // Load saved plates from backend
+  useEffect(() => {
+    if (!companyId) return
+    void apiRequest<{ plates: string[] }>(`/settings/plates?companyId=${encodeURIComponent(companyId)}`)
+      .then((r) => setSavedPlates(r.plates ?? []))
+      .catch(() => { /* no plates */ })
+  }, [companyId])
 
   const canSubmit = form.operatorName.trim() && (showPlate ? form.vehiclePlate?.trim() : true)
 
@@ -50,10 +46,9 @@ export function NewOperationPage() {
         ...form,
         vehiclePlate: showPlate ? form.vehiclePlate : undefined,
       }
-      // Save plate for reuse
-      if (showPlate && form.vehiclePlate?.trim()) {
-        savePlateToStorage(form.vehiclePlate.trim())
-        setSavedPlates(getSavedPlates())
+      // Save plate for reuse (backend, per company)
+      if (showPlate && form.vehiclePlate?.trim() && companyId) {
+        void apiRequest('/settings/plates', { method: 'POST', body: { companyId, plate: form.vehiclePlate.trim() } })
       }
       const result = await apiRequest<Operation>('/operations', {
         method: 'POST',
@@ -159,7 +154,10 @@ export function NewOperationPage() {
                         }`}>
                         {plate}
                       </button>
-                      <button type="button" onClick={() => { removeSavedPlate(plate); setSavedPlates(getSavedPlates()) }}
+                      <button type="button" onClick={() => {
+                        setSavedPlates((prev) => prev.filter((p) => p !== plate))
+                        if (companyId) void apiRequest('/settings/plates', { method: 'DELETE', body: { companyId, plate } })
+                      }}
                         className="w-4 h-4 rounded-full text-gray-400 hover:text-red-500 flex items-center justify-center">
                         <X className="w-3 h-3" />
                       </button>
