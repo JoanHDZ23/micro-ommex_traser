@@ -80,3 +80,74 @@ settingsRouter.put('/', async (req, res) => {
     res.status(500).json({ message: 'Error al guardar configuración.' })
   }
 })
+
+/**
+ * GET /api/settings/plates?companyId=xxx
+ * Obtiene las placas guardadas de una empresa.
+ */
+settingsRouter.get('/plates', async (req, res) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const db = getDb()
+    const doc = await db.collection(COLLECTION).findOne({ companyId })
+    res.json({ plates: (doc?.plates as string[]) ?? [] })
+  } catch (err) {
+    console.error('[settings] Error al leer placas:', err)
+    res.status(500).json({ message: 'Error al leer placas.' })
+  }
+})
+
+/**
+ * POST /api/settings/plates
+ * Agrega una placa a la empresa. Body: { companyId, plate }
+ */
+settingsRouter.post('/plates', async (req, res) => {
+  const { companyId, plate } = req.body ?? {}
+  if (!companyId?.trim() || !plate?.trim()) {
+    res.status(400).json({ message: 'companyId y plate son requeridos.' })
+    return
+  }
+  const cleanPlate = plate.trim().toUpperCase()
+  try {
+    const db = getDb()
+    const doc = await db.collection(COLLECTION).findOne({ companyId: companyId.trim() })
+    const current = (doc?.plates as string[]) ?? []
+    const updated = [cleanPlate, ...current.filter((p) => p !== cleanPlate)].slice(0, 50)
+    await db.collection(COLLECTION).updateOne(
+      { companyId: companyId.trim() },
+      { $set: { companyId: companyId.trim(), plates: updated, updatedAt: new Date().toISOString() } },
+      { upsert: true },
+    )
+    res.json({ plates: updated })
+  } catch (err) {
+    console.error('[settings] Error al guardar placa:', err)
+    res.status(500).json({ message: 'Error al guardar placa.' })
+  }
+})
+
+/**
+ * DELETE /api/settings/plates
+ * Elimina una placa. Body: { companyId, plate }
+ */
+settingsRouter.delete('/plates', async (req, res) => {
+  const { companyId, plate } = req.body ?? {}
+  if (!companyId?.trim() || !plate?.trim()) {
+    res.status(400).json({ message: 'companyId y plate son requeridos.' })
+    return
+  }
+  try {
+    const db = getDb()
+    const doc = await db.collection(COLLECTION).findOne({ companyId: companyId.trim() })
+    const current = (doc?.plates as string[]) ?? []
+    const updated = current.filter((p) => p !== plate.trim().toUpperCase())
+    await db.collection(COLLECTION).updateOne(
+      { companyId: companyId.trim() },
+      { $set: { plates: updated, updatedAt: new Date().toISOString() } },
+    )
+    res.json({ plates: updated })
+  } catch (err) {
+    console.error('[settings] Error al eliminar placa:', err)
+    res.status(500).json({ message: 'Error al eliminar placa.' })
+  }
+})
