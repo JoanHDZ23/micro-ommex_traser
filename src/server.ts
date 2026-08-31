@@ -20,6 +20,17 @@ app.use(cors({
 }))
 app.use(express.json({ limit: '20mb' }))
 
+// Auto-cleanup con throttle: se ejecuta como máximo una vez cada 12h en cualquier request
+let lastCleanup = 0
+app.use((_req, _res, next) => {
+  const now = Date.now()
+  if (now - lastCleanup > 12 * 60 * 60 * 1000) {
+    lastCleanup = now
+    void runCleanupOldOperations()
+  }
+  next()
+})
+
 // Routes
 app.use('/api/operations', operationsRouter)
 app.use('/api/photos', photosRouter)
@@ -30,8 +41,12 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'ommex-tracer', timestamp: new Date().toISOString() })
 })
 
-// Endpoint manual para ejecutar limpieza (útil para cron externo)
+// Endpoint manual para ejecutar limpieza (útil para cron externo como cron-job.org)
 app.post('/api/admin/cleanup', async (_req, res) => {
+  const result = await runCleanupOldOperations()
+  res.json(result)
+})
+app.get('/api/admin/cleanup', async (_req, res) => {
   const result = await runCleanupOldOperations()
   res.json(result)
 })
