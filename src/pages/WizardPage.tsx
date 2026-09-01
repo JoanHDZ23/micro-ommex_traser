@@ -418,10 +418,10 @@ export function WizardPage() {
   )
 
   return (
-    <>
+    <div className="flex flex-col h-[100dvh] overflow-hidden">
       <GuideModal storageKey="wizard" heading="Cómo registrar" steps={WIZARD_GUIDE} />
       {/* WhatsApp-style dark header */}
-      <div className="sticky top-0 z-20 bg-white px-3 py-2.5 flex items-center gap-3 shadow-md">
+      <div className="flex-shrink-0 z-20 bg-white px-3 py-2.5 flex items-center gap-3 shadow-md">
         <button onClick={() => navigate('/')} className="w-8 h-8 flex items-center justify-center">
           <ArrowLeft className="w-5 h-5 text-gray-600" />
         </button>
@@ -445,7 +445,7 @@ export function WizardPage() {
       </div>
 
       {/* Chat body */}
-      <div className="flex-1 min-h-[60vh] p-3 space-y-3 bg-gray-50">
+      <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-gray-50 pb-24">
 
         {/* Completed actions */}
         {isCompleted && (
@@ -1110,7 +1110,7 @@ export function WizardPage() {
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }
 
