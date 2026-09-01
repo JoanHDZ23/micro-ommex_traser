@@ -1,11 +1,41 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Settings } from 'lucide-react'
+import { GuideModal, type GuideStep } from '../components/GuideModal'
+
+const HOME_GUIDE: GuideStep[] = [
+  {
+    emoji: '👋',
+    title: 'Bienvenido a Ommex Tracer',
+    description: 'Esta app te ayuda a registrar la trazabilidad fotográfica de los productos que entran y salen. Aquí tienes una guía rápida.',
+  },
+  {
+    emoji: '📦',
+    title: 'Inicia una operación',
+    description: 'Elige "Productos Entrantes" para lo que ingresa o "Productos Salientes" para lo que sale. Luego ingresa la placa del vehículo para comenzar.',
+  },
+  {
+    emoji: '📸',
+    title: 'Registra con fotos',
+    description: 'Dentro de la operación puedes tomar fotos, escanear códigos de barras y agregar productos con su descripción, como si fuera un chat.',
+  },
+  {
+    emoji: '🔗',
+    title: 'Comparte por WhatsApp',
+    description: 'Al terminar, genera un enlace del registro para compartir las fotos y la información por WhatsApp con quien lo necesite.',
+  },
+  {
+    emoji: '⚙️',
+    title: 'Configura tu Drive',
+    description: 'En "Configuración" indica la carpeta de Google Drive donde se guardarán las fotos de tu empresa. Hazlo una sola vez.',
+  },
+]
 
 export function HomePage() {
   const navigate = useNavigate()
 
   return (
     <div className="p-4 space-y-5">
+      <GuideModal storageKey="home" heading="Guía de uso" steps={HOME_GUIDE} />
       {/* Quick actions */}
       <section>
         <h3 className="text-xs font-semibold text-[var(--color-text-3)] uppercase tracking-wide mb-3">

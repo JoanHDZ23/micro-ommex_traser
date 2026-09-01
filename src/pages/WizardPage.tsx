@@ -5,6 +5,35 @@ import { apiRequest, type LabelData, type Operation, type OperationType, type Up
 import { CameraCapture } from '../components/CameraCapture'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
+import { GuideModal, type GuideStep } from '../components/GuideModal'
+
+const WIZARD_GUIDE: GuideStep[] = [
+  {
+    emoji: '💬',
+    title: 'Registro tipo chat',
+    description: 'Cada foto y producto aparece como un mensaje. Escribe la descripción en la barra inferior y adjunta las fotos, igual que en WhatsApp.',
+  },
+  {
+    emoji: '➕',
+    title: 'Botón "+"',
+    description: 'Toca el botón "+" para agregar un producto o seleccionar una imagen desde tu galería.',
+  },
+  {
+    emoji: '📷',
+    title: 'Toma fotos',
+    description: 'Usa el ícono de cámara para abrir la cámara del dispositivo. Las fotos se guardan temporalmente y se suben a Drive en segundo plano.',
+  },
+  {
+    emoji: '🔖',
+    title: 'Escanea códigos',
+    description: 'Al crear un producto puedes escanear su código de barras. El nombre lo escribes como comentario en el modal.',
+  },
+  {
+    emoji: '✅',
+    title: 'Comparte al terminar',
+    description: 'Cuando completes la operación, usa "Compartir" para enviar el registro con sus fotos por WhatsApp.',
+  },
+]
 
 export function WizardPage() {
   const { trackingCode } = useParams<{ trackingCode: string }>()
@@ -390,6 +419,7 @@ export function WizardPage() {
 
   return (
     <>
+      <GuideModal storageKey="wizard" heading="Cómo registrar" steps={WIZARD_GUIDE} fabPosition="top-16 right-3" />
       {/* WhatsApp-style dark header */}
       <div className="sticky top-0 z-20 bg-white px-3 py-2.5 flex items-center gap-3 shadow-md">
         <button onClick={() => navigate('/')} className="w-8 h-8 flex items-center justify-center">
