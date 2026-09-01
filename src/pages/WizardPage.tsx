@@ -419,7 +419,7 @@ export function WizardPage() {
 
   return (
     <>
-      <GuideModal storageKey="wizard" heading="Cómo registrar" steps={WIZARD_GUIDE} fabPosition="top-16 right-3" />
+      <GuideModal storageKey="wizard" heading="Cómo registrar" steps={WIZARD_GUIDE} />
       {/* WhatsApp-style dark header */}
       <div className="sticky top-0 z-20 bg-white px-3 py-2.5 flex items-center gap-3 shadow-md">
         <button onClick={() => navigate('/')} className="w-8 h-8 flex items-center justify-center">

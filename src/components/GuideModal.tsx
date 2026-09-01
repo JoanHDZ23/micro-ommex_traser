@@ -16,7 +16,7 @@ interface GuideModalProps {
   steps: GuideStep[]
   /** Versión de la guía: si cambia, se vuelve a mostrar aunque ya se haya visto */
   version?: number
-  /** Clase Tailwind para posicionar el botón flotante "?" (por defecto abajo-derecha) */
+  /** Clase Tailwind para posicionar el botón flotante "?" (por defecto arriba-derecha) */
   fabPosition?: string
 }
 
@@ -26,7 +26,7 @@ const seenKey = (storageKey: string, version: number) => `guide_seen_${storageKe
  * Guía/onboarding paso a paso. Se muestra automáticamente la primera vez
  * y puede reabrirse con el botón flotante "?".
  */
-export function GuideModal({ storageKey, heading, steps, version = 1, fabPosition = 'bottom-20 right-4' }: GuideModalProps) {
+export function GuideModal({ storageKey, heading, steps, version = 1, fabPosition = 'top-16 right-3' }: GuideModalProps) {
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState(0)
 
@@ -67,9 +67,9 @@ export function GuideModal({ storageKey, heading, steps, version = 1, fabPositio
       <button
         onClick={reopen}
         aria-label="Ver guía de uso"
-        className={`fixed ${fabPosition} z-40 w-11 h-11 rounded-full bg-[var(--color-primary)] text-white shadow-lg flex items-center justify-center active:scale-95 transition-transform`}
+        className={`fixed ${fabPosition} z-40 w-9 h-9 rounded-full bg-[var(--color-primary)] text-white shadow-lg flex items-center justify-center active:scale-95 transition-transform`}
       >
-        <HelpCircle className="w-5 h-5" />
+        <HelpCircle className="w-4 h-4" />
       </button>
 
       {open && current && (
