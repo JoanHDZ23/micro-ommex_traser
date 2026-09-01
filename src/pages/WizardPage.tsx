@@ -813,7 +813,7 @@ export function WizardPage() {
 
       {/* Bottom input bar */}
       {!isCompleted && (
-        <div className="flex-shrink-0 z-20 bg-white px-2 py-2 border-t border-gray-200 shadow-lg">
+        <div className="relative flex-shrink-0 z-20 bg-white px-2 py-2 border-t border-gray-200 shadow-lg">
           {/* Plus menu popup */}
           {showPlusMenu && (
             <div className="absolute bottom-full left-2 mb-2 bg-white rounded-xl shadow-lg border border-gray-200 p-1 min-w-[180px]">
