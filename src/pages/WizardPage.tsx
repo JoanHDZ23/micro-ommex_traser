@@ -418,7 +418,7 @@ export function WizardPage() {
   )
 
   return (
-    <div className="flex flex-col h-[100dvh] overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden">
       <GuideModal storageKey="wizard" heading="Cómo registrar" steps={WIZARD_GUIDE} />
       {/* WhatsApp-style dark header */}
       <div className="flex-shrink-0 z-20 bg-white px-3 py-2.5 flex items-center gap-3 shadow-md">
@@ -445,7 +445,7 @@ export function WizardPage() {
       </div>
 
       {/* Chat body */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-gray-50 pb-24">
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 bg-gray-50">
 
         {/* Completed actions */}
         {isCompleted && (
@@ -564,7 +564,7 @@ export function WizardPage() {
 
         {/* ── Productos ── */}
         {!isCompleted && lbProducts.length > 0 && (
-          <section className="space-y-3 pb-24">
+          <section className="space-y-3">
 
             {/* Product list — WhatsApp style */}
             {lbProducts.map((product) => {
@@ -811,9 +811,9 @@ export function WizardPage() {
         )}
       </div>
 
-      {/* Fixed bottom input bar */}
+      {/* Bottom input bar */}
       {!isCompleted && (
-        <div className="fixed bottom-0 left-0 right-0 z-20 bg-white px-2 py-2 border-t border-gray-200 shadow-lg">
+        <div className="flex-shrink-0 z-20 bg-white px-2 py-2 border-t border-gray-200 shadow-lg">
           {/* Plus menu popup */}
           {showPlusMenu && (
             <div className="absolute bottom-full left-2 mb-2 bg-white rounded-xl shadow-lg border border-gray-200 p-1 min-w-[180px]">
