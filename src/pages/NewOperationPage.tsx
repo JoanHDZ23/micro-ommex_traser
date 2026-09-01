@@ -4,8 +4,30 @@ import { AlertCircle, ArrowLeft, Loader2, X } from 'lucide-react'
 import { apiRequest, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
 import { getCompanyId, getOperatorName } from '../lib/context'
+import { GuideModal, type GuideStep } from '../components/GuideModal'
 
-
+const NEW_OP_GUIDE: GuideStep[] = [
+  {
+    emoji: '🗂️',
+    title: 'Elige el tipo',
+    description: 'Presiona "Productos Entrantes" (lo que ingresa) o "Productos Salientes" (lo que sale). El botón seleccionado se resalta en morado.',
+  },
+  {
+    emoji: '✍️',
+    title: 'Nombre del operador',
+    description: 'Escribe tu nombre en el campo "Nombre del operador". Es obligatorio (marcado con *) para poder continuar.',
+  },
+  {
+    emoji: '🚚',
+    title: 'Placa del vehículo',
+    description: 'Activa el interruptor "Placa del vehículo" si aplica y escribe la placa. Las placas que ya usaste aparecen como botones para tocarlas y reutilizarlas; la "X" al lado las elimina.',
+  },
+  {
+    emoji: '🚀',
+    title: 'Inicia el registro',
+    description: 'Presiona "Iniciar registro" abajo para crear la operación y pasar a la pantalla de fotos.',
+  },
+]
 
 export function NewOperationPage() {
   const navigate = useNavigate()
@@ -64,6 +86,7 @@ export function NewOperationPage() {
 
   return (
     <div className="p-4 space-y-4">
+      <GuideModal storageKey="new_op" heading="Crear una operación" steps={NEW_OP_GUIDE} />
       {/* Header */}
       <div className="flex items-center gap-3">
         <button

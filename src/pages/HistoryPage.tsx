@@ -4,11 +4,35 @@ import { ArrowDown, ArrowLeft, ArrowUp, Calendar, ChevronRight, Filter, Loader2,
 import { apiRequest, type Operation, type OperationType, type PaginatedOperations } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
 import { getCompanyId } from '../lib/context'
+import { GuideModal, type GuideStep } from '../components/GuideModal'
 
 const TYPE_ICONS: Record<OperationType, React.ComponentType<{ className?: string }>> = {
   PRODUCTOS_ENTRANTES: ArrowDown,
   PRODUCTOS_SALIENTES: ArrowUp,
 }
+
+const HISTORY_GUIDE: GuideStep[] = [
+  {
+    emoji: '📋',
+    title: 'Tus operaciones',
+    description: 'Aquí ves todas las operaciones registradas. La etiqueta verde "Completo" o ámbar "En proceso" indica su estado, y a la derecha cuántas fotos tiene.',
+  },
+  {
+    emoji: '🔍',
+    title: 'Filtra y busca',
+    description: 'Toca el ícono de embudo (arriba a la derecha) para abrir los filtros: por tipo, fecha, operador o nombre/código de producto.',
+  },
+  {
+    emoji: '👆',
+    title: 'Abre una operación',
+    description: 'Presiona cualquier tarjeta de la lista para ver su detalle completo, fotos, y opciones de compartir o editar.',
+  },
+  {
+    emoji: '📄',
+    title: 'Cambia de página',
+    description: 'Si hay muchas operaciones, usa "Anterior" y "Siguiente" abajo para navegar entre páginas.',
+  },
+]
 
 export function HistoryPage() {
   const navigate = useNavigate()
@@ -52,6 +76,7 @@ export function HistoryPage() {
 
   return (
     <div className="p-4 space-y-4">
+      <GuideModal storageKey="history" heading="Historial de operaciones" steps={HISTORY_GUIDE} />
       {/* Header */}
       <div className="flex items-center gap-3">
         <button

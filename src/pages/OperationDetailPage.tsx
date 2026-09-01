@@ -3,6 +3,35 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Calendar, Camera, Clock, Edit3, ExternalLink, Loader2, MapPin, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
+import { GuideModal, type GuideStep } from '../components/GuideModal'
+
+const DETAIL_GUIDE: GuideStep[] = [
+  {
+    emoji: '📄',
+    title: 'Detalle de la operación',
+    description: 'Aquí ves los datos generales (operador, fecha, placa, fotos) y todo el registro fotográfico organizado por productos.',
+  },
+  {
+    emoji: '📷',
+    title: 'Continuar registro',
+    description: 'Si la operación está "En proceso", presiona "Continuar registro" para volver a tomar o agregar fotos.',
+  },
+  {
+    emoji: '🔗',
+    title: 'Compartir',
+    description: 'Presiona "Compartir registro" para enviar el enlace público con las fotos por WhatsApp, copiarlo o usar el menú de compartir del dispositivo.',
+  },
+  {
+    emoji: '🖼️',
+    title: 'Ver fotos',
+    description: 'Toca cualquier foto para ampliarla a pantalla completa. Desde ahí puedes abrirla directamente en Google Drive.',
+  },
+  {
+    emoji: '✏️',
+    title: 'Editar o eliminar',
+    description: 'Con "Editar registro" reabres una operación completada. "Eliminar operación" borra el registro y su carpeta de Drive (no se puede deshacer).',
+  },
+]
 
 /** Convierte una driveUrl o fileId en una URL de imagen embebible */
 function getDriveImageUrl(photo: PhotoRecord): string | null {
@@ -80,6 +109,7 @@ export function OperationDetailPage() {
 
   return (
     <div className="p-4 space-y-4 pb-24">
+      <GuideModal storageKey="detail" heading="Detalle y opciones" steps={DETAIL_GUIDE} />
       {/* Header */}
       <div className="flex items-center gap-3">
         <button onClick={() => navigate('/history')} className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center">

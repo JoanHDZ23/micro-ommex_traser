@@ -3,6 +3,30 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, CheckCircle2, ExternalLink, Loader2, Save } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId } from '../lib/context'
+import { GuideModal, type GuideStep } from '../components/GuideModal'
+
+const SETTINGS_GUIDE: GuideStep[] = [
+  {
+    emoji: '📁',
+    title: 'Carpeta de Drive',
+    description: 'Aquí conectas la carpeta de Google Drive donde se guardarán todas las fotos de tu empresa. Solo necesitas hacerlo una vez.',
+  },
+  {
+    emoji: '🔗',
+    title: 'Pega la URL',
+    description: 'Copia el enlace de tu carpeta en Drive y pégalo en el campo "URL de la carpeta de Drive". Debe verse como https://drive.google.com/drive/folders/...',
+  },
+  {
+    emoji: '🔐',
+    title: 'Da permisos',
+    description: 'Asegúrate de que la carpeta tenga permiso de editor para el correo del Apps Script, de lo contrario las fotos no podrán subirse.',
+  },
+  {
+    emoji: '💾',
+    title: 'Guarda',
+    description: 'Presiona "Guardar carpeta" para aplicar los cambios. Con "Abrir carpeta en Drive" puedes verificar que sea la correcta.',
+  },
+]
 
 export function SettingsPage() {
   const navigate = useNavigate()
@@ -48,6 +72,7 @@ export function SettingsPage() {
 
   return (
     <div className="p-4 space-y-4">
+      <GuideModal storageKey="settings" heading="Configuración de Drive" steps={SETTINGS_GUIDE} />
       {/* Header */}
       <div className="flex items-center gap-3">
         <button onClick={() => navigate('/')} className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center">
