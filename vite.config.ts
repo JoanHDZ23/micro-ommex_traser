@@ -5,9 +5,10 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: {
-    // Compatibilidad con navegadores/WebView antiguos de teléfonos
-    target: ['chrome87', 'safari14', 'firefox78', 'edge88'],
-    cssTarget: ['chrome87', 'safari14', 'firefox78', 'edge88'],
+    // JS a sintaxis compatible con navegadores/WebView antiguos de teléfonos.
+    // El CSS de Tailwind v4 se degrada aparte con scripts/downlevel-css.mjs
+    // (aplana @layer y @property que Chrome <99 no soporta).
+    target: ['chrome87', 'safari13', 'firefox78', 'edge88'],
   },
   server: {
     port: 5174,
