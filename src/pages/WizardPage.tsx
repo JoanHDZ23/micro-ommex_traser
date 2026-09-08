@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Link2, Loader2, Package, Pencil, Plus, QrCode, Search, Share2, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Link2, Loader2, Package, Pencil, Plus, QrCode, Search, Send, Share2, Trash2, X } from 'lucide-react'
 import { apiRequest, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
@@ -150,57 +150,36 @@ export function WizardPage() {
   // File picker refs
   const lbFileInputRef = useRef<HTMLInputElement>(null)
 
-  // Native camera / gallery capture with comment modal
-  const [capturedPreview, setCapturedPreview] = useState<string | null>(null)
-  const [capturedBase64, setCapturedBase64] = useState<string>('')
-  const [capturedIsProduct, setCapturedIsProduct] = useState(false)
-  const [capturedComment, setCapturedComment] = useState('')
+  /** Lee un File y devuelve su base64 (sin el prefijo data:) */
+  const fileToBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve((reader.result as string).split(',')[1] ?? '')
+      reader.onerror = () => reject(new Error('No se pudo leer la imagen'))
+      reader.readAsDataURL(file)
+    })
 
-  const handleNativeCapture = (e: React.ChangeEvent<HTMLInputElement>, isProduct: boolean) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = reader.result as string
-      const base64 = dataUrl.split(',')[1] ?? ''
-      setCapturedPreview(dataUrl)
-      setCapturedBase64(base64)
-      setCapturedIsProduct(isProduct)
-      setCapturedComment(chatMessage) // Pre-fill with chat message
-      setChatMessage('')
-    }
-    reader.readAsDataURL(file)
-    e.target.value = '' // reset
-  }
-
-  const confirmCapturedPhoto = async () => {
-    if (!capturedBase64 || !trackingCode) return
-    setCapturedPreview(null)
-    const comment = capturedComment.trim()
-    const productCode = capturedIsProduct ? activeLbProduct ?? undefined : undefined
+  /** Sube una sola foto: cachea local y sube a Drive en background */
+  const uploadSinglePhoto = async (base64: string, comment: string, isProduct: boolean, productCodeArg?: string) => {
+    if (!base64 || !trackingCode) return
+    const productCode = isProduct ? productCodeArg ?? activeLbProduct ?? undefined : undefined
 
     // 1. Cache local (instantáneo)
-    const cached = await cachePhoto({ trackingCode, base64: capturedBase64, comment, productCode })
+    const cached = await cachePhoto({ trackingCode, base64, comment, productCode })
     setLocalPhotos((prev) => [...prev, cached])
-    setFeedback('✓ Foto guardada')
 
     // 2. Upload en background
-    const base64Copy = capturedBase64
-    setCapturedBase64('')
-    setCapturedComment('')
-
     void (async () => {
       try {
         if (productCode) {
-          const photoCount = activeLbData?.photos.length ?? 0
           await apiRequest<UploadPhotoResponse>(
             `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo`,
-            { method: 'POST', body: { stepIndex: photoCount, base64Image: base64Copy, mimeType: 'image/jpeg', comment } },
+            { method: 'POST', body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment } },
           )
         } else {
           await apiRequest<UploadPhotoResponse>('/photos/upload', {
             method: 'POST',
-            body: { trackingCode, stepIndex: 0, base64Image: base64Copy, mimeType: 'image/jpeg', comment },
+            body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment },
           })
         }
         await markAsUploaded(cached.id)
@@ -208,6 +187,30 @@ export function WizardPage() {
         await loadOperation()
       } catch { /* will show as pending with 🕐 */ }
     })()
+  }
+
+  /**
+   * Captura nativa: toma/selecciona una o varias fotos y las sube automáticamente
+   * sin modal de confirmación. El comentario del input se aplica a la primera foto.
+   */
+  const handleNativeCapture = async (e: React.ChangeEvent<HTMLInputElement>, isProduct: boolean) => {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = '' // reset para permitir volver a elegir la misma imagen
+    if (files.length === 0) return
+
+    const comment = chatMessage.trim()
+    setChatMessage('')
+    setFeedback(files.length > 1 ? `✓ Subiendo ${files.length} fotos...` : '✓ Foto guardada')
+
+    for (let i = 0; i < files.length; i++) {
+      try {
+        const base64 = await fileToBase64(files[i])
+        // El comentario solo se aplica a la primera foto
+        await uploadSinglePhoto(base64, i === 0 ? comment : '', isProduct)
+      } catch {
+        setFeedback('Error al leer una imagen')
+      }
+    }
   }
 
   const isCompleted = operation?.status === 'COMPLETADO'
@@ -272,6 +275,21 @@ export function WizardPage() {
         await loadOperation()
       } catch { /* will show as pending with 🕐 */ }
     })()
+  }
+
+  // ── Comentario sin foto (nota de texto) ──
+  const handleSendNote = async () => {
+    const comment = chatMessage.trim()
+    if (!trackingCode || !comment) return
+    setChatMessage('')
+    setFeedback('✓ Nota agregada')
+    try {
+      await apiRequest('/photos/note', { method: 'POST', body: { trackingCode, comment } })
+      if (comment.length > 3) { saveTemplate(comment); setTemplates(getFrequentTemplates()) }
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al agregar nota')
+    }
   }
 
   // ── Línea Blanca ──
@@ -489,14 +507,18 @@ export function WizardPage() {
               {operation.photos.map((photo, i) => (
                 <div key={i} className="flex justify-end">
                   <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
-                    {/* Photo thumbnail */}
-                    {photo.fileId && photo.fileId !== 'pending' && (
+                    {/* Photo thumbnail — solo si es imagen real (no nota ni pendiente) */}
+                    {photo.fileId && photo.fileId !== 'pending' && photo.fileId !== 'note' && (
                       <img
                         src={`https://lh3.googleusercontent.com/d/${photo.fileId}=w300`}
                         alt={photo.stepName}
                         className="w-full rounded-md mb-1.5 max-h-48 object-cover"
                         loading="lazy"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        onError={(e) => {
+                          const img = e.target as HTMLImageElement
+                          const fb = `https://drive.google.com/thumbnail?id=${photo.fileId}&sz=w300`
+                          if (img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
+                        }}
                       />
                     )}
                     {/* Comment/text */}
@@ -823,7 +845,7 @@ export function WizardPage() {
               </button>
               <label className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
                 <Camera className="w-4 h-4 text-emerald-500" /> Seleccionar imagen
-                <input type="file" accept="image/*" className="hidden" onChange={(e) => { setShowPlusMenu(false); handleNativeCapture(e, false) }} />
+                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { setShowPlusMenu(false); void handleNativeCapture(e, false) }} />
               </label>
             </div>
           )}
@@ -873,11 +895,19 @@ export function WizardPage() {
                 style={{ height: 'auto' }}
               />
             </div>
-            {/* Camera button */}
+            {/* Send note button (only text) — appears when there's text */}
+            {chatMessage.trim() && (
+              <button onClick={() => void handleSendNote()}
+                className="w-9 h-9 rounded-full bg-emerald-500 flex items-center justify-center flex-shrink-0"
+                aria-label="Enviar comentario">
+                <Send className="w-4 h-4 text-white" />
+              </button>
+            )}
+            {/* Camera button — captura y sube automáticamente (varias fotos) */}
             <label className="w-9 h-9 rounded-full bg-[var(--color-primary)] flex items-center justify-center cursor-pointer flex-shrink-0">
               <Camera className="w-5 h-5 text-white" />
-              <input type="file" accept="image/*" capture="environment" className="hidden"
-                onChange={(e) => handleNativeCapture(e, false)} />
+              <input type="file" accept="image/*" capture="environment" multiple className="hidden"
+                onChange={(e) => void handleNativeCapture(e, false)} />
             </label>
           </div>
           {/* Quick actions */}
@@ -1030,41 +1060,6 @@ export function WizardPage() {
                 ))}
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* Photo preview + comment modal */}
-      {capturedPreview && (
-        <div className="fixed inset-0 z-[95] bg-black/80 flex flex-col">
-          {/* Preview image */}
-          <div className="flex-1 flex items-center justify-center p-4">
-            <img src={capturedPreview} alt="Foto capturada" className="max-w-full max-h-full object-contain rounded-lg" />
-          </div>
-
-          {/* Comment + actions */}
-          <div className="p-4 bg-black/60 backdrop-blur space-y-3">
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={capturedComment}
-                onChange={(e) => setCapturedComment(e.target.value)}
-                placeholder="Agregar comentario (opcional)..."
-                className="flex-1 px-3 py-2.5 rounded-lg bg-white/15 border border-white/20 text-white text-sm placeholder:text-white/50 focus:outline-none focus:ring-1 focus:ring-white/40"
-                autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter') void confirmCapturedPhoto() }}
-              />
-            </div>
-            <div className="flex items-center justify-center gap-4">
-              <button onClick={() => { setCapturedPreview(null); setCapturedBase64('') }}
-                className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center">
-                <X className="w-5 h-5 text-white" />
-              </button>
-              <button onClick={() => void confirmCapturedPhoto()}
-                className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg">
-                <CheckCircle2 className="w-7 h-7 text-white" />
-              </button>
-            </div>
           </div>
         </div>
       )}
