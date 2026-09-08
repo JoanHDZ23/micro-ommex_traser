@@ -198,13 +198,13 @@ export function WizardPage() {
    * Captura nativa: toma/selecciona una o varias fotos y las sube automáticamente
    * sin modal de confirmación. El comentario del input se aplica a la primera foto.
    */
-  const handleNativeCapture = async (e: React.ChangeEvent<HTMLInputElement>, isProduct: boolean) => {
+  const handleNativeCapture = async (e: React.ChangeEvent<HTMLInputElement>, isProduct: boolean, productCodeArg?: string) => {
     const files = Array.from(e.target.files ?? [])
     e.target.value = '' // reset para permitir volver a elegir la misma imagen
     if (files.length === 0) return
 
-    // Captura el producto activo AHORA para evitar condiciones de carrera si cambia después
-    const targetProduct = isProduct ? activeLbProduct ?? undefined : undefined
+    // Producto destino: el pasado explícitamente o el activo (evita condiciones de carrera)
+    const targetProduct = isProduct ? productCodeArg ?? activeLbProduct ?? undefined : undefined
     const comment = chatMessage.trim()
     setChatMessage('')
     setFeedback(files.length > 1 ? `✓ Subiendo ${files.length} fotos...` : '✓ Foto guardada')
@@ -833,6 +833,22 @@ export function WizardPage() {
                       {p.labelData.transportadora && <p><span className="font-medium">Transp:</span> {p.labelData.transportadora}</p>}
                     </div>
                   )}
+
+                  {/* Add photo buttons — disponible aunque la operación esté completada */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <label onClick={() => setActiveLbProduct(p.productCode)}
+                      className="flex-1 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                      <Camera className="w-3.5 h-3.5" /> Foto
+                      <input type="file" accept="image/*" capture="environment" multiple className="hidden"
+                        disabled={uploading} onChange={(e) => void handleNativeCapture(e, true, p.productCode)} />
+                    </label>
+                    <label onClick={() => setActiveLbProduct(p.productCode)}
+                      className="flex-1 py-1.5 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                      📁 Galería
+                      <input type="file" accept="image/*" multiple className="hidden"
+                        disabled={uploading} onChange={(e) => void handleNativeCapture(e, true, p.productCode)} />
+                    </label>
+                  </div>
 
                   {/* Actions */}
                   <div className="flex items-center gap-1 pt-1">
