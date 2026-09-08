@@ -4,6 +4,11 @@ import { defineConfig } from 'vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    // Compatibilidad con navegadores/WebView antiguos de teléfonos
+    target: ['chrome87', 'safari14', 'firefox78', 'edge88'],
+    cssTarget: ['chrome87', 'safari14', 'firefox78', 'edge88'],
+  },
   server: {
     port: 5174,
     proxy: {

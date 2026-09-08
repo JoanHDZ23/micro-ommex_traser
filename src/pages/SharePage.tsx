@@ -3,19 +3,36 @@ import { useParams } from 'react-router-dom'
 import { Calendar, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, Loader2, MapPin, Package, Share2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 
-function getDriveImageUrl(photo: PhotoRecord, size = 800): string | null {
+/** Devuelve el fileId real de una foto, o null si es nota/pendiente/sin imagen */
+function getRealFileId(photo: PhotoRecord): string | null {
   const { driveUrl, fileId } = photo
-  if (fileId && fileId !== 'pending') return `https://lh3.googleusercontent.com/d/${fileId}=w${size}`
+  if (fileId && fileId !== 'pending' && fileId !== 'note') return fileId
   if (driveUrl && driveUrl !== 'pending-verification') {
     const match = driveUrl.match(/\/d\/([a-zA-Z0-9_-]+)/)
-    if (match?.[1]) return `https://lh3.googleusercontent.com/d/${match[1]}=w${size}`
+    if (match?.[1]) return match[1]
   }
   return null
 }
 
+function getDriveImageUrl(photo: PhotoRecord, size = 800): string | null {
+  const id = getRealFileId(photo)
+  return id ? `https://lh3.googleusercontent.com/d/${id}=w${size}` : null
+}
+
+/** URL de respaldo (thumbnail) si falla lh3 */
+function getDriveThumbUrl(photo: PhotoRecord, size = 800): string | null {
+  const id = getRealFileId(photo)
+  return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w${size}` : null
+}
+
 function getDownloadUrl(photo: PhotoRecord): string | null {
-  if (photo.fileId && photo.fileId !== 'pending') return `https://drive.google.com/uc?export=download&id=${photo.fileId}`
-  return null
+  const id = getRealFileId(photo)
+  return id ? `https://drive.google.com/uc?export=download&id=${id}` : null
+}
+
+/** True si la foto es una nota de solo texto (sin imagen) */
+function isTextNote(photo: PhotoRecord): boolean {
+  return photo.fileId === 'note' || (getRealFileId(photo) === null && !!photo.comment)
 }
 
 export function SharePage() {
@@ -116,20 +133,41 @@ export function SharePage() {
           </span>
         </div>
 
-        {/* Fotos generales */}
-        {operation.photos.length > 0 && (
-          <section className="space-y-3">
-            <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-              Fotos del registro ({operation.photos.length})
-            </h4>
-            <div className="grid grid-cols-2 gap-2">
-              {operation.photos.map((photo, i) => (
-                <PhotoCard key={i} photo={photo} onClick={() => { setLightboxAll(operation.photos); setLightboxIdx(i); setLightboxPhoto(photo) }} />
-              ))}
-            </div>
-          </section>
-        )}
+        {/* Fotos generales (excluye notas de texto) */}
+        {(() => {
+          const realPhotos = operation.photos.filter((p) => !isTextNote(p))
+          const notes = operation.photos.filter((p) => isTextNote(p))
+          return (
+            <>
+              {realPhotos.length > 0 && (
+                <section className="space-y-3">
+                  <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                    Fotos del registro ({realPhotos.length})
+                  </h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    {realPhotos.map((photo, i) => (
+                      <PhotoCard key={i} photo={photo} onClick={() => { setLightboxAll(realPhotos); setLightboxIdx(i); setLightboxPhoto(photo) }} />
+                    ))}
+                  </div>
+                </section>
+              )}
+              {notes.length > 0 && (
+                <section className="space-y-2">
+                  <h4 className="text-sm font-semibold text-gray-700">Notas</h4>
+                  {notes.map((note, i) => (
+                    <div key={i} className="p-3 rounded-xl bg-white border border-gray-200 text-sm text-gray-700">
+                      <span className="block">{note.comment}</span>
+                      <span className="text-[10px] text-gray-400 mt-1 block">
+                        {new Date(note.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </section>
+              )}
+            </>
+          )
+        })()}
 
         {/* Productos con fotos */}
         {(operation.lineaBlanca ?? []).length > 0 && (
@@ -151,7 +189,11 @@ export function SharePage() {
                           onClick={() => { setLightboxAll(product.photos); setLightboxIdx(idx); setLightboxPhoto(ph) }}>
                           {url && (
                             <img src={url} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" loading="lazy"
-                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                              onError={(e) => {
+                                const img = e.target as HTMLImageElement
+                                const fb = getDriveThumbUrl(ph, 400)
+                                if (fb && img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
+                              }} />
                           )}
                           {isLast && (
                             <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
@@ -258,6 +300,11 @@ export function SharePage() {
           <div className="flex-1 flex items-center justify-center p-4 relative" onClick={(e) => e.stopPropagation()}>
             {getDriveImageUrl(lightboxPhoto, 1200) && (
               <img src={getDriveImageUrl(lightboxPhoto, 1200)!} alt="Foto"
+                onError={(e) => {
+                  const img = e.target as HTMLImageElement
+                  const fb = getDriveThumbUrl(lightboxPhoto, 1200)
+                  if (fb && img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
+                }}
                 className="max-w-full max-h-[80vh] object-contain rounded" />
             )}
             {/* Nav arrows */}
@@ -294,7 +341,11 @@ function PhotoCard({ photo, onClick }: { photo: PhotoRecord; onClick?: () => voi
       <div className="aspect-[4/3] bg-gray-100 relative">
         {url ? (
           <img src={url} alt={title} className="w-full h-full object-cover" loading="lazy"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+            onError={(e) => {
+              const img = e.target as HTMLImageElement
+              const fb = getDriveThumbUrl(photo)
+              if (fb && img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
+            }} />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <Camera className="w-6 h-6 text-gray-300" />
