@@ -327,6 +327,16 @@ export function WizardPage() {
     ? lbProducts.some((p) => p.productCode.toLowerCase() === lbProductCode.trim().toLowerCase())
     : false
 
+  // ¿El código exacto ya existe en OTRA operación de la empresa? (coincidencia exacta en resultados)
+  const duplicateInOtherOp = lbProductCode.trim()
+    ? productMatches.find(
+        (m) => m.productCode.toLowerCase() === lbProductCode.trim().toLowerCase() && m.trackingCode !== trackingCode,
+      )
+    : undefined
+
+  // Se bloquea la creación si el código ya existe en esta u otra operación
+  const codeDuplicated = existsInThisOperation || Boolean(duplicateInOtherOp)
+
   // ── Línea Blanca ──
   const handleAddProduct = async (code: string) => {
     if (!trackingCode || !code.trim()) return
@@ -1011,6 +1021,14 @@ export function WizardPage() {
                 </div>
               )}
 
+              {/* Estado: código duplicado en OTRA operación */}
+              {!existsInThisOperation && duplicateInOtherOp && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-700 text-xs">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                  Este código ya existe en la operación {duplicateInOtherOp.trackingCode}. Debe ser único.
+                </div>
+              )}
+
               {/* Resultados de búsqueda de productos existentes */}
               {lbProductCode.trim().length >= 2 && (
                 <div className="space-y-1.5">
@@ -1041,10 +1059,10 @@ export function WizardPage() {
               )}
 
               <button onClick={() => { setShowAddProductModal(false); void handleAddProduct(lbProductCode) }}
-                disabled={!lbProductCode.trim() || lbAdding || existsInThisOperation}
+                disabled={!lbProductCode.trim() || lbAdding || codeDuplicated}
                 className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
                 {lbAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                {existsInThisOperation ? 'Ya existe en esta operación' : 'Crear producto (sin foto)'}
+                {existsInThisOperation ? 'Ya existe en esta operación' : duplicateInOtherOp ? 'Código ya usado en otra operación' : 'Crear producto (sin foto)'}
               </button>
               <p className="text-[10px] text-gray-400 text-center">
                 Puedes crear el producto sin foto y agregar las fotos después.
