@@ -66,6 +66,11 @@ export function WizardPage() {
   const [showPlusMenu, setShowPlusMenu] = useState(false)
   const [showAddProductModal, setShowAddProductModal] = useState(false)
 
+  // Búsqueda de productos existentes (para saber si ya existe)
+  interface ProductMatch { productCode: string; descripcion?: string; photosCount: number; trackingCode: string; operationType: string }
+  const [productMatches, setProductMatches] = useState<ProductMatch[]>([])
+  const [productSearching, setProductSearching] = useState(false)
+
   // Link product to another operation
   const [linkProductCode, setLinkProductCode] = useState<string | null>(null)
   const [linkSearch, setLinkSearch] = useState('')
@@ -198,6 +203,8 @@ export function WizardPage() {
     e.target.value = '' // reset para permitir volver a elegir la misma imagen
     if (files.length === 0) return
 
+    // Captura el producto activo AHORA para evitar condiciones de carrera si cambia después
+    const targetProduct = isProduct ? activeLbProduct ?? undefined : undefined
     const comment = chatMessage.trim()
     setChatMessage('')
     setFeedback(files.length > 1 ? `✓ Subiendo ${files.length} fotos...` : '✓ Foto guardada')
@@ -206,7 +213,7 @@ export function WizardPage() {
       try {
         const base64 = await fileToBase64(files[i])
         // El comentario solo se aplica a la primera foto
-        await uploadSinglePhoto(base64, i === 0 ? comment : '', isProduct)
+        await uploadSinglePhoto(base64, i === 0 ? comment : '', isProduct, targetProduct)
       } catch {
         setFeedback('Error al leer una imagen')
       }
@@ -292,6 +299,34 @@ export function WizardPage() {
     }
   }
 
+  // ── Buscar productos existentes por código o nombre ──
+  const searchProducts = async (query: string) => {
+    const q = query.trim()
+    if (q.length < 2) { setProductMatches([]); return }
+    setProductSearching(true)
+    try {
+      const params = new URLSearchParams()
+      params.set('q', q)
+      if (operation?.companyId) params.set('companyId', operation.companyId)
+      const res = await apiRequest<{ products: ProductMatch[] }>(`/operations/search-products?${params.toString()}`)
+      setProductMatches(res.products)
+    } catch { setProductMatches([]) }
+    finally { setProductSearching(false) }
+  }
+
+  // Debounce de la búsqueda mientras se escribe el código del producto
+  useEffect(() => {
+    if (!showAddProductModal) return
+    const t = setTimeout(() => { void searchProducts(lbProductCode) }, 350)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lbProductCode, showAddProductModal])
+
+  // ¿El código escrito ya existe en ESTA operación?
+  const existsInThisOperation = lbProductCode.trim()
+    ? lbProducts.some((p) => p.productCode.toLowerCase() === lbProductCode.trim().toLowerCase())
+    : false
+
   // ── Línea Blanca ──
   const handleAddProduct = async (code: string) => {
     if (!trackingCode || !code.trim()) return
@@ -305,8 +340,9 @@ export function WizardPage() {
       setLbProductCode('')
       setLbLabelData(null)
       setLbIsLineaBlanca(false)
+      setProductMatches([])
       await loadOperation()
-      setFeedback(`✓ Producto ${code.trim()} agregado`)
+      setFeedback(`✓ Producto ${code.trim()} agregado. Ya puedes añadir fotos.`)
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error.')
     } finally {
@@ -636,20 +672,27 @@ export function WizardPage() {
 
                     {/* Text content */}
                     <div className="px-2.5 py-1.5">
-                      {/* Product name — tap to edit */}
-                      <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
+                      {/* Product name — tap to expand/collapse (agregar fotos) */}
+                      <button onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
                         className="text-left w-full">
                         <span className="text-[13px] font-bold text-[var(--color-primary)]">{product.productCode}</span>
                         {desc && <span className="text-[12.5px] text-gray-800 block">{desc}</span>}
                       </button>
-                      {/* Time + status */}
-                      <div className="flex items-center justify-end gap-1 mt-0.5">
-                        <span className="text-[10px] text-gray-500">{createdTime}</span>
-                        {photos.some((p) => p.fileId === 'pending') ? (
-                          <span className="text-[10px] text-gray-400">🕐</span>
-                        ) : (
-                          <CheckCircle2 className="w-3 h-3 text-[var(--color-primary)]" />
-                        )}
+                      {/* Time + status + toggle para agregar fotos */}
+                      <div className="flex items-center justify-between gap-1 mt-0.5">
+                        <button onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
+                          className="text-[10px] font-medium text-[var(--color-primary)] flex items-center gap-1">
+                          <Camera className="w-3 h-3" />
+                          {photos.length === 0 ? 'Agregar fotos' : isActive ? 'Ocultar' : `${photos.length} foto(s)`}
+                        </button>
+                        <div className="flex items-center gap-1">
+                          <span className="text-[10px] text-gray-500">{createdTime}</span>
+                          {photos.some((p) => p.fileId === 'pending') ? (
+                            <span className="text-[10px] text-gray-400">🕐</span>
+                          ) : photos.length > 0 ? (
+                            <CheckCircle2 className="w-3 h-3 text-[var(--color-primary)]" />
+                          ) : null}
+                        </div>
                       </div>
                     </div>
 
@@ -740,13 +783,13 @@ export function WizardPage() {
                         <div className="flex items-center gap-2 pt-1">
                           <label className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                             <Camera className="w-3.5 h-3.5" /> Foto
-                            <input type="file" accept="image/*" capture="environment" className="hidden"
-                              disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
+                            <input type="file" accept="image/*" capture="environment" multiple className="hidden"
+                              disabled={uploading} onChange={(e) => void handleNativeCapture(e, true)} />
                           </label>
                           <label className="flex-1 py-2 rounded-lg border border-[#075e54] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                             📁 Galería
-                            <input ref={lbFileInputRef} type="file" accept="image/*" className="hidden"
-                              disabled={uploading} onChange={(e) => handleNativeCapture(e, true)} />
+                            <input ref={lbFileInputRef} type="file" accept="image/*" multiple className="hidden"
+                              disabled={uploading} onChange={(e) => void handleNativeCapture(e, true)} />
                           </label>
                           <button onClick={() => { setLinkProductCode(product.productCode); void searchForLink('') }}
                             className="px-3 py-2 rounded-lg bg-blue-50 text-blue-600 text-xs font-medium">
@@ -943,12 +986,53 @@ export function WizardPage() {
                   <QrCode className="w-5 h-5" />
                 </button>
               </div>
+
+              {/* Estado: ya existe en esta operación */}
+              {existsInThisOperation && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 text-amber-700 text-xs">
+                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                  Ya existe un producto con ese código en esta operación.
+                </div>
+              )}
+
+              {/* Resultados de búsqueda de productos existentes */}
+              {lbProductCode.trim().length >= 2 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-500 uppercase">
+                    {productSearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                    {productSearching ? 'Buscando...' : productMatches.length > 0 ? `Productos existentes (${productMatches.length})` : 'Sin coincidencias'}
+                  </div>
+                  {productMatches.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto space-y-1 rounded-lg border border-gray-100 p-1">
+                      {productMatches.map((m, i) => (
+                        <div key={`${m.trackingCode}-${m.productCode}-${i}`}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded bg-gray-50">
+                          <Package className="w-3.5 h-3.5 text-[var(--color-primary)] flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-gray-800 truncate">{m.productCode}</p>
+                            <p className="text-[10px] text-gray-500 truncate">
+                              {m.descripcion ? `${m.descripcion} · ` : ''}{m.trackingCode} · {m.photosCount} foto(s)
+                            </p>
+                          </div>
+                          {m.trackingCode === trackingCode
+                            ? <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 flex-shrink-0">aquí</span>
+                            : <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 flex-shrink-0">otra op.</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <button onClick={() => { setShowAddProductModal(false); void handleAddProduct(lbProductCode) }}
-                disabled={!lbProductCode.trim() || lbAdding}
+                disabled={!lbProductCode.trim() || lbAdding || existsInThisOperation}
                 className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
                 {lbAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                Agregar
+                {existsInThisOperation ? 'Ya existe en esta operación' : 'Crear producto (sin foto)'}
               </button>
+              <p className="text-[10px] text-gray-400 text-center">
+                Puedes crear el producto sin foto y agregar las fotos después.
+              </p>
             </div>
           </div>
         </div>
