@@ -137,6 +137,62 @@ operationsRouter.get('/search-for-link', async (req, res) => {
 })
 
 /**
+ * GET /api/operations/search-products
+ * Busca productos existentes (por código o descripción) en las operaciones de la empresa.
+ * Query: ?q=texto&companyId=XXX
+ * Devuelve coincidencias con la operación donde están.
+ */
+operationsRouter.get('/search-products', async (req, res) => {
+  const { q, companyId } = req.query as Record<string, string>
+  const query = (q ?? '').trim()
+
+  if (!query) { res.json({ products: [] }); return }
+
+  try {
+    const col = getOperationsCollection()
+    const filter: Record<string, unknown> = {}
+    if (companyId) filter.companyId = companyId
+
+    // Trae operaciones recientes de la empresa y filtra productos en memoria
+    const operations = await col.find(filter).sort({ createdAt: -1 }).limit(200).toArray()
+
+    const lower = query.toLowerCase()
+    const results: Array<{
+      productCode: string
+      descripcion?: string
+      photosCount: number
+      trackingCode: string
+      operationType: string
+      createdAt?: string
+    }> = []
+
+    for (const op of operations) {
+      const products = (op.lineaBlanca as LineaBlancaProduct[]) ?? []
+      for (const p of products) {
+        const code = (p.productCode ?? '').toLowerCase()
+        const desc = (p.labelData?.descripcion ?? '').toLowerCase()
+        if (code.includes(lower) || desc.includes(lower)) {
+          results.push({
+            productCode: p.productCode,
+            descripcion: p.labelData?.descripcion,
+            photosCount: p.photos?.length ?? 0,
+            trackingCode: op.trackingCode as string,
+            operationType: op.operationType as string,
+            createdAt: p.createdAt as string | undefined,
+          })
+        }
+      }
+      if (results.length >= 20) break
+    }
+
+    res.json({ products: results.slice(0, 20) })
+  } catch (err) {
+    console.error('[operations] Error al buscar productos:', err)
+    res.status(500).json({ message: 'Error al buscar productos.' })
+  }
+})
+
+/**
  * GET /api/operations/:trackingCode
  * Obtiene una operación por su código de tracking.
  */
