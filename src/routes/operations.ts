@@ -249,10 +249,30 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
       return
     }
 
-    // Verifica que no exista ya un producto con ese código
+    const code = productCode.trim()
+
+    // Verifica que no exista ya un producto con ese código en ESTA operación
     const existing = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
-    if (existing.some((p) => p.productCode === productCode.trim())) {
-      res.status(409).json({ message: `El producto "${productCode.trim()}" ya está registrado en esta operación.` })
+    if (existing.some((p) => p.productCode.toLowerCase() === code.toLowerCase())) {
+      res.status(409).json({ message: `El producto "${code}" ya está registrado en esta operación.` })
+      return
+    }
+
+    // Unicidad GLOBAL por empresa: el código no puede existir en NINGUNA otra operación
+    // de la misma empresa (comparación insensible a mayúsculas/minúsculas).
+    const companyId = operation.companyId as string | undefined
+    const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const dupFilter: Record<string, unknown> = {
+      trackingCode: { $ne: trackingCode },
+      'lineaBlanca.productCode': { $regex: `^${escaped}$`, $options: 'i' },
+    }
+    if (companyId) dupFilter.companyId = companyId
+    const duplicate = await col.findOne(dupFilter)
+    if (duplicate) {
+      res.status(409).json({
+        message: `El código "${code}" ya existe en la operación ${duplicate.trackingCode}. Usa un código diferente.`,
+        existingTrackingCode: duplicate.trackingCode,
+      })
       return
     }
 
@@ -861,8 +881,22 @@ operationsRouter.patch('/:trackingCode/linea-blanca/:productCode/rename', async 
     const productIdx = products.findIndex((p) => p.productCode === productCode)
     if (productIdx === -1) { res.status(404).json({ message: `Producto "${productCode}" no encontrado.` }); return }
 
-    if (products.some((p) => p.productCode === newCode)) {
+    if (products.some((p) => p.productCode.toLowerCase() === newCode.toLowerCase())) {
       res.status(409).json({ message: `Ya existe un producto con código "${newCode}" en esta operación.` })
+      return
+    }
+
+    // Unicidad GLOBAL por empresa: el nuevo código no puede existir en otra operación
+    const companyId = operation.companyId as string | undefined
+    const escaped = newCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const dupFilter: Record<string, unknown> = {
+      trackingCode: { $ne: trackingCode },
+      'lineaBlanca.productCode': { $regex: `^${escaped}$`, $options: 'i' },
+    }
+    if (companyId) dupFilter.companyId = companyId
+    const duplicate = await col.findOne(dupFilter)
+    if (duplicate) {
+      res.status(409).json({ message: `El código "${newCode}" ya existe en la operación ${duplicate.trackingCode}.` })
       return
     }
 
