@@ -160,6 +160,42 @@ photosRouter.post('/upload', async (req, res) => {
 })
 
 /**
+ * POST /api/photos/note
+ * Agrega un comentario/nota sin imagen al registro (mensaje de solo texto).
+ */
+photosRouter.post('/note', async (req, res) => {
+  const { trackingCode, comment } = req.body ?? {}
+  if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
+  if (!comment?.trim()) { res.status(400).json({ message: 'comment es requerido.' }); return }
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const noteRecord: PhotoRecord = {
+      stepIndex: 0,
+      stepName: 'Nota',
+      driveUrl: '',
+      fileId: 'note',
+      comment: comment.trim(),
+      photoType: 'proceso',
+      timestamp: new Date().toISOString(),
+    }
+
+    await col.updateOne(
+      { trackingCode },
+      { $push: { photos: noteRecord }, $set: { updatedAt: new Date().toISOString() } } as unknown as Record<string, unknown>,
+    )
+
+    res.json({ message: 'Nota agregada.', photo: noteRecord })
+  } catch (err) {
+    console.error('[photos] Error al agregar nota:', err)
+    res.status(500).json({ message: 'Error al agregar la nota.' })
+  }
+})
+
+/**
  * POST /api/photos/sync/:trackingCode
  * Sincroniza fileIds desde Drive.
  * 
