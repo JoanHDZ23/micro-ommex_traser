@@ -7,6 +7,7 @@ import { HistoryPage } from './pages/HistoryPage'
 import { OperationDetailPage } from './pages/OperationDetailPage'
 import { SharePage } from './pages/SharePage'
 import { SettingsPage } from './pages/SettingsPage'
+import { ProductsCatalogPage } from './pages/ProductsCatalogPage'
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/new" element={<NewOperationPage />} />
           <Route path="/wizard/:trackingCode" element={<WizardPage />} />
           <Route path="/history" element={<HistoryPage />} />
+          <Route path="/products" element={<ProductsCatalogPage />} />
           <Route path="/operation/:trackingCode" element={<OperationDetailPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Settings } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Package, Settings } from 'lucide-react'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 
 const HOME_GUIDE: GuideStep[] = [
@@ -67,6 +67,18 @@ export function HomePage() {
         <div className="flex items-center gap-3">
           <ClipboardList className="w-5 h-5 text-[var(--color-text-3)]" />
           <span className="text-sm font-medium text-[var(--color-text)]">Ver historial de operaciones</span>
+        </div>
+        <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
+      </button>
+
+      {/* Products catalog link */}
+      <button
+        onClick={() => navigate('/products')}
+        className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-surface)] rounded-[var(--radius)] border border-[var(--color-border)] hover:shadow-sm transition-shadow"
+      >
+        <div className="flex items-center gap-3">
+          <Package className="w-5 h-5 text-[var(--color-text-3)]" />
+          <span className="text-sm font-medium text-[var(--color-text)]">Ver productos registrados</span>
         </div>
         <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
       </button>
