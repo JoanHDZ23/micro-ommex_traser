@@ -145,8 +145,9 @@ operationsRouter.get('/search-for-link', async (req, res) => {
 operationsRouter.get('/search-products', async (req, res) => {
   const { q, companyId } = req.query as Record<string, string>
   const query = (q ?? '').trim()
-
-  if (!query) { res.json({ products: [] }); return }
+  const lower = query.toLowerCase()
+  // Sin query: devuelve la lista de productos recientes (para autocompletado)
+  const listAll = query.length === 0
 
   try {
     const col = getOperationsCollection()
@@ -156,7 +157,6 @@ operationsRouter.get('/search-products', async (req, res) => {
     // Trae operaciones recientes de la empresa y filtra productos en memoria
     const operations = await col.find(filter).sort({ createdAt: -1 }).limit(200).toArray()
 
-    const lower = query.toLowerCase()
     const results: Array<{
       productCode: string
       descripcion?: string
@@ -165,27 +165,31 @@ operationsRouter.get('/search-products', async (req, res) => {
       operationType: string
       createdAt?: string
     }> = []
+    const seen = new Set<string>()
 
     for (const op of operations) {
       const products = (op.lineaBlanca as LineaBlancaProduct[]) ?? []
       for (const p of products) {
         const code = (p.productCode ?? '').toLowerCase()
         const desc = (p.labelData?.descripcion ?? '').toLowerCase()
-        if (code.includes(lower) || desc.includes(lower)) {
-          results.push({
-            productCode: p.productCode,
-            descripcion: p.labelData?.descripcion,
-            photosCount: p.photos?.length ?? 0,
-            trackingCode: op.trackingCode as string,
-            operationType: op.operationType as string,
-            createdAt: p.createdAt as string | undefined,
-          })
-        }
+        const matches = listAll || code.includes(lower) || desc.includes(lower)
+        if (!matches) continue
+        // Evita duplicar el mismo código en el autocompletado
+        if (listAll && seen.has(code)) continue
+        seen.add(code)
+        results.push({
+          productCode: p.productCode,
+          descripcion: p.labelData?.descripcion,
+          photosCount: p.photos?.length ?? 0,
+          trackingCode: op.trackingCode as string,
+          operationType: op.operationType as string,
+          createdAt: p.createdAt as string | undefined,
+        })
       }
-      if (results.length >= 20) break
+      if (results.length >= (listAll ? 100 : 20)) break
     }
 
-    res.json({ products: results.slice(0, 20) })
+    res.json({ products: results.slice(0, listAll ? 100 : 20) })
   } catch (err) {
     console.error('[operations] Error al buscar productos:', err)
     res.status(500).json({ message: 'Error al buscar productos.' })
