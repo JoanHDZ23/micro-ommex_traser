@@ -1,4 +1,4 @@
-import { createWorker } from 'tesseract.js'
+import { createWorker, PSM } from 'tesseract.js'
 
 let worker: Awaited<ReturnType<typeof createWorker>> | null = null
 
@@ -16,48 +16,82 @@ async function getWorker() {
   return worker
 }
 
+/** Calcula el umbral óptimo con el método de Otsu a partir del histograma de grises */
+function otsuThreshold(histogram: number[], total: number): number {
+  let sum = 0
+  for (let i = 0; i < 256; i++) sum += i * histogram[i]
+  let sumB = 0
+  let wB = 0
+  let maxVar = 0
+  let threshold = 127
+  for (let t = 0; t < 256; t++) {
+    wB += histogram[t]
+    if (wB === 0) continue
+    const wF = total - wB
+    if (wF === 0) break
+    sumB += t * histogram[t]
+    const mB = sumB / wB
+    const mF = (sum - sumB) / wF
+    const between = wB * wF * (mB - mF) * (mB - mF)
+    if (between > maxVar) { maxVar = between; threshold = t }
+  }
+  return threshold
+}
+
 /**
- * Preprocesa la imagen para mejorar OCR en etiquetas de cualquier color.
- * 1. Recorta al centro (donde está el texto — ignora bordes)
- * 2. Convierte a escala de grises + umbral binario
+ * Preprocesa la imagen para maximizar la nitidez del texto en el OCR:
+ * 1. Escala (upscale) para que las letras pequeñas tengan más píxeles.
+ * 2. Escala de grises + aumento de contraste.
+ * 3. Umbral binario ADAPTATIVO (Otsu), que se ajusta a la iluminación real
+ *    en vez de un valor fijo — capta las letras con más detalle.
+ * No recorta la imagen para no perder texto en los bordes.
  */
 function preprocessImage(imageData: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => {
+      // Escala para que el lado mayor tenga al menos ~2000px (más detalle en letras)
+      const target = 2000
+      const scale = Math.max(1, target / Math.max(img.width, img.height))
+      const w = Math.round(img.width * scale)
+      const h = Math.round(img.height * scale)
+
       const canvas = document.createElement('canvas')
-
-      // Recortar al 80% central (horizontal) y 70% central (vertical)
-      const cropX = Math.floor(img.width * 0.1)
-      const cropY = Math.floor(img.height * 0.15)
-      const cropW = Math.floor(img.width * 0.8)
-      const cropH = Math.floor(img.height * 0.7)
-
-      canvas.width = cropW
-      canvas.height = cropH
+      canvas.width = w
+      canvas.height = h
       const ctx = canvas.getContext('2d')!
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
+      ctx.drawImage(img, 0, 0, w, h)
 
-      // Dibuja solo la porción central
-      ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
-
-      // Obtiene los pixels
-      const imageDataObj = ctx.getImageData(0, 0, canvas.width, canvas.height)
+      const imageDataObj = ctx.getImageData(0, 0, w, h)
       const data = imageDataObj.data
 
-      // Convierte a escala de grises + threshold binario
-      for (let i = 0; i < data.length; i += 4) {
-        // Escala de grises ponderada (percepción humana)
-        const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
+      // 1) Escala de grises + histograma + aumento de contraste
+      const gray = new Uint8ClampedArray(data.length / 4)
+      const histogram = new Array(256).fill(0)
+      // Contraste (factor); >1 acentúa la diferencia texto/fondo
+      const contrast = 1.35
+      const intercept = 128 * (1 - contrast)
+      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        let g = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
+        g = g * contrast + intercept
+        g = g < 0 ? 0 : g > 255 ? 255 : g
+        const gi = g | 0
+        gray[p] = gi
+        histogram[gi]++
+      }
 
-        // Umbral: texto oscuro → negro (0), fondo claro → blanco (255)
-        // Threshold 120 para etiquetas de colores (amarilla, rosada, azul, blanca)
-        const bw = gray < 120 ? 0 : 255
+      // 2) Umbral adaptativo con Otsu
+      const threshold = otsuThreshold(histogram, gray.length)
 
-        data[i] = bw      // R
-        data[i + 1] = bw  // G
-        data[i + 2] = bw  // B
-        // Alpha se mantiene
+      // 3) Binariza
+      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        const bw = gray[p] < threshold ? 0 : 255
+        data[i] = bw
+        data[i + 1] = bw
+        data[i + 2] = bw
       }
 
       ctx.putImageData(imageDataObj, 0, 0)
@@ -80,13 +114,21 @@ export async function extractTextFromLabel(imageBase64: string): Promise<string>
     ? imageBase64
     : `data:image/jpeg;base64,${imageBase64}`
 
-  // Preprocesa: escala de grises + threshold binario
+  // Preprocesa: upscale + contraste + threshold adaptativo (Otsu)
   const processed = await preprocessImage(dataUrl)
 
   // OCR con Tesseract
   const w = await getWorker()
-  const { data } = await w.recognize(processed)
+  try {
+    // PSM 6 = bloque uniforme de texto; DPI alto ayuda con letras pequeñas
+    await w.setParameters({
+      tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+      preserve_interword_spaces: '1',
+      user_defined_dpi: '300',
+    })
+  } catch { /* algunos builds no soportan setParameters, se ignora */ }
 
+  const { data } = await w.recognize(processed)
   return data.text
 }
 

@@ -71,6 +71,8 @@ export function WizardPage() {
   interface ProductMatch { productCode: string; descripcion?: string; photosCount: number; trackingCode: string; operationType: string }
   const [productMatches, setProductMatches] = useState<ProductMatch[]>([])
   const [productSearching, setProductSearching] = useState(false)
+  // Lista completa de productos de la empresa (para autocompletado)
+  const [allProducts, setAllProducts] = useState<ProductMatch[]>([])
 
   // Link product to another operation
   const [linkProductCode, setLinkProductCode] = useState<string | null>(null)
@@ -314,6 +316,17 @@ export function WizardPage() {
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lbProductCode, showAddProductModal])
+
+  // Carga la lista completa de productos (para el autocompletado) al abrir el modal
+  useEffect(() => {
+    if (!showAddProductModal) return
+    const params = new URLSearchParams()
+    if (operation?.companyId) params.set('companyId', operation.companyId)
+    void apiRequest<{ products: ProductMatch[] }>(`/operations/search-products?${params.toString()}`)
+      .then((r) => setAllProducts(r.products))
+      .catch(() => { /* sin productos */ })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAddProductModal])
 
   // ¿El código escrito ya existe en ESTA operación?
   const existsInThisOperation = lbProductCode.trim()
@@ -1051,10 +1064,17 @@ export function WizardPage() {
             </div>
             <div className="space-y-3">
               <div className="flex gap-2">
-                <input type="text" value={lbProductCode} onChange={(e) => setLbProductCode(e.target.value)}
+                <input type="text" list="product-codes-list" value={lbProductCode} onChange={(e) => setLbProductCode(e.target.value)}
                   placeholder="Código o nombre del producto..."
                   className="flex-1 px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
                   autoFocus />
+                <datalist id="product-codes-list">
+                  {allProducts.map((p, i) => (
+                    <option key={`${p.productCode}-${i}`} value={p.productCode}>
+                      {p.descripcion ? `${p.descripcion} · ${p.trackingCode}` : p.trackingCode}
+                    </option>
+                  ))}
+                </datalist>
                 <button onClick={() => { setShowAddProductModal(false); setShowScanner(true) }}
                   className="px-3 py-2.5 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
                   <QrCode className="w-5 h-5" />
