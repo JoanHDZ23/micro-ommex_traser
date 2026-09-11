@@ -6,6 +6,7 @@ import { CameraCapture } from '../components/CameraCapture'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
+import { compressImageToBase64 } from '../lib/image-compress'
 
 const WIZARD_GUIDE: GuideStep[] = [
   {
@@ -155,15 +156,6 @@ export function WizardPage() {
   // File picker refs
   const lbFileInputRef = useRef<HTMLInputElement>(null)
 
-  /** Lee un File y devuelve su base64 (sin el prefijo data:) */
-  const fileToBase64 = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve((reader.result as string).split(',')[1] ?? '')
-      reader.onerror = () => reject(new Error('No se pudo leer la imagen'))
-      reader.readAsDataURL(file)
-    })
-
   /** Sube una sola foto: cachea local y sube a Drive en background */
   const uploadSinglePhoto = async (base64: string, comment: string, isProduct: boolean, productCodeArg?: string) => {
     if (!base64 || !trackingCode) return
@@ -207,11 +199,12 @@ export function WizardPage() {
     const targetProduct = isProduct ? productCodeArg ?? activeLbProduct ?? undefined : undefined
     const comment = chatMessage.trim()
     setChatMessage('')
-    setFeedback(files.length > 1 ? `✓ Subiendo ${files.length} fotos...` : '✓ Foto guardada')
+    setFeedback(files.length > 1 ? `✓ Procesando ${files.length} fotos...` : '✓ Foto guardada')
 
     for (let i = 0; i < files.length; i++) {
       try {
-        const base64 = await fileToBase64(files[i])
+        // Comprime/redimensiona en el cliente para que la subida sea mucho más rápida
+        const base64 = await compressImageToBase64(files[i])
         // El comentario solo se aplica a la primera foto
         await uploadSinglePhoto(base64, i === 0 ? comment : '', isProduct, targetProduct)
       } catch {

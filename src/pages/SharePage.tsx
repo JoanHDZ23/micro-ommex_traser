@@ -25,9 +25,40 @@ function getDriveThumbUrl(photo: PhotoRecord, size = 800): string | null {
   return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w${size}` : null
 }
 
-function getDownloadUrl(photo: PhotoRecord): string | null {
+/**
+ * Descarga real de la imagen: la trae como blob desde el CDN de Google (lh3),
+ * que permite CORS, y fuerza la descarga con un enlace temporal. Así se descarga
+ * directamente en vez de abrir el visor de Drive.
+ */
+async function downloadPhoto(photo: PhotoRecord, filename: string): Promise<void> {
   const id = getRealFileId(photo)
-  return id ? `https://drive.google.com/uc?export=download&id=${id}` : null
+  if (!id) return
+  // =s0 devuelve la imagen en su tamaño original
+  const sources = [
+    `https://lh3.googleusercontent.com/d/${id}=s0`,
+    `https://drive.google.com/thumbnail?id=${id}&sz=w2000`,
+  ]
+  for (const src of sources) {
+    try {
+      const resp = await fetch(src, { mode: 'cors' })
+      if (!resp.ok) continue
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 4000)
+      return
+    } catch {
+      /* prueba siguiente fuente */
+    }
+  }
+  // Último recurso: abre la URL de descarga de Drive en otra pestaña
+  const fallback = `https://drive.google.com/uc?export=download&id=${id}`
+  window.open(fallback, '_blank')
 }
 
 /** True si la foto es una nota de solo texto (sin imagen) */
@@ -201,11 +232,11 @@ export function SharePage() {
                             </div>
                           )}
                           {/* Download button per photo */}
-                          {getDownloadUrl(ph) && (
-                            <a href={getDownloadUrl(ph)!} target="_blank" rel="noopener noreferrer"
+                          {getRealFileId(ph) && (
+                            <button onClick={(e) => { e.stopPropagation(); void downloadPhoto(ph, `${product.productCode}_${idx + 1}.jpg`) }}
                               className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-black/40 flex items-center justify-center">
                               <Download className="w-3 h-3 text-white" />
-                            </a>
+                            </button>
                           )}
                         </div>
                       )
@@ -232,12 +263,12 @@ export function SharePage() {
                   <div className="flex items-center justify-between pt-1">
                     <span className="text-[10px] text-gray-400">{product.photos.length} fotos</span>
                     {/* Download all photos of this product */}
-                    {product.photos.length > 0 && product.photos.some((p) => p.fileId && p.fileId !== 'pending') && (
-                      <button onClick={() => {
-                        product.photos.forEach((ph) => {
-                          const dl = getDownloadUrl(ph)
-                          if (dl) window.open(dl, '_blank')
-                        })
+                    {product.photos.length > 0 && product.photos.some((p) => getRealFileId(p)) && (
+                      <button onClick={async () => {
+                        let n = 1
+                        for (const ph of product.photos) {
+                          if (getRealFileId(ph)) { await downloadPhoto(ph, `${product.productCode}_${n}.jpg`); n++ }
+                        }
                       }} className="text-[10px] text-[#075e54] font-medium flex items-center gap-1 hover:underline">
                         <Download className="w-3 h-3" /> Descargar todas
                       </button>
@@ -251,11 +282,11 @@ export function SharePage() {
 
         {/* Download all button */}
         {totalPhotos > 0 && (
-          <button onClick={() => {
-            allPhotos.forEach((ph) => {
-              const dl = getDownloadUrl(ph)
-              if (dl) window.open(dl, '_blank')
-            })
+          <button onClick={async () => {
+            let n = 1
+            for (const ph of allPhotos) {
+              if (getRealFileId(ph)) { await downloadPhoto(ph, `${operation.trackingCode}_${n}.jpg`); n++ }
+            }
           }} className="w-full py-3 rounded-xl bg-[#075e54] text-white font-semibold text-sm flex items-center justify-center gap-2">
             <Download className="w-4 h-4" /> Descargar todas las fotos ({totalPhotos})
           </button>
@@ -283,12 +314,11 @@ export function SharePage() {
               {lightboxPhoto.comment && <span className="text-sm block mt-0.5">{lightboxPhoto.comment}</span>}
             </div>
             <div className="flex items-center gap-2">
-              {getDownloadUrl(lightboxPhoto) && (
-                <a href={getDownloadUrl(lightboxPhoto)!} target="_blank" rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
+              {getRealFileId(lightboxPhoto) && (
+                <button onClick={(e) => { e.stopPropagation(); void downloadPhoto(lightboxPhoto, `${lightboxPhoto.productCode || lightboxPhoto.stepName || 'foto'}.jpg`) }}
                   className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
-                  <Download className="w-4 h-4" />
-                </a>
+                  <Download className="w-4 h-4 text-white" />
+                </button>
               )}
               <button className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
                 <X className="w-5 h-5" />
@@ -334,7 +364,7 @@ export function SharePage() {
 
 function PhotoCard({ photo, onClick }: { photo: PhotoRecord; onClick?: () => void }) {
   const url = getDriveImageUrl(photo)
-  const downloadUrl = getDownloadUrl(photo)
+  const canDownload = Boolean(getRealFileId(photo))
   const title = photo.comment || photo.stepName
   return (
     <div className="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm cursor-pointer" onClick={onClick}>
@@ -351,11 +381,11 @@ function PhotoCard({ photo, onClick }: { photo: PhotoRecord; onClick?: () => voi
             <Camera className="w-6 h-6 text-gray-300" />
           </div>
         )}
-        {downloadUrl && (
-          <a href={downloadUrl} target="_blank" rel="noopener noreferrer"
+        {canDownload && (
+          <button onClick={(e) => { e.stopPropagation(); void downloadPhoto(photo, `${title || 'foto'}.jpg`) }}
             className="absolute bottom-1.5 right-1.5 w-7 h-7 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
             <Download className="w-3.5 h-3.5 text-white" />
-          </a>
+          </button>
         )}
       </div>
       <div className="px-2.5 py-2">
