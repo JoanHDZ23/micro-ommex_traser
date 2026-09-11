@@ -495,6 +495,7 @@ export function WizardPage() {
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim()
+        .toUpperCase()
       if (text) {
         if (target === 'code') {
           setLbProductCode((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
@@ -1063,9 +1064,9 @@ export function WizardPage() {
             </div>
             <div className="space-y-3">
               <div className="flex gap-2">
-                <input type="text" list="product-codes-list" value={lbProductCode} onChange={(e) => setLbProductCode(e.target.value)}
-                  placeholder="Código o nombre del producto..."
-                  className="flex-1 px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                <input type="text" list="product-codes-list" value={lbProductCode} onChange={(e) => setLbProductCode(e.target.value.toUpperCase())}
+                  placeholder="CÓDIGO O NOMBRE DEL PRODUCTO..."
+                  className="flex-1 px-3 py-2.5 rounded-lg border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
                   autoFocus />
                 <datalist id="product-codes-list">
                   {allProducts.map((p, i) => (
@@ -1195,10 +1196,16 @@ export function WizardPage() {
 
             <div className="space-y-1">
               <label className="text-xs font-medium text-[var(--color-text-2)]">Nombre del producto</label>
-              <input type="text" value={scanObservation} onChange={(e) => setScanObservation(e.target.value)}
-                placeholder="Ej: NEVERA ELECTROLUX 522LB..."
-                className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" autoFocus />
+              <input type="text" value={scanObservation} onChange={(e) => setScanObservation(e.target.value.toUpperCase())}
+                placeholder="EJ: NEVERA ELECTROLUX 522LB..."
+                className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" autoFocus />
             </div>
+
+            {/* Volver a escanear el código de barras */}
+            <button onClick={() => { setScanConfirmOpen(false); setScanObservation(''); setScanCheck({ loading: false }); setShowScanner(true) }}
+              className="w-full py-2 rounded-lg border border-[var(--color-border)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-2">
+              <QrCode className="w-4 h-4" /> Volver a escanear código
+            </button>
 
             {/* Escanear el texto de la foto y escribirlo en el nombre */}
             <label className="w-full py-2.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-sm font-medium flex items-center justify-center gap-2 cursor-pointer">
@@ -1308,9 +1315,9 @@ export function WizardPage() {
               <input
                 type="text"
                 value={renameValue}
-                onChange={(e) => setRenameValue(e.target.value)}
-                placeholder="Ingresa el nuevo nombre..."
-                className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                onChange={(e) => setRenameValue(e.target.value.toUpperCase())}
+                placeholder="INGRESA EL NUEVO NOMBRE..."
+                className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
                 autoFocus
                 onKeyDown={(e) => { if (e.key === 'Enter') void handleRenameProduct(renamingProduct) }}
               />
