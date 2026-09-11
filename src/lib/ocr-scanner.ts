@@ -122,7 +122,8 @@ export async function extractTextFromLabel(imageBase64: string): Promise<string>
   try {
     // PSM 6 = bloque uniforme de texto; DPI alto ayuda con letras pequeñas
     await w.setParameters({
-      tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+      // AUTO: segmentación automática, mejor para leer TODO el texto de una etiqueta
+      tessedit_pageseg_mode: PSM.AUTO,
       preserve_interword_spaces: '1',
       user_defined_dpi: '300',
     })
