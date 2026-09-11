@@ -197,6 +197,74 @@ operationsRouter.get('/search-products', async (req, res) => {
 })
 
 /**
+ * GET /api/operations/products-catalog
+ * Catálogo de productos: agrupa por código y lista TODAS las operaciones
+ * (registros) donde cada producto está asignado.
+ * Query: ?companyId=XXX&q=texto
+ */
+operationsRouter.get('/products-catalog', async (req, res) => {
+  const { companyId, q } = req.query as Record<string, string>
+  const query = (q ?? '').trim().toLowerCase()
+
+  try {
+    const col = getOperationsCollection()
+    const filter: Record<string, unknown> = {}
+    if (companyId) filter.companyId = companyId
+
+    const operations = await col.find(filter).sort({ createdAt: -1 }).toArray()
+
+    // Agrupa por código de producto (case-insensitive)
+    const map = new Map<string, {
+      productCode: string
+      descripcion?: string
+      totalPhotos: number
+      assignments: Array<{
+        trackingCode: string
+        operationType: string
+        operatorName?: string
+        vehiclePlate?: string
+        status: string
+        photosCount: number
+        createdAt?: string
+      }>
+    }>()
+
+    for (const op of operations) {
+      const products = (op.lineaBlanca as LineaBlancaProduct[]) ?? []
+      for (const p of products) {
+        const key = p.productCode.toLowerCase()
+        if (query && !key.includes(query) && !(p.labelData?.descripcion ?? '').toLowerCase().includes(query)) continue
+        let entry = map.get(key)
+        if (!entry) {
+          entry = { productCode: p.productCode, descripcion: p.labelData?.descripcion, totalPhotos: 0, assignments: [] }
+          map.set(key, entry)
+        }
+        if (!entry.descripcion && p.labelData?.descripcion) entry.descripcion = p.labelData.descripcion
+        entry.totalPhotos += p.photos?.length ?? 0
+        entry.assignments.push({
+          trackingCode: op.trackingCode as string,
+          operationType: op.operationType as string,
+          operatorName: op.operatorName as string | undefined,
+          vehiclePlate: op.vehiclePlate as string | undefined,
+          status: op.status as string,
+          photosCount: p.photos?.length ?? 0,
+          createdAt: p.createdAt as string | undefined,
+        })
+      }
+    }
+
+    const products = Array.from(map.values())
+      .map((e) => ({ ...e, registrosCount: e.assignments.length }))
+      .sort((a, b) => a.productCode.localeCompare(b.productCode))
+
+    res.json({ products, total: products.length })
+  } catch (err) {
+    console.error('[operations] Error en catálogo de productos:', err)
+    res.status(500).json({ message: 'Error al obtener el catálogo de productos.' })
+  }
+})
+
+/**
  * GET /api/operations/:trackingCode
  * Obtiene una operación por su código de tracking.
  */
