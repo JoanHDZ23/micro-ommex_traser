@@ -157,13 +157,20 @@ export function NewOperationPage() {
             <div className="space-y-2">
               <input
                 type="text"
+                list="saved-plates-list"
                 value={form.vehiclePlate ?? ''}
                 onChange={(e) => setForm((f) => ({ ...f, vehiclePlate: e.target.value.toUpperCase() }))}
-                placeholder="Ej: ABC123"
+                placeholder="EJ: ABC123"
                 maxLength={10}
                 className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]"
                 autoComplete="off"
               />
+              {/* Autocompletado: sugiere placas ya ingresadas mientras se escribe */}
+              <datalist id="saved-plates-list">
+                {savedPlates.map((plate) => (
+                  <option key={plate} value={plate} />
+                ))}
+              </datalist>
               {/* Saved plates */}
               {savedPlates.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
