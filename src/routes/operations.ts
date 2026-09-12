@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { getOperationsCollection, getProductsCatalogCollection } from '../lib/mongodb.js'
 import { generateTrackingCode } from '../lib/tracking-code.js'
+import { uploadToDrive } from '../lib/drive-upload.js'
 import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
 
 export const operationsRouter = Router()
@@ -364,6 +365,86 @@ operationsRouter.patch('/products-catalog/:productCode', async (req, res) => {
 })
 
 /**
+ * POST /api/operations/products-catalog/:productCode/photo
+ * Sube una foto directamente al producto del catálogo (sin necesidad de un registro).
+ * Body: { companyId?, base64Image, mimeType?, comment? }
+ */
+operationsRouter.post('/products-catalog/:productCode/photo', async (req, res) => {
+  const { productCode } = req.params
+  const { companyId, base64Image, mimeType, comment } = req.body ?? {}
+  const code = productCode.trim()
+  if (!base64Image) { res.status(400).json({ message: 'base64Image es requerido.' }); return }
+
+  try {
+    const catalog = getProductsCatalogCollection()
+    let entry = await catalog.findOne({ companyId: companyId ?? null, productCodeLower: code.toLowerCase() })
+    // Si no existe en el catálogo, lo crea (origen catalog)
+    if (!entry) {
+      await upsertCatalogProduct(companyId, code, undefined, 'catalog')
+      entry = await catalog.findOne({ companyId: companyId ?? null, productCodeLower: code.toLowerCase() })
+      if (!entry) { res.status(500).json({ message: 'No se pudo crear el producto en el catálogo.' }); return }
+    }
+
+    const cleanCode = code.replace(/[^a-zA-Z0-9]/g, '_')
+    const existing = (entry.photos as Array<unknown> | undefined)?.length ?? 0
+    const fileName = `CATALOGO_${cleanCode}_${existing + 1}.jpg`
+
+    const driveResult = await uploadToDrive({
+      base64Image,
+      fileName,
+      mimeType: mimeType || 'image/jpeg',
+      subfolderName: 'CATALOGO_PRODUCTOS',
+      subSubfolderName: code,
+      companyId: companyId as string | undefined,
+    })
+
+    let fileId = driveResult.fileId ?? ''
+    let driveUrl = driveResult.driveUrl ?? ''
+    if (driveResult.status === 'error') {
+      if ((driveResult.message ?? '').includes('no configurado')) { res.status(502).json({ message: 'GAS_WEBHOOK_URL no configurado.' }); return }
+      fileId = fileId || 'pending'
+      driveUrl = driveUrl || 'pending-verification'
+    }
+
+    const photo = { fileId, driveUrl, comment: comment?.trim() || undefined, timestamp: new Date().toISOString() }
+    await catalog.updateOne({ _id: entry._id }, { $push: { photos: photo } } as unknown as Record<string, unknown>)
+
+    res.json({ message: 'Foto agregada al producto.', photo })
+  } catch (err) {
+    console.error('[operations] Error al subir foto al catálogo:', err)
+    res.status(500).json({ message: 'Error al subir la foto.' })
+  }
+})
+
+/**
+ * DELETE /api/operations/products-catalog/:productCode/photo/:photoIndex
+ * Elimina una foto propia del producto del catálogo.
+ * Query: ?companyId=XXX
+ */
+operationsRouter.delete('/products-catalog/:productCode/photo/:photoIndex', async (req, res) => {
+  const { productCode, photoIndex } = req.params
+  const { companyId } = req.query as Record<string, string>
+  const idx = Number(photoIndex)
+  const code = productCode.trim()
+
+  try {
+    const catalog = getProductsCatalogCollection()
+    const entry = await catalog.findOne({ companyId: companyId ?? null, productCodeLower: code.toLowerCase() })
+    if (!entry) { res.status(404).json({ message: 'Producto no encontrado en el catálogo.' }); return }
+
+    const photos = (entry.photos as Array<{ fileId: string }> | undefined) ?? []
+    if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
+
+    photos.splice(idx, 1)
+    await catalog.updateOne({ _id: entry._id }, { $set: { photos } })
+    res.json({ message: 'Foto eliminada.', remaining: photos.length })
+  } catch (err) {
+    console.error('[operations] Error al eliminar foto del catálogo:', err)
+    res.status(500).json({ message: 'Error al eliminar la foto.' })
+  }
+})
+
+/**
  * GET /api/operations/products-catalog
  * Catálogo de productos: combina el catálogo maestro (incluye productos sin registro)
  * con las operaciones (registros) donde cada producto está asignado.
@@ -385,6 +466,7 @@ operationsRouter.get('/products-catalog', async (req, res) => {
       productCode: string
       descripcion?: string
       totalPhotos: number
+      catalogPhotos: Array<{ fileId: string; comment?: string }>
       assignments: Array<{
         trackingCode: string
         operationType: string
@@ -405,7 +487,7 @@ operationsRouter.get('/products-catalog', async (req, res) => {
         if (query && !key.includes(query) && !(p.labelData?.descripcion ?? '').toLowerCase().includes(query)) continue
         let entry = map.get(key)
         if (!entry) {
-          entry = { productCode: p.productCode, descripcion: p.labelData?.descripcion, totalPhotos: 0, assignments: [] }
+          entry = { productCode: p.productCode, descripcion: p.labelData?.descripcion, totalPhotos: 0, catalogPhotos: [], assignments: [] }
           map.set(key, entry)
         }
         if (!entry.descripcion && p.labelData?.descripcion) entry.descripcion = p.labelData.descripcion
@@ -433,14 +515,21 @@ operationsRouter.get('/products-catalog', async (req, res) => {
       const key = (item.productCode as string).toLowerCase()
       const desc = (item.descripcion as string | undefined) ?? ''
       if (query && !key.includes(query) && !desc.toLowerCase().includes(query)) continue
-      if (!map.has(key)) {
-        map.set(key, {
+      const catalogPhotos = ((item.photos as Array<{ fileId: string; comment?: string }> | undefined) ?? [])
+        .map((ph) => ({ fileId: ph.fileId, comment: ph.comment }))
+      let entry = map.get(key)
+      if (!entry) {
+        entry = {
           productCode: item.productCode as string,
           descripcion: item.descripcion as string | undefined,
           totalPhotos: 0,
+          catalogPhotos: [],
           assignments: [],
-        })
+        }
+        map.set(key, entry)
       }
+      entry.catalogPhotos = catalogPhotos
+      entry.totalPhotos += catalogPhotos.length
     }
 
     const products = Array.from(map.values())
