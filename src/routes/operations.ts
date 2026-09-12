@@ -393,6 +393,7 @@ operationsRouter.get('/products-catalog', async (req, res) => {
         status: string
         photosCount: number
         createdAt?: string
+        photos: Array<{ fileId: string; comment?: string }>
       }>
     }>()
 
@@ -417,6 +418,7 @@ operationsRouter.get('/products-catalog', async (req, res) => {
           status: op.status as string,
           photosCount: p.photos?.length ?? 0,
           createdAt: p.createdAt as string | undefined,
+          photos: (p.photos ?? []).map((ph) => ({ fileId: ph.fileId, comment: ph.comment })),
         })
       }
     }
