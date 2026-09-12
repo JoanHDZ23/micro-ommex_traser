@@ -21,8 +21,16 @@ export async function connectToMongo(): Promise<Db> {
   await operations.createIndex({ operatorName: 1 })
   await operations.createIndex({ vehiclePlate: 1 })
 
+  // Catálogo maestro de productos (independiente de las operaciones)
+  const productsCatalog = db.collection('products_catalog')
+  await productsCatalog.createIndex({ companyId: 1, productCodeLower: 1 }, { unique: true })
+
   console.log(`[MongoDB] Conectado a ${DB_NAME}`)
   return db
+}
+
+export function getProductsCatalogCollection(): Collection {
+  return getDb().collection('products_catalog')
 }
 
 export function getDb(): Db {

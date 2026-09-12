@@ -1,11 +1,61 @@
 import { Router } from 'express'
-import { getOperationsCollection } from '../lib/mongodb.js'
+import { getOperationsCollection, getProductsCatalogCollection } from '../lib/mongodb.js'
 import { generateTrackingCode } from '../lib/tracking-code.js'
 import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
 
 export const operationsRouter = Router()
 
 const VALID_TYPES: OperationType[] = ['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES']
+
+/**
+ * Registra (upsert) un producto en el catálogo maestro.
+ * origin 'catalog' persiste siempre; 'registro' se borra cuando sale del último registro.
+ * No degrada un 'catalog' existente a 'registro'.
+ */
+async function upsertCatalogProduct(companyId: string | undefined, productCode: string, descripcion: string | undefined, origin: 'catalog' | 'registro') {
+  const code = productCode.trim()
+  if (!code) return
+  const catalog = getProductsCatalogCollection()
+  const productCodeLower = code.toLowerCase()
+  const existing = await catalog.findOne({ companyId: companyId ?? null, productCodeLower })
+  if (existing) {
+    // Mantiene el origin más "fuerte" (catalog). Actualiza descripción si llega una nueva.
+    const set: Record<string, unknown> = {}
+    if (descripcion?.trim()) set.descripcion = descripcion.trim()
+    if (origin === 'catalog' && existing.origin !== 'catalog') set.origin = 'catalog'
+    if (Object.keys(set).length > 0) await catalog.updateOne({ _id: existing._id }, { $set: set })
+    return
+  }
+  await catalog.insertOne({
+    companyId: companyId ?? null,
+    productCode: code,
+    productCodeLower,
+    descripcion: descripcion?.trim() || undefined,
+    origin,
+    createdAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Al quitar un producto de un registro: si ya no queda en ningún otro registro
+ * y su origen es 'registro', se elimina del catálogo. Si es 'catalog', permanece.
+ */
+async function cleanupCatalogIfOrphan(companyId: string | undefined, productCode: string) {
+  const code = productCode.trim()
+  if (!code) return
+  const ops = getOperationsCollection()
+  const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const filter: Record<string, unknown> = { 'lineaBlanca.productCode': { $regex: `^${escaped}$`, $options: 'i' } }
+  if (companyId) filter.companyId = companyId
+  const stillUsed = await ops.findOne(filter)
+  if (stillUsed) return // sigue en algún registro → no tocar
+
+  const catalog = getProductsCatalogCollection()
+  const entry = await catalog.findOne({ companyId: companyId ?? null, productCodeLower: code.toLowerCase() })
+  if (entry && entry.origin === 'registro') {
+    await catalog.deleteOne({ _id: entry._id })
+  }
+}
 
 /**
  * POST /api/operations
@@ -197,9 +247,66 @@ operationsRouter.get('/search-products', async (req, res) => {
 })
 
 /**
+ * POST /api/operations/products-catalog
+ * Registra un producto en el catálogo maestro (independiente de cualquier registro).
+ * Body: { companyId?, productCode, descripcion? }
+ */
+operationsRouter.post('/products-catalog', async (req, res) => {
+  const { companyId, productCode, descripcion } = req.body ?? {}
+  const code = (productCode ?? '').trim()
+  if (!code) { res.status(400).json({ message: 'productCode es requerido.' }); return }
+
+  try {
+    // Verifica que no exista ya (en catálogo o en operaciones de la empresa)
+    const catalog = getProductsCatalogCollection()
+    const existingCatalog = await catalog.findOne({ companyId: companyId ?? null, productCodeLower: code.toLowerCase() })
+    if (existingCatalog) { res.status(409).json({ message: `El producto "${code}" ya existe en el catálogo.` }); return }
+
+    const ops = getOperationsCollection()
+    const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const opFilter: Record<string, unknown> = { 'lineaBlanca.productCode': { $regex: `^${escaped}$`, $options: 'i' } }
+    if (companyId) opFilter.companyId = companyId
+    const inOps = await ops.findOne(opFilter)
+    if (inOps) { res.status(409).json({ message: `El código "${code}" ya existe en la operación ${inOps.trackingCode}.` }); return }
+
+    await upsertCatalogProduct(companyId, code, descripcion, 'catalog')
+    res.status(201).json({ message: `Producto "${code}" registrado en el catálogo.` })
+  } catch (err) {
+    console.error('[operations] Error al registrar producto en catálogo:', err)
+    res.status(500).json({ message: 'Error al registrar el producto.' })
+  }
+})
+
+/**
+ * DELETE /api/operations/products-catalog/:productCode
+ * Elimina un producto del catálogo maestro (solo si no está en ningún registro).
+ * Query: ?companyId=XXX
+ */
+operationsRouter.delete('/products-catalog/:productCode', async (req, res) => {
+  const { productCode } = req.params
+  const { companyId } = req.query as Record<string, string>
+  const code = productCode.trim()
+  try {
+    const ops = getOperationsCollection()
+    const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const opFilter: Record<string, unknown> = { 'lineaBlanca.productCode': { $regex: `^${escaped}$`, $options: 'i' } }
+    if (companyId) opFilter.companyId = companyId
+    const inOps = await ops.findOne(opFilter)
+    if (inOps) { res.status(409).json({ message: `No se puede eliminar: el producto está en la operación ${inOps.trackingCode}.` }); return }
+
+    const catalog = getProductsCatalogCollection()
+    await catalog.deleteOne({ companyId: companyId ?? null, productCodeLower: code.toLowerCase() })
+    res.json({ message: `Producto "${code}" eliminado del catálogo.` })
+  } catch (err) {
+    console.error('[operations] Error al eliminar del catálogo:', err)
+    res.status(500).json({ message: 'Error al eliminar el producto del catálogo.' })
+  }
+})
+
+/**
  * GET /api/operations/products-catalog
- * Catálogo de productos: agrupa por código y lista TODAS las operaciones
- * (registros) donde cada producto está asignado.
+ * Catálogo de productos: combina el catálogo maestro (incluye productos sin registro)
+ * con las operaciones (registros) donde cada producto está asignado.
  * Query: ?companyId=XXX&q=texto
  */
 operationsRouter.get('/products-catalog', async (req, res) => {
@@ -249,6 +356,25 @@ operationsRouter.get('/products-catalog', async (req, res) => {
           status: op.status as string,
           photosCount: p.photos?.length ?? 0,
           createdAt: p.createdAt as string | undefined,
+        })
+      }
+    }
+
+    // Incluye productos del catálogo maestro que aún no están en ningún registro
+    const catalog = getProductsCatalogCollection()
+    const catalogFilter: Record<string, unknown> = {}
+    if (companyId) catalogFilter.companyId = companyId
+    const catalogItems = await catalog.find(catalogFilter).toArray()
+    for (const item of catalogItems) {
+      const key = (item.productCode as string).toLowerCase()
+      const desc = (item.descripcion as string | undefined) ?? ''
+      if (query && !key.includes(query) && !desc.toLowerCase().includes(query)) continue
+      if (!map.has(key)) {
+        map.set(key, {
+          productCode: item.productCode as string,
+          descripcion: item.descripcion as string | undefined,
+          totalPhotos: 0,
+          assignments: [],
         })
       }
     }
@@ -364,6 +490,9 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
         $set: { updatedAt: new Date().toISOString() },
       } as unknown as Record<string, unknown>,
     )
+
+    // Registra en el catálogo maestro con origen 'registro'
+    await upsertCatalogProduct(companyId, code, (labelData as { descripcion?: string } | undefined)?.descripcion, 'registro')
 
     res.status(201).json({
       message: `Producto ${productCode.trim()} agregado.`,
@@ -732,6 +861,8 @@ operationsRouter.delete('/:trackingCode/linea-blanca/:productCode', async (req, 
     }
 
     await col.updateOne({ trackingCode }, { $set: { lineaBlanca: filtered, updatedAt: new Date().toISOString() } })
+    // Si el producto ya no queda en ningún registro y fue creado en un registro, se borra del catálogo
+    await cleanupCatalogIfOrphan(operation.companyId as string | undefined, productCode)
     res.json({ message: `Producto "${productCode}" eliminado.`, remaining: filtered.length })
   } catch (err) {
     console.error('[operations] Error al eliminar producto:', err)
@@ -917,6 +1048,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/unlink', async (
       }
     }
 
+    await cleanupCatalogIfOrphan(operation.companyId as string | undefined, productCode)
     res.json({ message: `Producto "${productCode}" desvinculado y eliminado de esta operación.` })
   } catch (err) {
     console.error('[operations] Error al desvincular:', err)
@@ -976,6 +1108,10 @@ operationsRouter.patch('/:trackingCode/linea-blanca/:productCode/rename', async 
       { trackingCode, 'lineaBlanca.productCode': productCode },
       { $set: { [`lineaBlanca.${productIdx}.productCode`]: newCode, updatedAt: new Date().toISOString() } },
     )
+
+    // Sincroniza el catálogo maestro: renombra la entrada y limpia la vieja si quedó huérfana
+    await upsertCatalogProduct(companyId, newCode, products[productIdx].labelData?.descripcion, 'registro')
+    await cleanupCatalogIfOrphan(companyId, productCode)
 
     res.json({ message: `Producto renombrado de "${productCode}" a "${newCode}".` })
   } catch (err) {
