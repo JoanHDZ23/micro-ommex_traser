@@ -346,13 +346,29 @@ function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegi
   const handleAddPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
     e.target.value = ''
-    if (files.length === 0 || !photoTarget) return
+    if (files.length === 0) return
+
+    // Determina el registro destino. Si el producto no está en ninguno,
+    // usa el seleccionado en "Asignar" y lo agrega primero al registro.
+    let target = photoTarget || product.assignments[0]?.trackingCode || assignOp
+    if (!target) { setError('Elige un registro para asignar el producto antes de agregar fotos.'); return }
+
     setUploading(true)
     setFeedback(`✓ Subiendo ${files.length} foto(s)...`)
     try {
+      // Si el producto no está aún en ese registro, lo asigna primero
+      const alreadyThere = product.assignments.some((a) => a.trackingCode === target)
+      if (!alreadyThere) {
+        try {
+          await apiRequest(`/operations/${target}/linea-blanca`, {
+            method: 'POST',
+            body: { productCode: product.productCode, labelData: descripcion.trim() ? { descripcion: descripcion.trim() } : undefined },
+          })
+        } catch { /* si ya existe por carrera, se ignora */ }
+      }
       for (const file of files) {
         const base64 = await compressImageToBase64(file)
-        await apiRequest(`/operations/${photoTarget}/linea-blanca/${encodeURIComponent(product.productCode)}/photo`, {
+        await apiRequest(`/operations/${target}/linea-blanca/${encodeURIComponent(product.productCode)}/photo`, {
           method: 'POST',
           body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg' },
         })
@@ -421,28 +437,43 @@ function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegi
             )}
           </section>
 
-          {/* ── Agregar fotos (requiere estar en un registro) ── */}
-          {product.assignments.length > 0 && (
-            <section className="space-y-2">
-              <h4 className="text-xs font-semibold text-gray-500 uppercase">Agregar fotos</h4>
+          {/* ── Agregar fotos (siempre disponible) ── */}
+          <section className="space-y-2">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase">Agregar fotos</h4>
+            {product.assignments.length > 0 ? (
               <select value={photoTarget} onChange={(e) => setPhotoTarget(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30">
                 {product.assignments.map((a) => (
                   <option key={a.trackingCode} value={a.trackingCode}>{a.trackingCode} ({a.photosCount} foto(s))</option>
                 ))}
               </select>
-              <div className="flex gap-2">
-                <label className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
-                  {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />} Cámara
-                  <input type="file" accept="image/*" capture="environment" multiple className="hidden" disabled={uploading} onChange={(e) => void handleAddPhotos(e)} />
-                </label>
-                <label className="flex-1 py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
-                  📁 Galería
-                  <input type="file" accept="image/*" multiple className="hidden" disabled={uploading} onChange={(e) => void handleAddPhotos(e)} />
-                </label>
-              </div>
-            </section>
-          )}
+            ) : (
+              <>
+                <p className="text-[10px] text-gray-400">
+                  Este producto no está en ningún registro. Elige uno: se asignará automáticamente al agregar la foto.
+                </p>
+                <select value={assignOp} onChange={(e) => setAssignOp(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30">
+                  <option value="">Selecciona un registro...</option>
+                  {operations.map((op) => (
+                    <option key={op.trackingCode} value={op.trackingCode}>
+                      {op.trackingCode}{op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+            <div className="flex gap-2">
+              <label className={`flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 ${(product.assignments.length === 0 && !assignOp) || uploading ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
+                {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />} Cámara
+                <input type="file" accept="image/*" capture="environment" multiple className="hidden" disabled={uploading} onChange={(e) => void handleAddPhotos(e)} />
+              </label>
+              <label className={`flex-1 py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 ${(product.assignments.length === 0 && !assignOp) || uploading ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
+                📁 Galería
+                <input type="file" accept="image/*" multiple className="hidden" disabled={uploading} onChange={(e) => void handleAddPhotos(e)} />
+              </label>
+            </div>
+          </section>
 
           {/* ── Asignar a un registro ── */}
           <section className="space-y-2">
