@@ -104,15 +104,36 @@ export function ProductsCatalogPage() {
                   <p className="text-sm font-semibold text-gray-900 truncate">{p.productCode}</p>
                   {p.descripcion && <p className="text-xs text-gray-500 truncate">{p.descripcion}</p>}
                   <p className="text-[10px] text-gray-400 mt-0.5">
-                    {p.registrosCount} registro(s) · {p.totalPhotos} foto(s)
+                    {p.registrosCount === 0
+                      ? 'Solo en catálogo · sin registro'
+                      : `${p.registrosCount} registro(s) · ${p.totalPhotos} foto(s)`}
                   </p>
                 </div>
+                {p.registrosCount === 0 && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 flex-shrink-0">catálogo</span>
+                )}
                 <ChevronDown className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${expanded === p.productCode ? 'rotate-180' : ''}`} />
               </button>
 
               {/* Assignments (registros donde está) */}
               {expanded === p.productCode && (
                 <div className="border-t border-gray-100 divide-y divide-gray-50">
+                  {p.assignments.length === 0 && (
+                    <div className="px-3 py-3 flex items-center justify-between gap-2">
+                      <span className="text-xs text-gray-500">No está asignado a ningún registro.</span>
+                      <button onClick={async () => {
+                        if (!confirm(`¿Eliminar "${p.productCode}" del catálogo?`)) return
+                        try {
+                          const params = new URLSearchParams()
+                          if (companyId) params.set('companyId', companyId)
+                          await apiRequest(`/operations/products-catalog/${encodeURIComponent(p.productCode)}?${params.toString()}`, { method: 'DELETE' })
+                          void load()
+                        } catch { /* noop */ }
+                      }} className="text-[11px] text-red-600 font-medium flex items-center gap-1 hover:underline flex-shrink-0">
+                        <X className="w-3 h-3" /> Eliminar del catálogo
+                      </button>
+                    </div>
+                  )}
                   {p.assignments.map((a, i) => (
                     <button key={`${a.trackingCode}-${i}`} onClick={() => navigate(`/operation/${a.trackingCode}`)}
                       className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-50">
@@ -192,14 +213,23 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
   }, [companyId])
 
   const handleSave = async () => {
-    if (!productCode.trim() || !targetOp) { setError('Completa el código y elige un registro.'); return }
+    if (!productCode.trim()) { setError('Escribe el código del producto.'); return }
     setSaving(true)
     setError(null)
     try {
-      await apiRequest(`/operations/${targetOp}/linea-blanca`, {
-        method: 'POST',
-        body: { productCode: productCode.trim(), labelData: descripcion.trim() ? { descripcion: descripcion.trim() } : undefined },
-      })
+      if (targetOp) {
+        // Asignar a un registro existente
+        await apiRequest(`/operations/${targetOp}/linea-blanca`, {
+          method: 'POST',
+          body: { productCode: productCode.trim(), labelData: descripcion.trim() ? { descripcion: descripcion.trim() } : undefined },
+        })
+      } else {
+        // Registrar en el catálogo maestro (sin registro asignado)
+        await apiRequest('/operations/products-catalog', {
+          method: 'POST',
+          body: { companyId, productCode: productCode.trim(), descripcion: descripcion.trim() || undefined },
+        })
+      }
       onDone()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al registrar el producto.')
@@ -246,16 +276,19 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
         </div>
 
         <div className="space-y-1">
-          <label className="text-xs font-medium text-gray-600">Asignar al registro *</label>
+          <label className="text-xs font-medium text-gray-600">Asignar a un registro (opcional)</label>
           <select value={targetOp} onChange={(e) => setTargetOp(e.target.value)}
             className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30">
-            <option value="">Selecciona un registro...</option>
+            <option value="">Sin registro (solo catálogo)</option>
             {operations.map((op) => (
               <option key={op.trackingCode} value={op.trackingCode}>
                 {op.trackingCode} · {op.operationType === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'}{op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
               </option>
             ))}
           </select>
+          <p className="text-[10px] text-gray-400">
+            Si no eliges un registro, el producto queda solo en el catálogo hasta que lo asignes.
+          </p>
         </div>
 
         {error && (
@@ -264,7 +297,7 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
           </div>
         )}
 
-        <button onClick={() => void handleSave()} disabled={saving || !productCode.trim() || !targetOp}
+        <button onClick={() => void handleSave()} disabled={saving || !productCode.trim()}
           className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Registrar producto
         </button>
