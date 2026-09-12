@@ -22,6 +22,7 @@ interface CatalogProduct {
   descripcion?: string
   totalPhotos: number
   registrosCount: number
+  catalogPhotos?: Array<{ fileId: string; comment?: string }>
   assignments: Assignment[]
 }
 
@@ -343,16 +344,25 @@ function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegi
     }
   }
 
-  // Fotos existentes agrupadas: [{ trackingCode, photoIndex, fileId, comment }]
-  const existingPhotos = product.assignments.flatMap((a) =>
-    (a.photos ?? []).map((ph, idx) => ({ trackingCode: a.trackingCode, photoIndex: idx, fileId: ph.fileId, comment: ph.comment })),
-  )
+  // Fotos existentes: de los registros + las propias del catálogo (source distingue el origen)
+  const existingPhotos = [
+    ...product.assignments.flatMap((a) =>
+      (a.photos ?? []).map((ph, idx) => ({ source: 'registro' as const, trackingCode: a.trackingCode, photoIndex: idx, fileId: ph.fileId, comment: ph.comment })),
+    ),
+    ...((product.catalogPhotos ?? []).map((ph, idx) => ({ source: 'catalog' as const, trackingCode: '', photoIndex: idx, fileId: ph.fileId, comment: ph.comment }))),
+  ]
 
-  const handleDeletePhoto = async (trackingCode: string, photoIndex: number) => {
+  const handleDeletePhoto = async (source: 'registro' | 'catalog', trackingCode: string, photoIndex: number) => {
     if (!confirm('¿Eliminar esta foto?')) return
     setUploading(true); setError(null)
     try {
-      await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${photoIndex}`, { method: 'DELETE' })
+      if (source === 'catalog') {
+        const params = new URLSearchParams()
+        if (companyId) params.set('companyId', companyId)
+        await apiRequest(`/operations/products-catalog/${encodeURIComponent(product.productCode)}/photo/${photoIndex}?${params.toString()}`, { method: 'DELETE' })
+      } else {
+        await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(product.productCode)}/photo/${photoIndex}`, { method: 'DELETE' })
+      }
       setFeedback('✓ Foto eliminada')
       onChanged()
     } catch (err) {
@@ -367,29 +377,38 @@ function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegi
     e.target.value = ''
     if (files.length === 0) return
 
-    // Registro destino: el primero donde ya está, o el elegido abajo en "Asignar".
-    const target = product.assignments[0]?.trackingCode || assignOp
-    if (!target) { setError('Elige un registro en "Asignar a un registro" antes de agregar fotos.'); return }
-
     setUploading(true)
     setFeedback(`✓ Subiendo ${files.length} foto(s)...`)
     try {
-      // Si el producto no está aún en ese registro, lo asigna primero
-      const alreadyThere = product.assignments.some((a) => a.trackingCode === target)
-      if (!alreadyThere) {
-        try {
-          await apiRequest(`/operations/${target}/linea-blanca`, {
+      // Destino preferente: un registro (el actual o el elegido en "Asignar").
+      const target = product.assignments[0]?.trackingCode || assignOp
+      if (target) {
+        // Si el producto no está aún en ese registro, lo asigna primero
+        const alreadyThere = product.assignments.some((a) => a.trackingCode === target)
+        if (!alreadyThere) {
+          try {
+            await apiRequest(`/operations/${target}/linea-blanca`, {
+              method: 'POST',
+              body: { productCode: product.productCode, labelData: descripcion.trim() ? { descripcion: descripcion.trim() } : undefined },
+            })
+          } catch { /* si ya existe por carrera, se ignora */ }
+        }
+        for (const file of files) {
+          const base64 = await compressImageToBase64(file)
+          await apiRequest(`/operations/${target}/linea-blanca/${encodeURIComponent(product.productCode)}/photo`, {
             method: 'POST',
-            body: { productCode: product.productCode, labelData: descripcion.trim() ? { descripcion: descripcion.trim() } : undefined },
+            body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg' },
           })
-        } catch { /* si ya existe por carrera, se ignora */ }
-      }
-      for (const file of files) {
-        const base64 = await compressImageToBase64(file)
-        await apiRequest(`/operations/${target}/linea-blanca/${encodeURIComponent(product.productCode)}/photo`, {
-          method: 'POST',
-          body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg' },
-        })
+        }
+      } else {
+        // Sin registro: sube las fotos directamente al producto del catálogo
+        for (const file of files) {
+          const base64 = await compressImageToBase64(file)
+          await apiRequest(`/operations/products-catalog/${encodeURIComponent(product.productCode)}/photo`, {
+            method: 'POST',
+            body: { companyId, base64Image: base64, mimeType: 'image/jpeg' },
+          })
+        }
       }
       setFeedback('✓ Fotos agregadas')
       onChanged()
@@ -463,7 +482,7 @@ function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegi
             {existingPhotos.length > 0 && (
               <div className="grid grid-cols-3 gap-1.5">
                 {existingPhotos.map((ph, i) => (
-                  <div key={`${ph.trackingCode}-${ph.photoIndex}-${i}`} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
+                  <div key={`${ph.source}-${ph.trackingCode}-${ph.photoIndex}-${i}`} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
                     {ph.fileId && ph.fileId !== 'pending' && ph.fileId !== 'note' ? (
                       <img src={`https://lh3.googleusercontent.com/d/${ph.fileId}=w200`} alt="foto" className="w-full h-full object-cover" loading="lazy"
                         onError={(e) => {
@@ -474,7 +493,7 @@ function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegi
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-gray-300 text-[9px]">🕐</div>
                     )}
-                    <button onClick={() => void handleDeletePhoto(ph.trackingCode, ph.photoIndex)} disabled={uploading}
+                    <button onClick={() => void handleDeletePhoto(ph.source, ph.trackingCode, ph.photoIndex)} disabled={uploading}
                       className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/50 flex items-center justify-center">
                       <X className="w-3 h-3 text-white" />
                     </button>
@@ -483,19 +502,19 @@ function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegi
               </div>
             )}
 
-            {/* Aviso cuando no tiene registro: se asignará al elegido abajo */}
+            {/* Info: si tiene registro las fotos van ahí; si no, quedan en el catálogo */}
             {product.assignments.length === 0 && (
               <p className="text-[10px] text-gray-400">
-                Elige un registro en "Asignar a un registro" (abajo); al agregar una foto el producto se asignará ahí.
+                Las fotos se guardan en el producto. Si lo asignas a un registro (abajo), las nuevas fotos irán a ese registro.
               </p>
             )}
 
             <div className="flex gap-2">
-              <label className={`flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 ${(product.assignments.length === 0 && !assignOp) || uploading ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
+              <label className={`flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 ${uploading ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
                 {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />} Cámara
                 <input type="file" accept="image/*" capture="environment" multiple className="hidden" disabled={uploading} onChange={(e) => void handleAddPhotos(e)} />
               </label>
-              <label className={`flex-1 py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 ${(product.assignments.length === 0 && !assignOp) || uploading ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
+              <label className={`flex-1 py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 ${uploading ? 'opacity-50 pointer-events-none' : 'cursor-pointer'}`}>
                 📁 Galería
                 <input type="file" accept="image/*" multiple className="hidden" disabled={uploading} onChange={(e) => void handleAddPhotos(e)} />
               </label>
