@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, ArrowRight, Camera, ChevronDown, Loader2, Package, Plus, QrCode, Search, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, ArrowRight, Camera, Check, Loader2, Package, Pencil, Plus, QrCode, Search, Trash2, X } from 'lucide-react'
 import { apiRequest, type Operation } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { BarcodeScanner } from '../components/BarcodeScanner'
@@ -30,8 +30,8 @@ export function ProductsCatalogPage() {
   const [products, setProducts] = useState<CatalogProduct[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [expanded, setExpanded] = useState<string | null>(null)
   const [showRegister, setShowRegister] = useState(false)
+  const [detailProduct, setDetailProduct] = useState<CatalogProduct | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -93,75 +93,41 @@ export function ProductsCatalogPage() {
       ) : (
         <div className="space-y-2">
           {filtered.map((p) => (
-            <div key={p.productCode} className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-              {/* Product row */}
-              <button onClick={() => setExpanded(expanded === p.productCode ? null : p.productCode)}
-                className="w-full flex items-center gap-3 p-3 text-left">
-                <div className="w-10 h-10 rounded-lg bg-[var(--color-primary-bg)] flex items-center justify-center flex-shrink-0">
-                  <Package className="w-5 h-5 text-[var(--color-primary)]" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-gray-900 truncate">{p.productCode}</p>
-                  {p.descripcion && <p className="text-xs text-gray-500 truncate">{p.descripcion}</p>}
-                  <p className="text-[10px] text-gray-400 mt-0.5">
-                    {p.registrosCount === 0
-                      ? 'Solo en catálogo · sin registro'
-                      : `${p.registrosCount} registro(s) · ${p.totalPhotos} foto(s)`}
-                  </p>
-                </div>
-                {p.registrosCount === 0 && (
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 flex-shrink-0">catálogo</span>
-                )}
-                <ChevronDown className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${expanded === p.productCode ? 'rotate-180' : ''}`} />
-              </button>
-
-              {/* Assignments (registros donde está) */}
-              {expanded === p.productCode && (
-                <div className="border-t border-gray-100 divide-y divide-gray-50">
-                  {p.assignments.length === 0 && (
-                    <div className="px-3 py-3 flex items-center justify-between gap-2">
-                      <span className="text-xs text-gray-500">No está asignado a ningún registro.</span>
-                      <button onClick={async () => {
-                        if (!confirm(`¿Eliminar "${p.productCode}" del catálogo?`)) return
-                        try {
-                          const params = new URLSearchParams()
-                          if (companyId) params.set('companyId', companyId)
-                          await apiRequest(`/operations/products-catalog/${encodeURIComponent(p.productCode)}?${params.toString()}`, { method: 'DELETE' })
-                          void load()
-                        } catch { /* noop */ }
-                      }} className="text-[11px] text-red-600 font-medium flex items-center gap-1 hover:underline flex-shrink-0">
-                        <X className="w-3 h-3" /> Eliminar del catálogo
-                      </button>
-                    </div>
-                  )}
-                  {p.assignments.map((a, i) => (
-                    <button key={`${a.trackingCode}-${i}`} onClick={() => navigate(`/operation/${a.trackingCode}`)}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-gray-50">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-gray-800 truncate">
-                          {a.trackingCode}
-                          <span className={`ml-2 text-[9px] px-1.5 py-0.5 rounded-full ${a.status === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                            {a.status === 'COMPLETADO' ? 'Completo' : 'En proceso'}
-                          </span>
-                        </p>
-                        <p className="text-[10px] text-gray-500 truncate">
-                          {a.operationType === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'}
-                          {a.operatorName ? ` · ${a.operatorName}` : ''}
-                          {a.vehiclePlate ? ` · ${a.vehiclePlate}` : ''} · {a.photosCount} foto(s)
-                        </p>
-                      </div>
-                      <ArrowRight className="w-4 h-4 text-gray-300 flex-shrink-0" />
-                    </button>
-                  ))}
-                </div>
+            <button key={p.productCode} onClick={() => setDetailProduct(p)}
+              className="w-full bg-white rounded-xl border border-gray-100 shadow-sm flex items-center gap-3 p-3 text-left hover:shadow-md transition-shadow">
+              <div className="w-10 h-10 rounded-lg bg-[var(--color-primary-bg)] flex items-center justify-center flex-shrink-0">
+                <Package className="w-5 h-5 text-[var(--color-primary)]" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-900 truncate">{p.productCode}</p>
+                {p.descripcion && <p className="text-xs text-gray-500 truncate">{p.descripcion}</p>}
+                <p className="text-[10px] text-gray-400 mt-0.5">
+                  {p.registrosCount === 0
+                    ? 'Solo en catálogo · sin registro'
+                    : `${p.registrosCount} registro(s) · ${p.totalPhotos} foto(s)`}
+                </p>
+              </div>
+              {p.registrosCount === 0 && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 flex-shrink-0">catálogo</span>
               )}
-            </div>
+              <ArrowRight className="w-4 h-4 text-gray-300 flex-shrink-0" />
+            </button>
           ))}
         </div>
       )}
 
       {showRegister && (
         <RegisterProductModal companyId={companyId} onClose={() => setShowRegister(false)} onDone={() => { setShowRegister(false); void load() }} />
+      )}
+
+      {detailProduct && (
+        <ProductDetailModal
+          product={detailProduct}
+          companyId={companyId}
+          onClose={() => setDetailProduct(null)}
+          onChanged={() => void load()}
+          onOpenRegister={(tc) => { setDetailProduct(null); navigate(`/operation/${tc}`) }}
+        />
       )}
     </div>
   )
@@ -305,6 +271,243 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
 
       {/* Escáner de código de barras */}
       {showScanner && <BarcodeScanner onResult={handleScanResult} onClose={() => setShowScanner(false)} />}
+    </div>
+  )
+}
+
+/** Modal de detalle de un producto: editar, agregar fotos y asignar a un registro */
+function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegister }: {
+  product: CatalogProduct
+  companyId: string
+  onClose: () => void
+  onChanged: () => void
+  onOpenRegister: (trackingCode: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [code, setCode] = useState(product.productCode)
+  const [descripcion, setDescripcion] = useState(product.descripcion ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState<string | null>(null)
+
+  // Asignar a registro
+  const [operations, setOperations] = useState<Operation[]>([])
+  const [assignOp, setAssignOp] = useState('')
+  const [assigning, setAssigning] = useState(false)
+
+  // Agregar fotos
+  const [photoTarget, setPhotoTarget] = useState(product.assignments[0]?.trackingCode ?? '')
+  const [uploading, setUploading] = useState(false)
+
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (companyId) params.set('companyId', companyId)
+    void apiRequest<{ operations: Operation[] }>(`/operations/search-for-link?${params.toString()}`)
+      .then((r) => setOperations(r.operations))
+      .catch(() => { /* noop */ })
+  }, [companyId])
+
+  const handleSaveEdit = async () => {
+    if (!code.trim()) { setError('El código no puede estar vacío.'); return }
+    setSaving(true); setError(null)
+    try {
+      await apiRequest(`/operations/products-catalog/${encodeURIComponent(product.productCode)}`, {
+        method: 'PATCH',
+        body: { companyId, newProductCode: code.trim(), descripcion: descripcion.trim() },
+      })
+      setFeedback('✓ Producto actualizado')
+      setEditing(false)
+      onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al guardar')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleAssign = async () => {
+    if (!assignOp) return
+    setAssigning(true); setError(null)
+    try {
+      await apiRequest(`/operations/${assignOp}/linea-blanca`, {
+        method: 'POST',
+        body: { productCode: product.productCode, labelData: descripcion.trim() ? { descripcion: descripcion.trim() } : undefined },
+      })
+      setFeedback(`✓ Asignado a ${assignOp}`)
+      setAssignOp('')
+      onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al asignar')
+    } finally {
+      setAssigning(false)
+    }
+  }
+
+  const handleAddPhotos = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    if (files.length === 0 || !photoTarget) return
+    setUploading(true)
+    setFeedback(`✓ Subiendo ${files.length} foto(s)...`)
+    try {
+      for (const file of files) {
+        const base64 = await compressImageToBase64(file)
+        await apiRequest(`/operations/${photoTarget}/linea-blanca/${encodeURIComponent(product.productCode)}/photo`, {
+          method: 'POST',
+          body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg' },
+        })
+      }
+      setFeedback('✓ Fotos agregadas')
+      onChanged()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al subir fotos')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/50 flex items-end sm:items-center justify-center p-3">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-xl max-h-[88vh] overflow-y-auto">
+        {/* Header */}
+        <div className="sticky top-0 bg-white flex items-center justify-between px-4 py-3 border-b border-gray-100">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-9 h-9 rounded-lg bg-[var(--color-primary-bg)] flex items-center justify-center flex-shrink-0">
+              <Package className="w-5 h-5 text-[var(--color-primary)]" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-sm font-bold text-gray-900 truncate">{product.productCode}</h3>
+              <p className="text-[10px] text-gray-400">{product.registrosCount} registro(s) · {product.totalPhotos} foto(s)</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+            <X className="w-4 h-4 text-gray-500" />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {feedback && <div className="text-xs text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2">{feedback}</div>}
+          {error && <div className="flex items-start gap-2 text-xs text-red-700 bg-red-50 rounded-lg px-3 py-2"><AlertCircle className="w-3.5 h-3.5 mt-0.5" /><span>{error}</span></div>}
+
+          {/* ── Editar ── */}
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold text-gray-500 uppercase">Datos del producto</h4>
+              {!editing && (
+                <button onClick={() => setEditing(true)} className="text-[11px] text-[var(--color-primary)] font-medium flex items-center gap-1">
+                  <Pencil className="w-3 h-3" /> Editar
+                </button>
+              )}
+            </div>
+            {editing ? (
+              <div className="space-y-2">
+                <input type="text" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  placeholder="CÓDIGO" className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
+                <input type="text" value={descripcion} onChange={(e) => setDescripcion(e.target.value.toUpperCase())}
+                  placeholder="DESCRIPCIÓN" className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
+                <div className="flex gap-2">
+                  <button onClick={() => { setEditing(false); setCode(product.productCode); setDescripcion(product.descripcion ?? '') }}
+                    className="flex-1 py-2 rounded-lg border border-gray-200 text-xs font-medium text-gray-600">Cancelar</button>
+                  <button onClick={() => void handleSaveEdit()} disabled={saving}
+                    className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium disabled:opacity-50 flex items-center justify-center gap-1">
+                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Guardar
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-gray-700">
+                {product.descripcion ? product.descripcion : <span className="text-gray-400 text-xs">Sin descripción</span>}
+              </div>
+            )}
+          </section>
+
+          {/* ── Agregar fotos (requiere estar en un registro) ── */}
+          {product.assignments.length > 0 && (
+            <section className="space-y-2">
+              <h4 className="text-xs font-semibold text-gray-500 uppercase">Agregar fotos</h4>
+              <select value={photoTarget} onChange={(e) => setPhotoTarget(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30">
+                {product.assignments.map((a) => (
+                  <option key={a.trackingCode} value={a.trackingCode}>{a.trackingCode} ({a.photosCount} foto(s))</option>
+                ))}
+              </select>
+              <div className="flex gap-2">
+                <label className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                  {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />} Cámara
+                  <input type="file" accept="image/*" capture="environment" multiple className="hidden" disabled={uploading} onChange={(e) => void handleAddPhotos(e)} />
+                </label>
+                <label className="flex-1 py-2 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                  📁 Galería
+                  <input type="file" accept="image/*" multiple className="hidden" disabled={uploading} onChange={(e) => void handleAddPhotos(e)} />
+                </label>
+              </div>
+            </section>
+          )}
+
+          {/* ── Asignar a un registro ── */}
+          <section className="space-y-2">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase">Asignar a un registro</h4>
+            <div className="flex gap-2">
+              <select value={assignOp} onChange={(e) => setAssignOp(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30">
+                <option value="">Selecciona un registro...</option>
+                {operations
+                  .filter((op) => !product.assignments.some((a) => a.trackingCode === op.trackingCode))
+                  .map((op) => (
+                    <option key={op.trackingCode} value={op.trackingCode}>
+                      {op.trackingCode}{op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
+                    </option>
+                  ))}
+              </select>
+              <button onClick={() => void handleAssign()} disabled={!assignOp || assigning}
+                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium disabled:opacity-50 flex items-center gap-1">
+                {assigning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Asignar
+              </button>
+            </div>
+          </section>
+
+          {/* ── Registros donde está ── */}
+          <section className="space-y-2">
+            <h4 className="text-xs font-semibold text-gray-500 uppercase">Registros ({product.assignments.length})</h4>
+            {product.assignments.length === 0 ? (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-gray-400">No está asignado a ningún registro.</span>
+                <button onClick={async () => {
+                  if (!confirm(`¿Eliminar "${product.productCode}" del catálogo?`)) return
+                  try {
+                    const params = new URLSearchParams()
+                    if (companyId) params.set('companyId', companyId)
+                    await apiRequest(`/operations/products-catalog/${encodeURIComponent(product.productCode)}?${params.toString()}`, { method: 'DELETE' })
+                    onChanged(); onClose()
+                  } catch { /* noop */ }
+                }} className="text-[11px] text-red-600 font-medium flex items-center gap-1 hover:underline flex-shrink-0">
+                  <Trash2 className="w-3 h-3" /> Eliminar del catálogo
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {product.assignments.map((a, i) => (
+                  <button key={`${a.trackingCode}-${i}`} onClick={() => onOpenRegister(a.trackingCode)}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-100 hover:bg-gray-50 text-left">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-800 truncate">
+                        {a.trackingCode}
+                        <span className={`ml-2 text-[9px] px-1.5 py-0.5 rounded-full ${a.status === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {a.status === 'COMPLETADO' ? 'Completo' : 'En proceso'}
+                        </span>
+                      </p>
+                      <p className="text-[10px] text-gray-500 truncate">
+                        {a.operationType === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'}{a.vehiclePlate ? ` · ${a.vehiclePlate}` : ''} · {a.photosCount} foto(s)
+                      </p>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-gray-300 flex-shrink-0" />
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      </div>
     </div>
   )
 }
