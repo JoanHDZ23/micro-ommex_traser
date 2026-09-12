@@ -304,6 +304,66 @@ operationsRouter.delete('/products-catalog/:productCode', async (req, res) => {
 })
 
 /**
+ * PATCH /api/operations/products-catalog/:productCode
+ * Edita un producto del catálogo: nuevo código y/o descripción.
+ * Propaga los cambios a TODAS las operaciones donde esté asignado.
+ * Body: { companyId?, newProductCode?, descripcion? }
+ */
+operationsRouter.patch('/products-catalog/:productCode', async (req, res) => {
+  const { productCode } = req.params
+  const { companyId, newProductCode, descripcion } = req.body ?? {}
+  const oldCode = productCode.trim()
+  const newCode = (newProductCode ?? oldCode).trim()
+
+  try {
+    const ops = getOperationsCollection()
+    const catalog = getProductsCatalogCollection()
+
+    // Si cambia el código, verifica unicidad global (excepto el mismo producto)
+    if (newCode.toLowerCase() !== oldCode.toLowerCase()) {
+      const escapedNew = newCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const dupFilter: Record<string, unknown> = { 'lineaBlanca.productCode': { $regex: `^${escapedNew}$`, $options: 'i' } }
+      if (companyId) dupFilter.companyId = companyId
+      const dupOp = await ops.findOne(dupFilter)
+      if (dupOp) { res.status(409).json({ message: `El código "${newCode}" ya existe en la operación ${dupOp.trackingCode}.` }); return }
+      const dupCat = await catalog.findOne({ companyId: companyId ?? null, productCodeLower: newCode.toLowerCase() })
+      if (dupCat) { res.status(409).json({ message: `El código "${newCode}" ya existe en el catálogo.` }); return }
+    }
+
+    // Actualiza en todas las operaciones donde esté el producto
+    const escapedOld = oldCode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const opFilter: Record<string, unknown> = { 'lineaBlanca.productCode': { $regex: `^${escapedOld}$`, $options: 'i' } }
+    if (companyId) opFilter.companyId = companyId
+    const affectedOps = await ops.find(opFilter).toArray()
+    for (const op of affectedOps) {
+      const products = (op.lineaBlanca as LineaBlancaProduct[]) ?? []
+      const idx = products.findIndex((p) => (p.productCode ?? '').toLowerCase() === oldCode.toLowerCase())
+      if (idx === -1) continue
+      const set: Record<string, unknown> = { updatedAt: new Date().toISOString() }
+      set[`lineaBlanca.${idx}.productCode`] = newCode
+      if (descripcion !== undefined) set[`lineaBlanca.${idx}.labelData.descripcion`] = descripcion.trim() || undefined
+      await ops.updateOne({ trackingCode: op.trackingCode }, { $set: set })
+    }
+
+    // Actualiza el catálogo maestro
+    const entry = await catalog.findOne({ companyId: companyId ?? null, productCodeLower: oldCode.toLowerCase() })
+    if (entry) {
+      const set: Record<string, unknown> = { productCode: newCode, productCodeLower: newCode.toLowerCase() }
+      if (descripcion !== undefined) set.descripcion = descripcion.trim() || undefined
+      await catalog.updateOne({ _id: entry._id }, { $set: set })
+    } else {
+      // No estaba en catálogo (producto antiguo solo en operaciones): lo crea
+      await upsertCatalogProduct(companyId, newCode, descripcion, 'registro')
+    }
+
+    res.json({ message: `Producto actualizado.`, productCode: newCode })
+  } catch (err) {
+    console.error('[operations] Error al editar producto del catálogo:', err)
+    res.status(500).json({ message: 'Error al editar el producto.' })
+  }
+})
+
+/**
  * GET /api/operations/products-catalog
  * Catálogo de productos: combina el catálogo maestro (incluye productos sin registro)
  * con las operaciones (registros) donde cada producto está asignado.
