@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, ArrowRight, ChevronDown, Loader2, Package, Plus, Search, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, ArrowRight, Camera, ChevronDown, Loader2, Package, Plus, QrCode, Search, X } from 'lucide-react'
 import { apiRequest, type Operation } from '../lib/api'
 import { getCompanyId } from '../lib/context'
+import { BarcodeScanner } from '../components/BarcodeScanner'
+import { compressImageToBase64 } from '../lib/image-compress'
 
 interface Assignment {
   trackingCode: string
@@ -152,6 +154,34 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
   const [targetOp, setTargetOp] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showScanner, setShowScanner] = useState(false)
+  const [ocrRunning, setOcrRunning] = useState(false)
+
+  // Escanear código de barras → llena el código del producto
+  const handleScanResult = (code: string) => {
+    setShowScanner(false)
+    setProductCode(code.toUpperCase())
+  }
+
+  // Escanear texto de etiqueta (OCR) → escribe en la descripción
+  const handleScanLabelOCR = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setOcrRunning(true)
+    try {
+      const { extractTextFromLabel } = await import('../lib/ocr-scanner')
+      const base64 = await compressImageToBase64(file, { maxDimension: 2000, quality: 0.9 })
+      const raw = await extractTextFromLabel(base64)
+      const text = raw.split('\n').map((l) => l.trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toUpperCase()
+      if (text) setDescripcion((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
+      else setError('No se detectó texto. Intenta con mejor luz.')
+    } catch {
+      setError('No se pudo leer el texto')
+    } finally {
+      setOcrRunning(false)
+    }
+  }
 
   useEffect(() => {
     const params = new URLSearchParams()
@@ -190,9 +220,15 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
 
         <div className="space-y-1">
           <label className="text-xs font-medium text-gray-600">Código del producto *</label>
-          <input type="text" value={productCode} onChange={(e) => setProductCode(e.target.value.toUpperCase())}
-            placeholder="CÓDIGO..." autoFocus
-            className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
+          <div className="flex gap-2">
+            <input type="text" value={productCode} onChange={(e) => setProductCode(e.target.value.toUpperCase())}
+              placeholder="CÓDIGO..." autoFocus
+              className="flex-1 px-3 py-2.5 rounded-lg border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
+            <button type="button" onClick={() => setShowScanner(true)} title="Escanear código de barras"
+              className="px-3 py-2.5 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
+              <QrCode className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="space-y-1">
@@ -200,6 +236,13 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
           <input type="text" value={descripcion} onChange={(e) => setDescripcion(e.target.value.toUpperCase())}
             placeholder="DESCRIPCIÓN (OPCIONAL)..."
             className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
+          {/* Escanear texto de la etiqueta (OCR) */}
+          <label className="mt-1 w-full py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium flex items-center justify-center gap-2 cursor-pointer">
+            {ocrRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+            {ocrRunning ? 'Leyendo texto...' : 'Escanear texto de etiqueta'}
+            <input type="file" accept="image/*" capture="environment" className="hidden" disabled={ocrRunning}
+              onChange={(e) => void handleScanLabelOCR(e)} />
+          </label>
         </div>
 
         <div className="space-y-1">
@@ -226,6 +269,9 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Registrar producto
         </button>
       </div>
+
+      {/* Escáner de código de barras */}
+      {showScanner && <BarcodeScanner onResult={handleScanResult} onClose={() => setShowScanner(false)} />}
     </div>
   )
 }
