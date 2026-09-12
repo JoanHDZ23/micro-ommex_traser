@@ -339,6 +339,7 @@ operationsRouter.get('/products-catalog', async (req, res) => {
     for (const op of operations) {
       const products = (op.lineaBlanca as LineaBlancaProduct[]) ?? []
       for (const p of products) {
+        if (!p?.productCode) continue // ignora productos sin código (datos antiguos)
         const key = p.productCode.toLowerCase()
         if (query && !key.includes(query) && !(p.labelData?.descripcion ?? '').toLowerCase().includes(query)) continue
         let entry = map.get(key)
@@ -366,6 +367,7 @@ operationsRouter.get('/products-catalog', async (req, res) => {
     if (companyId) catalogFilter.companyId = companyId
     const catalogItems = await catalog.find(catalogFilter).toArray()
     for (const item of catalogItems) {
+      if (!item?.productCode) continue
       const key = (item.productCode as string).toLowerCase()
       const desc = (item.descripcion as string | undefined) ?? ''
       if (query && !key.includes(query) && !desc.toLowerCase().includes(query)) continue
