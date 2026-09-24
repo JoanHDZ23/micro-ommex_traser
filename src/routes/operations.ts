@@ -888,16 +888,23 @@ operationsRouter.patch('/:trackingCode/reopen', async (req, res) => {
  */
 operationsRouter.patch('/:trackingCode', async (req, res) => {
   const { trackingCode } = req.params
-  const { vehiclePlate, operatorName } = req.body ?? {}
+  const { vehiclePlate, operatorName, newTrackingCode, createdAt, updatedAt } = req.body ?? {}
 
   try {
     const col = getOperationsCollection()
     const operation = await col.findOne({ trackingCode })
     if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
 
-    const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() }
+    const updates: Record<string, unknown> = { updatedAt: updatedAt ?? new Date().toISOString() }
     if (vehiclePlate?.trim()) updates.vehiclePlate = vehiclePlate.trim()
     if (operatorName?.trim()) updates.operatorName = operatorName.trim()
+    if (createdAt) updates.createdAt = createdAt
+    if (newTrackingCode?.trim() && newTrackingCode.trim() !== trackingCode) {
+      // Verifica que el nuevo trackingCode no exista
+      const existing = await col.findOne({ trackingCode: newTrackingCode.trim() })
+      if (existing) { res.status(409).json({ message: `El tracking code "${newTrackingCode}" ya existe.` }); return }
+      updates.trackingCode = newTrackingCode.trim()
+    }
 
     await col.updateOne({ trackingCode }, { $set: updates })
     res.json({ message: 'Operación actualizada.', ...updates })
