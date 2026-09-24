@@ -26,6 +26,30 @@ export function RecoveryPage() {
   const [error, setError] = useState<string | null>(null)
   const [restoring, setRestoring] = useState<string | null>(null)
   const [restored, setRestored] = useState<RestoredOp[]>([])
+  const [importing, setImporting] = useState(false)
+  const [importResult, setImportResult] = useState<string | null>(null)
+
+  const handleImportAll = async () => {
+    setImporting(true)
+    setImportResult(null)
+    setError(null)
+    try {
+      const data = await apiRequest<{ message: string; results: Array<{ trackingCode: string; folderName: string; status: string; photos: number; products: number }> }>(
+        '/admin/recover/import-all',
+        { method: 'POST', body: { companyId } },
+      )
+      setImportResult(data.message)
+      // Agrega los importados a la lista de restaurados para poder navegar a ellos
+      const nuevos = data.results
+        .filter((r) => r.status === 'importado')
+        .map((r) => ({ trackingCode: r.trackingCode, message: `${r.folderName} · ${r.photos} fotos · ${r.products} producto(s)` }))
+      if (nuevos.length > 0) setRestored((prev) => [...prev, ...nuevos])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al importar desde Drive.')
+    } finally {
+      setImporting(false)
+    }
+  }
 
   const loadTrashed = useCallback(async () => {
     setLoading(true)
@@ -86,6 +110,19 @@ export function RecoveryPage() {
       <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 space-y-1">
         <p className="font-semibold">¿Cómo funciona?</p>
         <p>Las operaciones eliminadas por el job de 20 días están en la papelera de Drive (30 días). Al restaurar, se recuperan las fotos en Drive y se reconstruye el registro en el historial.</p>
+      </div>
+
+      {/* Importar todo desde Drive (carpetas activas no en papelera) */}
+      <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 space-y-2">
+        <p className="text-xs font-semibold text-blue-800">📂 Importar carpetas de Drive al historial</p>
+        <p className="text-[11px] text-blue-700">Si las carpetas aparecen en Drive (no en la papelera) pero no en el historial, usa este botón para importarlas todas de una vez.</p>
+        <button onClick={() => void handleImportAll()} disabled={importing}
+          className="w-full py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+          {importing ? <><Loader2 className="w-4 h-4 animate-spin" /> Importando desde Drive...</> : '⬇️ Importar todas las carpetas de Drive'}
+        </button>
+        {importResult && (
+          <p className="text-xs text-blue-800 font-medium">✓ {importResult}</p>
+        )}
       </div>
 
       {error && (
