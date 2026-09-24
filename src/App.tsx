@@ -8,6 +8,7 @@ import { OperationDetailPage } from './pages/OperationDetailPage'
 import { SharePage } from './pages/SharePage'
 import { SettingsPage } from './pages/SettingsPage'
 import { ProductsCatalogPage } from './pages/ProductsCatalogPage'
+import { RecoveryPage } from './pages/RecoveryPage'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/wizard/:trackingCode" element={<WizardPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/products" element={<ProductsCatalogPage />} />
+          <Route path="/recovery" element={<RecoveryPage />} />
           <Route path="/operation/:trackingCode" element={<OperationDetailPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
