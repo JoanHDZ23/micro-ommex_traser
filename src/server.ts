@@ -20,17 +20,6 @@ app.use(cors({
 }))
 app.use(express.json({ limit: '20mb' }))
 
-// Auto-cleanup con throttle: se ejecuta como máximo una vez cada 12h en cualquier request
-let lastCleanup = 0
-app.use((_req, _res, next) => {
-  const now = Date.now()
-  if (now - lastCleanup > 12 * 60 * 60 * 1000) {
-    lastCleanup = now
-    void runCleanupOldOperations()
-  }
-  next()
-})
-
 // Routes
 app.use('/api/operations', operationsRouter)
 app.use('/api/photos', photosRouter)
@@ -180,9 +169,20 @@ async function start() {
     console.log(`[ommex-tracer] Servidor corriendo en http://localhost:${PORT}`)
   })
 
-  // Limpieza automática: al iniciar y luego cada 24 horas
-  void runCleanupOldOperations()
-  setInterval(() => { void runCleanupOldOperations() }, 24 * 60 * 60 * 1000)
+  // Limpieza automática controlada por configuración en MongoDB.
+  // Se comprueba cada hora; si la config lo habilita y toca ejecutar, corre.
+  scheduleCleanup()
+}
+
+/** Revisa cada hora si toca ejecutar la limpieza según la config de cada empresa. */
+function scheduleCleanup() {
+  const CHECK_INTERVAL = 60 * 60 * 1000 // cada 1 hora
+  const check = async () => {
+    try { await runCleanupOldOperations() } catch { /* silent */ }
+    setTimeout(check, CHECK_INTERVAL)
+  }
+  // Primera comprobación al iniciar (con un pequeño delay)
+  setTimeout(check, 5 * 60 * 1000)
 }
 
 start().catch((err) => {

@@ -151,3 +151,53 @@ settingsRouter.delete('/plates', async (req, res) => {
     res.status(500).json({ message: 'Error al eliminar placa.' })
   }
 })
+
+/**
+ * GET /api/settings/cleanup?companyId=xxx
+ * Obtiene la configuración de limpieza automática de una empresa.
+ */
+settingsRouter.get('/cleanup', async (req, res) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const db = getDb()
+    const doc = await db.collection(COLLECTION).findOne({ companyId })
+    res.json({
+      cleanupEnabled: doc?.cleanupEnabled === true,
+      cleanupDays: typeof doc?.cleanupDays === 'number' ? doc.cleanupDays : 20,
+    })
+  } catch (err) {
+    console.error('[settings] Error al leer config cleanup:', err)
+    res.status(500).json({ message: 'Error al leer configuración de limpieza.' })
+  }
+})
+
+/**
+ * PUT /api/settings/cleanup
+ * Guarda la configuración de limpieza automática.
+ * Body: { companyId, cleanupEnabled, cleanupDays }
+ */
+settingsRouter.put('/cleanup', async (req, res) => {
+  const { companyId, cleanupEnabled, cleanupDays } = req.body ?? {}
+  if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  const days = typeof cleanupDays === 'number' && cleanupDays >= 1 ? Math.round(cleanupDays) : 20
+  try {
+    const db = getDb()
+    await db.collection(COLLECTION).updateOne(
+      { companyId: companyId.trim() },
+      {
+        $set: {
+          companyId: companyId.trim(),
+          cleanupEnabled: Boolean(cleanupEnabled),
+          cleanupDays: days,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      { upsert: true },
+    )
+    res.json({ message: 'Configuración de limpieza guardada.', cleanupEnabled: Boolean(cleanupEnabled), cleanupDays: days })
+  } catch (err) {
+    console.error('[settings] Error al guardar config cleanup:', err)
+    res.status(500).json({ message: 'Error al guardar configuración de limpieza.' })
+  }
+})
