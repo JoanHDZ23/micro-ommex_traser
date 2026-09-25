@@ -60,8 +60,10 @@ photosRouter.patch('/:trackingCode/:photoIndex', async (req, res) => {
     if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
 
     photos[idx].comment = comment?.trim() ?? photos[idx].comment
+    if (req.body.fileId) photos[idx].fileId = req.body.fileId
+    if (req.body.driveUrl) photos[idx].driveUrl = req.body.driveUrl
     await col.updateOne({ trackingCode }, { $set: { photos, updatedAt: new Date().toISOString() } })
-    res.json({ message: 'Comentario actualizado.', photo: photos[idx] })
+    res.json({ message: 'Foto actualizada.', photo: photos[idx] })
   } catch (err) {
     console.error('[photos] Error al editar comentario:', err)
     res.status(500).json({ message: 'Error al actualizar comentario.' })

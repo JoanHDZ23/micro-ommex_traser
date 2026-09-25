@@ -1031,6 +1031,41 @@ operationsRouter.delete('/:trackingCode/linea-blanca/:productCode', async (req, 
 })
 
 /**
+ * PATCH /api/operations/:trackingCode/linea-blanca/:productCode/photo/:photoIndex
+ * Actualiza el fileId y/o driveUrl de una foto de producto (útil para corrección de rutas).
+ * Body: { fileId?, driveUrl?, comment? }
+ */
+operationsRouter.patch('/:trackingCode/linea-blanca/:productCode/photo/:photoIndex', async (req, res) => {
+  const { trackingCode, productCode, photoIndex } = req.params
+  const { fileId, driveUrl, comment } = req.body ?? {}
+  const idx = Number(photoIndex)
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+    const products = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
+    const productIdx = products.findIndex((p) => p.productCode === productCode)
+    if (productIdx === -1) { res.status(404).json({ message: `Producto "${productCode}" no encontrado.` }); return }
+    const photos = products[productIdx].photos
+    if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
+    if (fileId) photos[idx].fileId = fileId
+    if (driveUrl) photos[idx].driveUrl = driveUrl
+    if (comment !== undefined) photos[idx].comment = comment
+    await col.updateOne({ trackingCode }, { $set: { [`lineaBlanca.${productIdx}.photos`]: photos, updatedAt: new Date().toISOString() } })
+    res.json({ message: 'Foto actualizada.', photo: photos[idx] })
+  } catch (err) {
+    console.error('[operations] Error al actualizar foto de producto:', err)
+    res.status(500).json({ message: 'Error al actualizar foto.' })
+  }
+})
+
+/**
+ * PATCH /api/photos/:trackingCode/:photoIndex
+ * Actualiza el fileId y/o driveUrl de una foto general de la operación.
+ * Body: { fileId?, driveUrl?, comment? }
+ */
+
+/**
  * DELETE /api/operations/:trackingCode/linea-blanca/:productCode/photo/:photoIndex
  * Elimina una foto individual de un producto.
  */
