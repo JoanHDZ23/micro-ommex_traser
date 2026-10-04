@@ -395,6 +395,20 @@ export function WizardPage() {
     }
   }
 
+  // Envía UN producto (fotos como álbum + título/observaciones) al WhatsApp configurado.
+  const handleSendProduct = async (productCode: string) => {
+    if (!trackingCode) return
+    setFeedback(`⏳ Enviando ${productCode} por WhatsApp…`)
+    try {
+      const r = await apiRequest<{ message: string }>('/whatsapp-web/send-product', {
+        method: 'POST', body: { trackingCode, productCode },
+      })
+      setFeedback(`✓ ${r.message}`)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar el producto.')
+    }
+  }
+
   const handleLbCapture = async (base64: string, comment: string) => {
     if (!trackingCode || !activeLbProduct) return
     const productCode = activeLbProduct
@@ -829,6 +843,12 @@ export function WizardPage() {
                         } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
                       }} className="w-6 h-6 rounded-full bg-white/80 shadow flex items-center justify-center">
                         <Trash2 className="w-3 h-3 text-white" />
+                      </button>
+                      {/* Enviar ESTE producto al WhatsApp configurado (álbum + texto) */}
+                      <button onClick={() => void handleSendProduct(product.productCode)}
+                        title="Enviar este producto por WhatsApp"
+                        className="w-6 h-6 rounded-full bg-[#128c7e] shadow flex items-center justify-center">
+                        <Send className="w-3 h-3 text-white" />
                       </button>
                       {/* Share this product via WhatsApp — sends photos if supported */}
                       <button onClick={async () => {
