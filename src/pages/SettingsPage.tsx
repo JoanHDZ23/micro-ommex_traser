@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, Loader2, Save, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, FileSpreadsheet, Loader2, Save, Trash2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
@@ -51,17 +51,24 @@ export function SettingsPage() {
   const [savingCleanup, setSavingCleanup] = useState(false)
   const [feedbackCleanup, setFeedbackCleanup] = useState<string | null>(null)
 
+  // Feature: Documentos a Sheets
+  const [sheetsEnabled, setSheetsEnabled] = useState(false)
+  const [savingSheets, setSavingSheets] = useState(false)
+  const [feedbackSheets, setFeedbackSheets] = useState<string | null>(null)
+
   useEffect(() => {
     if (!companyId) { setLoading(false); return }
     const load = async () => {
       try {
-        const [driveData, cleanupData] = await Promise.all([
+        const [driveData, cleanupData, featuresData] = await Promise.all([
           apiRequest<{ driveFolderUrl: string }>(`/settings?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ cleanupEnabled: boolean; cleanupDays: number }>(`/settings/cleanup?companyId=${encodeURIComponent(companyId)}`),
+          apiRequest<{ sheetsEnabled: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
         ])
         setDriveFolderUrl(driveData.driveFolderUrl ?? '')
         setCleanupEnabled(cleanupData.cleanupEnabled ?? false)
         setCleanupDays(cleanupData.cleanupDays ?? 20)
+        setSheetsEnabled(featuresData.sheetsEnabled ?? false)
       } catch { /* no settings yet */ }
       finally { setLoading(false) }
     }
@@ -88,6 +95,19 @@ export function SettingsPage() {
     } catch (err) {
       setFeedbackCleanup(err instanceof Error ? err.message : 'Error al guardar')
     } finally { setSavingCleanup(false) }
+  }
+
+  const handleToggleSheets = async (next: boolean) => {
+    if (!companyId) { setFeedbackSheets('No se encontró el ID de empresa.'); return }
+    setSheetsEnabled(next)
+    setSavingSheets(true); setFeedbackSheets(null)
+    try {
+      await apiRequest('/settings/features', { method: 'PUT', body: { companyId, sheetsEnabled: next } })
+      setFeedbackSheets(`✓ Documentos a Sheets ${next ? 'habilitado' : 'deshabilitado'} para esta empresa`)
+    } catch (err) {
+      setSheetsEnabled(!next) // revertir en caso de error
+      setFeedbackSheets(err instanceof Error ? err.message : 'Error al guardar')
+    } finally { setSavingSheets(false) }
   }
 
   if (loading) {
@@ -219,6 +239,41 @@ export function SettingsPage() {
           <span>{feedbackCleanup}</span>
         </div>
       )}
+
+      {/* ── Función: Documentos a Google Sheets ── */}
+      <section className="space-y-3 p-4 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
+        <div className="flex items-center gap-2">
+          <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">Documentos a Google Sheets</h3>
+        </div>
+        <p className="text-xs text-[var(--color-text-2)]">
+          Permite a esta empresa subir documentos (CSV, Excel o PDF con tablas) y crear
+          hojas de Google Sheets filtrables a partir de ellos. Cada hoja puede eliminarse cuando ya no se necesite.
+        </p>
+
+        {/* Toggle habilitar */}
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-sm font-medium text-[var(--color-text)]">Habilitar para esta empresa</span>
+          <div className="relative flex-shrink-0" onClick={() => { if (!savingSheets) void handleToggleSheets(!sheetsEnabled) }}>
+            <div className={`w-11 h-6 rounded-full transition-colors ${sheetsEnabled ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+            <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${sheetsEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+          </div>
+        </label>
+
+        {feedbackSheets && (
+          <div className={`flex items-start gap-2 p-2.5 rounded-lg text-xs ${feedbackSheets.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+            <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+            <span>{feedbackSheets}</span>
+          </div>
+        )}
+
+        {sheetsEnabled && (
+          <button onClick={() => navigate('/documentos')}
+            className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-2 active:scale-[0.98]">
+            <FileSpreadsheet className="w-4 h-4" /> Abrir herramienta de documentos
+          </button>
+        )}
+      </section>
 
       {/* ── Herramientas ── */}
       <div className="pt-2 border-t border-[var(--color-border)]">

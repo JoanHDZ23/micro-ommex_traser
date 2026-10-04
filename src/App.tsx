@@ -9,6 +9,7 @@ import { SharePage } from './pages/SharePage'
 import { SettingsPage } from './pages/SettingsPage'
 import { ProductsCatalogPage } from './pages/ProductsCatalogPage'
 import { RecoveryPage } from './pages/RecoveryPage'
+import { DocumentsPage } from './pages/DocumentsPage'
 
 export default function App() {
   return (
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="/wizard/:trackingCode" element={<WizardPage />} />
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/products" element={<ProductsCatalogPage />} />
+          <Route path="/documentos" element={<DocumentsPage />} />
           <Route path="/recovery" element={<RecoveryPage />} />
           <Route path="/operation/:trackingCode" element={<OperationDetailPage />} />
           <Route path="/settings" element={<SettingsPage />} />

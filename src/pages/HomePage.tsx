@@ -1,6 +1,9 @@
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Package, Settings } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Database, Package, Settings } from 'lucide-react'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
+import { apiRequest } from '../lib/api'
+import { getCompanyId } from '../lib/context'
 
 const HOME_GUIDE: GuideStep[] = [
   {
@@ -32,6 +35,19 @@ const HOME_GUIDE: GuideStep[] = [
 
 export function HomePage() {
   const navigate = useNavigate()
+  const [sheetsEnabled, setSheetsEnabled] = useState(false)
+
+  useEffect(() => {
+    const companyId = getCompanyId()
+    if (!companyId) return
+    void apiRequest<{ sheetsEnabled: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`)
+      .then((r) => setSheetsEnabled(r.sheetsEnabled ?? false))
+      .catch(() => { /* sin conexión: el acceso se muestra igual para poder probar */ })
+  }, [])
+
+  // El acceso a "Documentos" se muestra siempre para poder probarlo; si la empresa
+  // no tiene la función habilitada en el backend, la propia herramienta lo indicará.
+  void sheetsEnabled
 
   return (
     <div className="p-4 space-y-5">
@@ -82,6 +98,20 @@ export function HomePage() {
         </div>
         <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
       </button>
+
+      {/* Documentos / Tablas importadas — visible siempre para poder probarlo */}
+      <section>
+        <h3 className="text-xs font-semibold text-[var(--color-text-3)] uppercase tracking-wide mb-3">
+          Base de datos
+        </h3>
+        <QuickAction
+          icon={Database}
+          title="Base de datos"
+          description="Importa tablas (CSV, Excel o PDF) y consulta los datos aquí"
+          color="bg-emerald-50 text-emerald-600"
+          onClick={() => navigate('/documentos')}
+        />
+      </section>
 
       {/* Settings link */}
       <button

@@ -99,3 +99,51 @@ export interface PaginatedOperations {
   operations: Operation[]
   pagination: { page: number; limit: number; total: number; pages: number }
 }
+
+// ── Documentos → Google Sheets ──────────────────────────────────────────────
+
+export interface CompanySheet {
+  id: string
+  companyId: string
+  sheetName: string
+  /** Presentes solo si la tabla se exportó a Google Sheets. */
+  sheetId?: string
+  sheetUrl?: string
+  sourceFileName: string
+  columns: string[]
+  rowCount: number
+  createdAt: string
+}
+
+export interface ParsedTable {
+  headers: string[]
+  rows: string[][]
+}
+
+export interface SheetData {
+  id: string
+  sheetName: string
+  sheetUrl?: string
+  sourceFileName: string
+  headers: string[]
+  rows: string[][]
+  rowCount: number
+  rowsTruncated: boolean
+  /** Origen de los datos devueltos: 'sheet' (en vivo) o 'stored' (copia local). */
+  source?: 'sheet' | 'stored'
+  createdAt: string
+}
+
+/** Lee un File como base64 (sin el prefijo data URL). */
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      const base64 = result.includes(',') ? result.slice(result.indexOf(',') + 1) : result
+      resolve(base64)
+    }
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo.'))
+    reader.readAsDataURL(file)
+  })
+}
