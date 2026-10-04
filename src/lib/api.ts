@@ -80,6 +80,8 @@ export interface Operation {
   lineaBlancaSteps?: string[]
   createdAt: string
   updatedAt: string
+  /** Hora en que se marcó como completado (si aplica). */
+  completedAt?: string
 }
 
 export interface CreateOperationPayload {

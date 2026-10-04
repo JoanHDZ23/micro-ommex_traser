@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowDown, ArrowRight, ArrowUp, Camera, ClipboardList, Database, Package, Settings } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Database, Package, Settings } from 'lucide-react'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
@@ -110,13 +110,6 @@ export function HomePage() {
           description="Importa tablas (CSV, Excel o PDF) y consulta los datos aquí"
           color="bg-emerald-50 text-emerald-600"
           onClick={() => navigate('/documentos')}
-        />
-        <QuickAction
-          icon={Camera}
-          title="Subir foto"
-          description="Toma una foto y obtén su enlace para compartir"
-          color="bg-blue-50 text-blue-600"
-          onClick={() => navigate('/foto')}
         />
       </section>
 

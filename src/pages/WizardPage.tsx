@@ -195,6 +195,9 @@ export function WizardPage() {
     // 1. Cache local (instantáneo)
     const cached = await cachePhoto({ trackingCode, base64, comment, productCode })
     setLocalPhotos((prev) => [...prev, cached])
+    // Hora real de captura en el dispositivo (para que el registro muestre la
+    // hora correcta y no la del servidor al subir en segundo plano).
+    const clientTimestamp = new Date(cached.timestamp).toISOString()
 
     // 2. Upload en background
     void (async () => {
@@ -202,12 +205,12 @@ export function WizardPage() {
         if (productCode) {
           await apiRequest<UploadPhotoResponse>(
             `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo`,
-            { method: 'POST', body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment } },
+            { method: 'POST', body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp } },
           )
         } else {
           await apiRequest<UploadPhotoResponse>('/photos/upload', {
             method: 'POST',
-            body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment },
+            body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp },
           })
         }
         await markAsUploaded(cached.id)
@@ -292,13 +295,14 @@ export function WizardPage() {
     const cached = await cachePhoto({ trackingCode, base64, comment })
     setLocalPhotos((prev) => [...prev, cached])
     setFeedback('✓ Foto guardada')
+    const clientTimestamp = new Date(cached.timestamp).toISOString()
 
     // 2. Subir a Drive en background
     void (async () => {
       try {
         await apiRequest<UploadPhotoResponse>('/photos/upload', {
           method: 'POST',
-          body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment },
+          body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp },
         })
         await markAsUploaded(cached.id)
         // Remove from local state since server now has it
@@ -315,7 +319,7 @@ export function WizardPage() {
     setChatMessage('')
     setFeedback('✓ Nota agregada')
     try {
-      await apiRequest('/photos/note', { method: 'POST', body: { trackingCode, comment } })
+      await apiRequest('/photos/note', { method: 'POST', body: { trackingCode, comment, clientTimestamp: new Date().toISOString() } })
       if (comment.length > 3) { saveTemplate(comment); setTemplates(getFrequentTemplates()) }
       await loadOperation()
     } catch (err) {
@@ -425,7 +429,7 @@ export function WizardPage() {
     if (!trackingCode) return
     setUploading(true)
     try {
-      await apiRequest(`/operations/${trackingCode}/complete`, { method: 'PATCH' })
+      await apiRequest(`/operations/${trackingCode}/complete`, { method: 'PATCH', body: { clientTimestamp: new Date().toISOString() } })
       await loadOperation()
       setFeedback('✓ Registro completado')
     } catch (err) {
@@ -598,7 +602,10 @@ export function WizardPage() {
           </button>
         </div>
         {isCompleted ? (
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium">✓ Completo</span>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium"
+            title={operation.completedAt ? `Finalizado el ${new Date(operation.completedAt).toLocaleString('es-CO')}` : undefined}>
+            ✓ Completo{operation.completedAt ? ` · ${new Date(operation.completedAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}` : ''}
+          </span>
         ) : (
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">En proceso</span>
         )}
@@ -609,13 +616,21 @@ export function WizardPage() {
 
         {/* Completed actions */}
         {isCompleted && (
-          <div className="flex gap-2">
-            <button onClick={handleShare} className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5">
-              <Share2 className="w-3.5 h-3.5" /> Compartir
-            </button>
-            <button onClick={() => void handleReopen()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-white text-gray-600 text-xs font-medium flex items-center justify-center gap-1.5 border border-gray-200">
-              <Edit3 className="w-3.5 h-3.5" /> Editar
-            </button>
+          <div className="space-y-2">
+            {operation.completedAt && (
+              <div className="flex items-center justify-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 rounded-lg py-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Finalizado el {new Date(operation.completedAt).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button onClick={handleShare} className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5">
+                <Share2 className="w-3.5 h-3.5" /> Compartir
+              </button>
+              <button onClick={() => void handleReopen()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-white text-gray-600 text-xs font-medium flex items-center justify-center gap-1.5 border border-gray-200">
+                <Edit3 className="w-3.5 h-3.5" /> Editar
+              </button>
+            </div>
           </div>
         )}
 
@@ -1097,12 +1112,12 @@ export function WizardPage() {
                 <Send className="w-4 h-4 text-white" />
               </button>
             )}
-            {/* Camera button — captura y sube automáticamente (varias fotos) */}
-            <label className="w-9 h-9 rounded-full bg-[var(--color-primary)] flex items-center justify-center cursor-pointer flex-shrink-0">
+            {/* Camera button — abre la cámara EN VIVO del dispositivo (CameraCapture) */}
+            <button type="button" onClick={() => setShowCamera(true)}
+              className="w-9 h-9 rounded-full bg-[var(--color-primary)] flex items-center justify-center cursor-pointer flex-shrink-0"
+              aria-label="Abrir cámara">
               <Camera className="w-5 h-5 text-white" />
-              <input type="file" accept="image/*" capture="environment" multiple className="hidden"
-                onChange={(e) => void handleNativeCapture(e, false)} />
-            </label>
+            </button>
           </div>
           {/* Quick actions */}
           {(operation.photos.length > 0 || lbProducts.length > 0) && (

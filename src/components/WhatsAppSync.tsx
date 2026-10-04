@@ -47,9 +47,12 @@ export function WhatsAppSync() {
     } catch { /* sin config aún */ }
   }
 
+  // Sufijo de companyId para las rutas (cada empresa su propia sesión de WhatsApp).
+  const cq = `companyId=${encodeURIComponent(companyId)}`
+
   const refreshStatus = async () => {
     try {
-      const s = await apiRequest<StatusResp>('/whatsapp-web/status')
+      const s = await apiRequest<StatusResp>(`/whatsapp-web/status?${cq}`)
       setStatus(s.status)
       setUnavailable(false)
       if (s.status === 'open') { setQr(null); stopPolling() }
@@ -61,7 +64,7 @@ export function WhatsAppSync() {
   const connect = async () => {
     setLoading(true); setError(null)
     try {
-      await apiRequest('/whatsapp-web/start', { method: 'POST' })
+      await apiRequest('/whatsapp-web/start', { method: 'POST', body: { companyId } })
       stopPolling()
       pollRef.current = setInterval(() => { void pollQr() }, 2500)
       void pollQr()
@@ -74,11 +77,11 @@ export function WhatsAppSync() {
 
   const pollQr = async () => {
     try {
-      const s = await apiRequest<StatusResp>('/whatsapp-web/status')
+      const s = await apiRequest<StatusResp>(`/whatsapp-web/status?${cq}`)
       setStatus(s.status)
       if (s.status === 'open') { setQr(null); stopPolling(); return }
       if (s.hasQr) {
-        const r = await apiRequest<{ qr: string }>('/whatsapp-web/qr?format=json')
+        const r = await apiRequest<{ qr: string }>(`/whatsapp-web/qr?format=json&${cq}`)
         setQr(r.qr)
       }
     } catch { /* reintenta */ }
@@ -88,7 +91,7 @@ export function WhatsAppSync() {
     if (!confirm('¿Desvincular WhatsApp? Tendrás que volver a escanear el QR.')) return
     setLoading(true)
     try {
-      await apiRequest('/whatsapp-web/logout', { method: 'POST' })
+      await apiRequest('/whatsapp-web/logout', { method: 'POST', body: { companyId } })
       setStatus('disconnected'); setQr(null)
     } catch { /* noop */ }
     finally { setLoading(false) }
@@ -116,8 +119,9 @@ export function WhatsAppSync() {
         )}
       </div>
       <p className="text-xs text-[var(--color-text-2)]">
-        Sincroniza WhatsApp (como WhatsApp Web) y define el chat o grupo al que se enviarán los
-        registros. El envío se hace desde cada registro con el botón de compartir.
+        Vincula el WhatsApp de <strong>esta empresa</strong> (como WhatsApp Web) y define el chat o
+        grupo al que se enviarán los registros. Cada empresa usa su propia cuenta de WhatsApp.
+        El envío se hace desde cada registro con el botón de compartir.
       </p>
 
       {unavailable && (
