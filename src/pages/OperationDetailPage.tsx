@@ -163,6 +163,9 @@ export function OperationDetailPage() {
       {/* Share button */}
       <ShareButton trackingCode={operation.trackingCode} operationType={operation.operationType} vehiclePlate={operation.vehiclePlate ?? ''} operatorName={operation.operatorName} />
 
+      {/* Enviar al WhatsApp configurado (foto + mensaje por producto, en orden) */}
+      <SendWhatsAppButton trackingCode={operation.trackingCode} />
+
       {/* Edit/Reopen button — visible when completed */}
       {operation.status === 'COMPLETADO' && (
         <button
@@ -420,6 +423,39 @@ function ShareButton({ trackingCode, operationType, vehiclePlate, operatorName }
     >
       <Share2 className="w-4 h-4" /> Compartir registro
     </button>
+  )
+}
+
+/** Envía el registro completo (info + fotos en orden) al WhatsApp configurado. */
+function SendWhatsAppButton({ trackingCode }: { trackingCode: string }) {
+  const [sending, setSending] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const send = async () => {
+    setSending(true); setMsg(null)
+    try {
+      const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', {
+        method: 'POST', body: { trackingCode },
+      })
+      setMsg(`✓ ${r.message}`)
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
+    } finally { setSending(false) }
+  }
+
+  return (
+    <div className="space-y-2">
+      <button onClick={() => void send()} disabled={sending}
+        className="w-full py-2.5 rounded-xl bg-[#128c7e] text-white font-medium text-sm flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.98]">
+        {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+        Enviar por WhatsApp
+      </button>
+      {msg && (
+        <div className={`p-2.5 rounded-lg text-xs text-center ${msg.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+          {msg}
+        </div>
+      )}
+    </div>
   )
 }
 
