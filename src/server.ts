@@ -4,6 +4,7 @@ import { connectToMongo } from './lib/mongodb.js'
 import { operationsRouter } from './routes/operations.js'
 import { photosRouter } from './routes/photos.js'
 import { settingsRouter } from './routes/settings.js'
+import { sheetsRouter } from './routes/sheets.js'
 import { runCleanupOldOperations } from './jobs/cleanupOldOperations.js'
 
 const app = express()
@@ -24,6 +25,7 @@ app.use(express.json({ limit: '20mb' }))
 app.use('/api/operations', operationsRouter)
 app.use('/api/photos', photosRouter)
 app.use('/api/settings', settingsRouter)
+app.use('/api/sheets', sheetsRouter)
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -263,14 +265,38 @@ app.post('/api/admin/recover/import-all', async (req, res) => {
 })
 
 async function start() {
-  await connectToMongo()
+  // El servidor escucha SIEMPRE, aunque MongoDB no esté disponible, para que
+  // las funciones que dependen solo de Google Sheets / Apps Script (importar y
+  // visualizar tablas) sigan operativas. Los endpoints que requieran Mongo
+  // devolverán un error controlado hasta que la conexión esté lista.
   app.listen(PORT, () => {
     console.log(`[ommex-tracer] Servidor corriendo en http://localhost:${PORT}`)
   })
 
-  // Limpieza automática controlada por configuración en MongoDB.
-  // Se comprueba cada hora; si la config lo habilita y toca ejecutar, corre.
-  scheduleCleanup()
+  try {
+    await connectToMongo()
+    console.log('[ommex-tracer] MongoDB conectado.')
+    // La limpieza automática depende de Mongo; solo se programa si conectó.
+    scheduleCleanup()
+  } catch (err) {
+    console.warn('[ommex-tracer] MongoDB no disponible al iniciar. El servidor sigue activo; se reintentará en segundo plano.', err instanceof Error ? err.message : err)
+    retryMongo()
+  }
+}
+
+/** Reintenta la conexión a MongoDB en segundo plano sin bloquear el servidor. */
+function retryMongo() {
+  const RETRY_INTERVAL = 30_000
+  const attempt = async () => {
+    try {
+      await connectToMongo()
+      console.log('[ommex-tracer] MongoDB conectado (reintento exitoso).')
+      scheduleCleanup()
+    } catch {
+      setTimeout(attempt, RETRY_INTERVAL)
+    }
+  }
+  setTimeout(attempt, RETRY_INTERVAL)
 }
 
 /** Revisa cada hora si toca ejecutar la limpieza según la config de cada empresa. */

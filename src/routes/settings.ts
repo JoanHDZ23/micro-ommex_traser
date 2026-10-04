@@ -201,3 +201,50 @@ settingsRouter.put('/cleanup', async (req, res) => {
     res.status(500).json({ message: 'Error al guardar configuración de limpieza.' })
   }
 })
+
+/**
+ * GET /api/settings/features?companyId=xxx
+ * Devuelve los flags de funciones habilitadas para la empresa.
+ */
+settingsRouter.get('/features', async (req, res) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const db = getDb()
+    const doc = await db.collection(COLLECTION).findOne({ companyId })
+    res.json({
+      sheetsEnabled: doc?.sheetsEnabled === true,
+    })
+  } catch (err) {
+    console.error('[settings] Error al leer features:', err)
+    res.status(500).json({ message: 'Error al leer funciones.' })
+  }
+})
+
+/**
+ * PUT /api/settings/features
+ * Habilita/deshabilita funciones para la empresa.
+ * Body: { companyId, sheetsEnabled }
+ */
+settingsRouter.put('/features', async (req, res) => {
+  const { companyId, sheetsEnabled } = req.body ?? {}
+  if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const db = getDb()
+    await db.collection(COLLECTION).updateOne(
+      { companyId: companyId.trim() },
+      {
+        $set: {
+          companyId: companyId.trim(),
+          sheetsEnabled: Boolean(sheetsEnabled),
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      { upsert: true },
+    )
+    res.json({ message: 'Funciones actualizadas.', sheetsEnabled: Boolean(sheetsEnabled) })
+  } catch (err) {
+    console.error('[settings] Error al guardar features:', err)
+    res.status(500).json({ message: 'Error al guardar funciones.' })
+  }
+})

@@ -12,7 +12,9 @@
     "cors": "2.8.5",
     "express": "5.1.0",
     "mongodb": "6.16.0",
-    "nanoid": "5.1.5"
+    "nanoid": "5.1.5",
+    "pdfjs-dist": "^6.4.299",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/cors": "2.8.19",
