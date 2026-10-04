@@ -883,11 +883,11 @@ export function WizardPage() {
                         )}
                         {/* Add photo buttons */}
                         <div className="flex items-center gap-2 pt-1">
-                          <label className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                          <button type="button" disabled={uploading}
+                            onClick={() => { setActiveLbProduct(product.productCode); setLbCameraOpen(true) }}
+                            className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
                             <Camera className="w-3.5 h-3.5" /> Foto
-                            <input type="file" accept="image/*" capture="environment" multiple className="hidden"
-                              disabled={uploading} onChange={(e) => void handleNativeCapture(e, true)} />
-                          </label>
+                          </button>
                           <label className="flex-1 py-2 rounded-lg border border-[#075e54] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                             📁 Galería
                             <input ref={lbFileInputRef} type="file" accept="image/*" multiple className="hidden"
@@ -938,12 +938,11 @@ export function WizardPage() {
 
                   {/* Add photo buttons — disponible aunque la operación esté completada */}
                   <div className="flex items-center gap-2 pt-1">
-                    <label onClick={() => setActiveLbProduct(p.productCode)}
-                      className="flex-1 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                    <button type="button" disabled={uploading}
+                      onClick={() => { setActiveLbProduct(p.productCode); setLbCameraOpen(true) }}
+                      className="flex-1 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
                       <Camera className="w-3.5 h-3.5" /> Foto
-                      <input type="file" accept="image/*" capture="environment" multiple className="hidden"
-                        disabled={uploading} onChange={(e) => void handleNativeCapture(e, true, p.productCode)} />
-                    </label>
+                    </button>
                     <label onClick={() => setActiveLbProduct(p.productCode)}
                       className="flex-1 py-1.5 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                       📁 Galería
