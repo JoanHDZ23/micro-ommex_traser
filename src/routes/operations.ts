@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { getOperationsCollection, getProductsCatalogCollection } from '../lib/mongodb.js'
 import { generateTrackingCode } from '../lib/tracking-code.js'
 import { uploadToDrive } from '../lib/drive-upload.js'
-import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
+import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, normalizeClientTimestamp, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
 
 export const operationsRouter = Router()
 
@@ -665,7 +665,7 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
  */
 operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (req, res) => {
   const { trackingCode, productCode } = req.params
-  const { stepIndex, base64Image, mimeType, comment } = req.body ?? {}
+  const { stepIndex, base64Image, mimeType, comment, clientTimestamp } = req.body ?? {}
 
   if (stepIndex === undefined || stepIndex === null) {
     res.status(400).json({ message: 'stepIndex es requerido.' })
@@ -747,7 +747,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
       productCode,
       ...(comment?.trim() ? { comment: comment.trim() } : {}),
       photoType: 'producto',
-      timestamp: new Date().toISOString(),
+      timestamp: normalizeClientTimestamp(clientTimestamp),
     }
 
     // Siempre agregar (sin reemplazar) — permite fotos ilimitadas
@@ -816,6 +816,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
  */
 operationsRouter.patch('/:trackingCode/complete', async (req, res) => {
   const { trackingCode } = req.params
+  const { clientTimestamp } = req.body ?? {}
 
   try {
     const col = getOperationsCollection()
@@ -848,12 +849,13 @@ operationsRouter.patch('/:trackingCode/complete', async (req, res) => {
       return
     }
 
+    const completedAt = normalizeClientTimestamp(clientTimestamp)
     await col.updateOne(
       { trackingCode },
-      { $set: { status: 'COMPLETADO', updatedAt: new Date().toISOString() } },
+      { $set: { status: 'COMPLETADO', completedAt, updatedAt: new Date().toISOString() } },
     )
 
-    res.json({ message: 'Operación marcada como completada.', trackingCode })
+    res.json({ message: 'Operación marcada como completada.', trackingCode, completedAt })
   } catch (err) {
     console.error('[operations] Error al completar:', err)
     res.status(500).json({ message: 'Error al completar la operación.' })

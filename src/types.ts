@@ -94,4 +94,24 @@ export interface OperationLog {
   status: OperationStatus
   createdAt: string
   updatedAt: string
+  /** Hora en que se marcó como completado el registro. */
+  completedAt?: string
+}
+
+/**
+ * Normaliza un timestamp enviado por el cliente (hora real de captura en el
+ * dispositivo). Si es una fecha ISO válida y razonable (no muy en el futuro),
+ * la usa; de lo contrario cae a la hora del servidor. Esto evita el desfase
+ * que se producía al usar la hora del servidor en el momento de la subida en
+ * segundo plano.
+ */
+export function normalizeClientTimestamp(clientTimestamp: unknown): string {
+  if (typeof clientTimestamp === 'string') {
+    const t = Date.parse(clientTimestamp)
+    // Válida y no más de 1 día en el futuro (tolerancia a relojes desfasados).
+    if (!Number.isNaN(t) && t <= Date.now() + 24 * 60 * 60 * 1000) {
+      return new Date(t).toISOString()
+    }
+  }
+  return new Date().toISOString()
 }

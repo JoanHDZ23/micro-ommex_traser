@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { uploadToDrive } from '../lib/drive-upload.js'
 import { getOperationsCollection } from '../lib/mongodb.js'
-import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, FREE_STEPS, PRODUCT_CODE_STEPS, OPTIONAL_PRODUCT_CODE_STEPS, type OperationType, type PhotoRecord } from '../types.js'
+import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, FREE_STEPS, PRODUCT_CODE_STEPS, OPTIONAL_PRODUCT_CODE_STEPS, normalizeClientTimestamp, type OperationType, type PhotoRecord } from '../types.js'
 
 export const photosRouter = Router()
 
@@ -71,7 +71,7 @@ photosRouter.patch('/:trackingCode/:photoIndex', async (req, res) => {
  * POST /api/photos/upload
  */
 photosRouter.post('/upload', async (req, res) => {
-  const { trackingCode, stepIndex, base64Image, mimeType, productCode, comment } = req.body ?? {}
+  const { trackingCode, stepIndex, base64Image, mimeType, productCode, comment, clientTimestamp } = req.body ?? {}
 
   if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
   if (stepIndex === undefined || stepIndex === null) { res.status(400).json({ message: 'stepIndex es requerido.' }); return }
@@ -138,7 +138,7 @@ photosRouter.post('/upload', async (req, res) => {
       ...(isMultiPhotoStep ? { photoIndex } : {}),
       ...(comment?.trim() ? { comment: comment.trim() } : {}),
       photoType: 'proceso',
-      timestamp: new Date().toISOString(),
+      timestamp: normalizeClientTimestamp(clientTimestamp),
     }
 
     if (alreadyExists && !isMultiPhotoStep) {
@@ -163,7 +163,7 @@ photosRouter.post('/upload', async (req, res) => {
  * Agrega un comentario/nota sin imagen al registro (mensaje de solo texto).
  */
 photosRouter.post('/note', async (req, res) => {
-  const { trackingCode, comment } = req.body ?? {}
+  const { trackingCode, comment, clientTimestamp } = req.body ?? {}
   if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
   if (!comment?.trim()) { res.status(400).json({ message: 'comment es requerido.' }); return }
 
@@ -179,7 +179,7 @@ photosRouter.post('/note', async (req, res) => {
       fileId: 'note',
       comment: comment.trim(),
       photoType: 'proceso',
-      timestamp: new Date().toISOString(),
+      timestamp: normalizeClientTimestamp(clientTimestamp),
     }
 
     await col.updateOne(

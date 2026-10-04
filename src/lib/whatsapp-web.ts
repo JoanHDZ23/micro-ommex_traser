@@ -32,29 +32,55 @@ interface State {
   starting: boolean
 }
 
-const S: State = { sock: null, status: 'disconnected', qrDataUrl: null, lastError: null, starting: false }
+/**
+ * Sesiones de WhatsApp por compañía (multi-tenant). Cada companyId tiene su
+ * propia conexión/sesión, de modo que cada empresa vincula su propio WhatsApp.
+ * La clave es el companyId; si no se provee, se usa 'default' (compatibilidad
+ * con la sesión única previa).
+ */
+const SESSIONS = new Map<string, State>()
+
+/** Normaliza el companyId a una clave de sesión estable. */
+function sessionKey(companyId?: string): string {
+  const c = (companyId ?? '').trim()
+  return c || 'default'
+}
+
+/** Obtiene (o crea) el State de una compañía. */
+function getState(companyId?: string): State {
+  const key = sessionKey(companyId)
+  let st = SESSIONS.get(key)
+  if (!st) {
+    st = { sock: null, status: 'disconnected', qrDataUrl: null, lastError: null, starting: false }
+    SESSIONS.set(key, st)
+  }
+  return st
+}
 
 export function isWhatsAppWebEnabled(): boolean {
   return process.env.ENABLE_WHATSAPP_WEB === 'true'
 }
 
-export function getStatus(): { status: ConnStatus; hasQr: boolean; error: string | null } {
+export function getStatus(companyId?: string): { status: ConnStatus; hasQr: boolean; error: string | null } {
+  const S = getState(companyId)
   return { status: S.status, hasQr: Boolean(S.qrDataUrl), error: S.lastError }
 }
 
-export function getQrDataUrl(): string | null {
-  return S.qrDataUrl
+export function getQrDataUrl(companyId?: string): string | null {
+  return getState(companyId).qrDataUrl
 }
 
-/** Inicia (o reutiliza) la conexión con WhatsApp Web. Idempotente. */
-export async function startWhatsAppWeb(): Promise<void> {
+/** Inicia (o reutiliza) la conexión con WhatsApp Web para una compañía. Idempotente. */
+export async function startWhatsAppWeb(companyId?: string): Promise<void> {
   if (!isWhatsAppWebEnabled()) throw new Error('WhatsApp Web está desactivado (define ENABLE_WHATSAPP_WEB=true).')
+  const key = sessionKey(companyId)
+  const S = getState(companyId)
   if (S.sock && (S.status === 'open' || S.status === 'connecting' || S.status === 'qr')) return
   if (S.starting) return
   S.starting = true
 
   try {
-    const { state, saveCreds } = await useMongoAuthState('default')
+    const { state, saveCreds } = await useMongoAuthState(key)
     const { version } = await fetchLatestBaileysVersion()
 
     const sock = makeWASocket({
@@ -88,12 +114,12 @@ export async function startWhatsAppWeb(): Promise<void> {
         if (loggedOut) {
           // Sesión cerrada desde el teléfono: limpiar credenciales.
           S.lastError = 'Sesión cerrada. Vuelve a escanear el QR.'
-          void clearSession()
+          void clearSession(key)
         } else {
           // Reconexión automática (caída de red, reinicio, etc.)
           S.lastError = statusCode ? `Conexión cerrada (código ${statusCode}). Reintentando…` : 'Conexión cerrada. Reintentando…'
           S.starting = false
-          setTimeout(() => { void startWhatsAppWeb() }, 3000)
+          setTimeout(() => { void startWhatsAppWeb(key) }, 3000)
         }
       }
     })
@@ -107,6 +133,7 @@ export async function startWhatsAppWeb(): Promise<void> {
           await getDb().collection(MESSAGES_COLLECTION).insertOne({
             direction: 'inbound',
             channel: 'whatsapp-web',
+            companyId: key === 'default' ? null : key,
             from: m.key.remoteJid ?? null,
             pushName: m.pushName ?? null,
             body: m.message?.conversation ?? m.message?.extendedTextMessage?.text ?? null,
@@ -130,23 +157,24 @@ export function toJid(input: string): string {
   return `${digits}@s.whatsapp.net`
 }
 
-function ensureOpen(): WASocket {
+function ensureOpen(companyId?: string): WASocket {
+  const S = getState(companyId)
   if (!S.sock || S.status !== 'open') {
-    throw new Error('WhatsApp Web no está conectado. Escanea el QR primero (GET /api/whatsapp-web/qr).')
+    throw new Error('WhatsApp Web no está conectado para esta empresa. Escanea el QR primero en Configuración.')
   }
   return S.sock
 }
 
 /** Envía texto a un número o grupo. */
-export async function sendText(to: string, text: string): Promise<{ id: string | null }> {
-  const sock = ensureOpen()
+export async function sendText(to: string, text: string, companyId?: string): Promise<{ id: string | null }> {
+  const sock = ensureOpen(companyId)
   const res = await sock.sendMessage(toJid(to), { text })
   return { id: res?.key?.id ?? null }
 }
 
 /** Envía una imagen (desde Buffer o URL) a un número o grupo, con caption opcional. */
-export async function sendImage(to: string, image: Buffer | string, caption?: string): Promise<{ id: string | null }> {
-  const sock = ensureOpen()
+export async function sendImage(to: string, image: Buffer | string, caption?: string, companyId?: string): Promise<{ id: string | null }> {
+  const sock = ensureOpen(companyId)
   const img = typeof image === 'string' ? { url: image } : image
   const res = await sock.sendMessage(toJid(to), { image: img, caption })
   return { id: res?.key?.id ?? null }
@@ -164,8 +192,9 @@ export async function sendAlbum(
   to: string,
   images: Array<string | Buffer>,
   caption?: string,
+  companyId?: string,
 ): Promise<{ id: string | null; count: number }> {
-  const sock = ensureOpen()
+  const sock = ensureOpen(companyId)
   const jid = toJid(to)
 
   // Si es una sola imagen, no tiene sentido el álbum: envío normal.
@@ -211,8 +240,9 @@ export async function sendImageFromGitHub(
   image: Buffer | string,
   caption?: string,
   opts: { path?: string; fileName?: string } = {},
+  companyId?: string,
 ): Promise<{ id: string | null; rawUrl: string }> {
-  const sock = ensureOpen()
+  const sock = ensureOpen(companyId)
   const { uploadImageToGitHub } = await import('./github-storage.js')
   const { rawUrl } = await uploadImageToGitHub(image, { path: opts.path || 'whatsapp', fileName: opts.fileName })
   const res = await sock.sendMessage(toJid(to), { image: { url: rawUrl }, caption })
@@ -220,8 +250,8 @@ export async function sendImageFromGitHub(
 }
 
 /** Lista los grupos a los que pertenece la cuenta: { id (JID), name }. */
-export async function listGroups(): Promise<Array<{ id: string; name: string }>> {
-  const sock = ensureOpen()
+export async function listGroups(companyId?: string): Promise<Array<{ id: string; name: string }>> {
+  const sock = ensureOpen(companyId)
   const groups = await sock.groupFetchAllParticipating()
   return Object.values(groups).map((g) => ({ id: g.id, name: g.subject || g.id }))
 }
@@ -230,21 +260,24 @@ export async function listGroups(): Promise<Array<{ id: string; name: string }>>
  * Resuelve un enlace/código de invitación de grupo a su JID (y nombre).
  * Acepta la URL completa (https://chat.whatsapp.com/XXXX) o solo el código.
  */
-export async function resolveGroupInvite(linkOrCode: string): Promise<{ id: string; name: string }> {
-  const sock = ensureOpen()
+export async function resolveGroupInvite(linkOrCode: string, companyId?: string): Promise<{ id: string; name: string }> {
+  const sock = ensureOpen(companyId)
   const code = (linkOrCode || '').trim().replace(/^https?:\/\/chat\.whatsapp\.com\//i, '').replace(/\/+$/, '')
   const meta = await sock.groupGetInviteInfo(code)
   return { id: meta.id, name: meta.subject || meta.id }
 }
 
-/** Cierra la sesión y borra las credenciales (fuerza nuevo QR la próxima vez). */
-export async function clearSession(): Promise<void> {
+/** Cierra la sesión y borra las credenciales de una compañía (fuerza nuevo QR). */
+export async function clearSession(companyId?: string): Promise<void> {
+  const key = sessionKey(companyId)
+  const S = getState(key)
   try { await S.sock?.logout() } catch { /* noop */ }
   S.sock = null
   S.status = 'disconnected'
   S.qrDataUrl = null
+  S.lastError = null
   try {
-    const { clear } = await useMongoAuthState('default')
+    const { clear } = await useMongoAuthState(key)
     await clear()
   } catch { /* noop */ }
 }

@@ -23,15 +23,17 @@ export const whatsappWebRouter = Router()
 
 const COLLECTION = 'whatsapp_messages'
 
-whatsappWebRouter.get('/status', (_req, res) => {
-  res.json(getStatus())
+whatsappWebRouter.get('/status', (req, res) => {
+  const companyId = (req.query.companyId as string) || undefined
+  res.json(getStatus(companyId))
 })
 
 /** Inicia la conexión (si no está activa) y devuelve el estado. */
-whatsappWebRouter.post('/start', async (_req, res) => {
+whatsappWebRouter.post('/start', async (req, res) => {
+  const companyId = (req.body?.companyId as string) || (req.query.companyId as string) || undefined
   try {
-    await startWhatsAppWeb()
-    res.json(getStatus())
+    await startWhatsAppWeb(companyId)
+    res.json(getStatus(companyId))
   } catch (err) {
     res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo iniciar WhatsApp Web.' })
   }
@@ -42,17 +44,18 @@ whatsappWebRouter.post('/start', async (_req, res) => {
  * Formatos: por defecto imagen PNG; con ?format=json devuelve { qr } (data URL).
  */
 whatsappWebRouter.get('/qr', async (req, res) => {
+  const companyId = (req.query.companyId as string) || undefined
   try {
-    const st = getStatus()
-    if (st.status === 'disconnected') await startWhatsAppWeb()
+    const st = getStatus(companyId)
+    if (st.status === 'disconnected') await startWhatsAppWeb(companyId)
 
-    const dataUrl = getQrDataUrl()
+    const dataUrl = getQrDataUrl(companyId)
     if (!dataUrl) {
-      res.status(202).json({ message: 'QR aún no disponible. Reintenta en 1-2 segundos.', status: getStatus().status })
+      res.status(202).json({ message: 'QR aún no disponible. Reintenta en 1-2 segundos.', status: getStatus(companyId).status })
       return
     }
     if ((req.query.format as string) === 'json') {
-      res.json({ qr: dataUrl, status: getStatus().status })
+      res.json({ qr: dataUrl, status: getStatus(companyId).status })
       return
     }
     const base64 = dataUrl.split(',')[1]
@@ -75,8 +78,8 @@ whatsappWebRouter.post('/send', async (req, res) => {
 
   try {
     const result = imageUrl
-      ? await sendImage(to, imageUrl, caption)
-      : await sendText(to, text)
+      ? await sendImage(to, imageUrl, caption, companyId)
+      : await sendText(to, text, companyId)
 
     try {
       await getDb().collection(COLLECTION).insertOne({
@@ -110,7 +113,7 @@ whatsappWebRouter.post('/send-github', async (req, res) => {
   if (!isGitHubConfigured()) { res.status(502).json({ message: 'GitHub no está configurado en el servidor (GITHUB_TOKEN/OWNER/REPO).' }); return }
 
   try {
-    const result = await sendImageFromGitHub(to, base64, caption, { path, fileName })
+    const result = await sendImageFromGitHub(to, base64, caption, { path, fileName }, companyId)
     try {
       await getDb().collection(COLLECTION).insertOne({
         direction: 'outbound',
@@ -148,6 +151,9 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
     const op = await getOperationsCollection().findOne({ trackingCode })
     if (!op) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
 
+    // Sesión de WhatsApp de ESTA empresa (multi-tenant).
+    const companyId = (op.companyId as string | undefined) || undefined
+
     // Resolver destino: body > config de la empresa
     let to = (toOverride ?? '').trim()
     if (!to && op.companyId) {
@@ -170,13 +176,13 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
 
     // 1. Encabezado
     const header = `📋 *Registro ${op.trackingCode}*\n${op.operationType}${op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}\n👤 ${op.operatorName}\n🕒 ${fecha}`
-    await sendText(to, header); sent++
+    await sendText(to, header, companyId); sent++
     await delay(PAUSE)
 
     // 2. Fotos generales de la operación (si las hay)
     const generalPhotos = ((op.photos as Photo[]) ?? []).filter(isSendable)
     for (const ph of generalPhotos) {
-      await sendImage(to, ph.driveUrl as string, ph.comment || ph.stepName || '')
+      await sendImage(to, ph.driveUrl as string, ph.comment || ph.stepName || '', companyId)
       sent++
       await delay(PAUSE)
     }
@@ -195,7 +201,7 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
       const caption = `📦 *${prod.productCode}*${desc}${obs}`
 
       const urls = sendable.map((p) => p.driveUrl as string)
-      const r = await sendAlbum(to, urls, caption)
+      const r = await sendAlbum(to, urls, caption, companyId)
       sent += r.count
       await delay(PAUSE)
     }
@@ -221,6 +227,7 @@ whatsappWebRouter.post('/send-product', async (req, res) => {
     const op = await getOperationsCollection().findOne({ trackingCode })
     if (!op) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
 
+    const companyId = (op.companyId as string | undefined) || undefined
     let to = (toOverride ?? '').trim()
     if (!to && op.companyId) {
       const settings = await getDb().collection('company_settings').findOne({ companyId: op.companyId })
@@ -246,7 +253,7 @@ whatsappWebRouter.post('/send-product', async (req, res) => {
     const obs = obsList.length ? `\n📝 ${obsList.join(' · ')}` : ''
     const caption = `📦 *${prod.productCode}*${desc}${obs}`
 
-    const r = await sendAlbum(to, sendable.map((p) => p.driveUrl as string), caption)
+    const r = await sendAlbum(to, sendable.map((p) => p.driveUrl as string), caption, companyId)
     res.json({ message: `Producto ${productCode} enviado (${r.count} foto(s)).`, to, sent: r.count })
   } catch (err) {
     console.error('[whatsapp-web] Error al enviar producto:', err)
@@ -258,9 +265,10 @@ whatsappWebRouter.post('/send-product', async (req, res) => {
  * GET /api/whatsapp-web/groups
  * Lista los grupos (id JID + nombre) de la cuenta conectada.
  */
-whatsappWebRouter.get('/groups', async (_req, res) => {
+whatsappWebRouter.get('/groups', async (req, res) => {
+  const companyId = (req.query.companyId as string) || undefined
   try {
-    const groups = await listGroups()
+    const groups = await listGroups(companyId)
     res.json({ groups })
   } catch (err) {
     res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudieron listar los grupos.' })
@@ -273,18 +281,20 @@ whatsappWebRouter.get('/groups', async (_req, res) => {
  */
 whatsappWebRouter.get('/resolve-invite', async (req, res) => {
   const link = (req.query.link as string) ?? ''
+  const companyId = (req.query.companyId as string) || undefined
   if (!link) { res.status(400).json({ message: 'Parámetro "link" requerido.' }); return }
   try {
-    const group = await resolveGroupInvite(link)
+    const group = await resolveGroupInvite(link, companyId)
     res.json(group)
   } catch (err) {
     res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo resolver el enlace del grupo.' })
   }
 })
 
-whatsappWebRouter.post('/logout', async (_req, res) => {
+whatsappWebRouter.post('/logout', async (req, res) => {
+  const companyId = (req.body?.companyId as string) || (req.query.companyId as string) || undefined
   try {
-    await clearSession()
+    await clearSession(companyId)
     res.json({ message: 'Sesión cerrada. Escanea el QR para volver a conectar.' })
   } catch (err) {
     res.status(500).json({ message: err instanceof Error ? err.message : 'No se pudo cerrar la sesión.' })
