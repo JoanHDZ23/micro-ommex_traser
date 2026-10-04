@@ -55,7 +55,20 @@ export async function uploadImageToGitHub(
 
   const base64 = toBase64(image)
   const ext = (opts.ext || 'jpg').replace(/^\./, '')
-  const fileName = (opts.fileName || `${randomUUID()}.${ext}`).replace(/[^a-zA-Z0-9._-]/g, '_')
+  // Nombre SIEMPRE único para evitar colisiones en el repo (GitHub exige el
+  // 'sha' del archivo si el nombre ya existe → fallaba con 422). Añadimos un
+  // sufijo corto único antes de la extensión.
+  const unique = randomUUID().slice(0, 8)
+  let fileName: string
+  if (opts.fileName) {
+    const safe = opts.fileName.replace(/[^a-zA-Z0-9._-]/g, '_')
+    const dot = safe.lastIndexOf('.')
+    fileName = dot > 0
+      ? `${safe.slice(0, dot)}_${unique}${safe.slice(dot)}`
+      : `${safe}_${unique}.${ext}`
+  } else {
+    fileName = `${randomUUID()}.${ext}`
+  }
   const dir = (opts.path || 'uploads').replace(/^\/+|\/+$/g, '')
   const repoPath = `${dir}/${fileName}`
 
