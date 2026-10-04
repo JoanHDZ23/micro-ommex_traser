@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, Save, Tr
 import { apiRequest } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
+import { WhatsAppSync } from '../components/WhatsAppSync'
 
 const SETTINGS_GUIDE: GuideStep[] = [
   {
@@ -202,6 +203,9 @@ export function SettingsPage() {
           </button>
         )}
       </section>
+
+      {/* ── WhatsApp (sincronización por QR + envío) ── */}
+      <WhatsAppSync />
 
       {/* ── Herramientas ── */}
       <div className="pt-2 border-t border-[var(--color-border)]">
