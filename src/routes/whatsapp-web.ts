@@ -165,26 +165,42 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
     const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
     const PAUSE = 1500 // pausa entre mensajes (anti-spam)
 
-    type Photo = { driveUrl?: string; fileId?: string; comment?: string; stepName?: string }
+    type Photo = { driveUrl?: string; fileId?: string; comment?: string; stepName?: string; timestamp?: string }
     const isSendable = (ph: Photo) => {
       const u = ph.driveUrl
       return Boolean(u && u !== 'pending-verification' && /^https?:\/\//.test(u))
     }
+    // Una nota es un mensaje de solo texto (sin imagen) con comentario.
+    const isNote = (ph: Photo) => !isSendable(ph) && Boolean((ph.comment ?? '').trim())
+
+    // Fecha en hora de Colombia (el servidor corre en UTC). Usa la hora de
+    // finalización si existe; si no, la de creación.
+    const fmt = (iso?: string) =>
+      iso ? new Date(iso).toLocaleString('es-CO', { timeZone: 'America/Bogota' }) : ''
+    const fecha = fmt((op.completedAt as string) || (op.createdAt as string))
 
     let sent = 0
-    const fecha = new Date(op.createdAt as string).toLocaleString('es-CO')
 
     // 1. Encabezado
     const header = `📋 *Registro ${op.trackingCode}*\n${op.operationType}${op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}\n👤 ${op.operatorName}\n🕒 ${fecha}`
     await sendText(to, header, companyId); sent++
     await delay(PAUSE)
 
-    // 2. Fotos generales de la operación (si las hay)
-    const generalPhotos = ((op.photos as Photo[]) ?? []).filter(isSendable)
-    for (const ph of generalPhotos) {
-      await sendImage(to, ph.driveUrl as string, ph.comment || ph.stepName || '', companyId)
-      sent++
-      await delay(PAUSE)
+    // 2. Fotos generales y NOTAS de texto, en el orden del registro.
+    const generalItems = (op.photos as Photo[]) ?? []
+    for (const item of generalItems) {
+      if (isSendable(item)) {
+        await sendImage(to, item.driveUrl as string, item.comment || item.stepName || '', companyId)
+        sent++
+        await delay(PAUSE)
+      } else if (isNote(item)) {
+        // Mensaje escrito del registro (nota de solo texto).
+        const hora = item.timestamp ? fmt(item.timestamp) : ''
+        const txt = hora ? `📝 ${item.comment}\n🕒 ${hora}` : `📝 ${item.comment}`
+        await sendText(to, txt, companyId)
+        sent++
+        await delay(PAUSE)
+      }
     }
 
     // 3. Por cada producto: enviar sus fotos como un ÁLBUM (galería agrupada)
