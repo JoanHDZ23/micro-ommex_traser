@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowDown, ArrowRight, ArrowUp, Camera, ClipboardList, Database, Package, Settings } from 'lucide-react'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { apiRequest } from '../lib/api'
-import { getCompanyId } from '../lib/context'
+import { getCompanyId, isAdmin } from '../lib/context'
 
 const HOME_GUIDE: GuideStep[] = [
   {
@@ -120,17 +120,19 @@ export function HomePage() {
         />
       </section>
 
-      {/* Settings link */}
-      <button
-        onClick={() => navigate('/settings')}
-        className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-surface)] rounded-[var(--radius)] border border-[var(--color-border)] hover:shadow-sm transition-shadow"
-      >
-        <div className="flex items-center gap-3">
-          <Settings className="w-5 h-5 text-[var(--color-text-3)]" />
-          <span className="text-sm font-medium text-[var(--color-text)]">Configuración (Google Drive)</span>
-        </div>
-        <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
-      </button>
+      {/* Settings link — solo para el administrador principal */}
+      {isAdmin() && (
+        <button
+          onClick={() => navigate('/settings')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-surface)] rounded-[var(--radius)] border border-[var(--color-border)] hover:shadow-sm transition-shadow"
+        >
+          <div className="flex items-center gap-3">
+            <Settings className="w-5 h-5 text-[var(--color-text-3)]" />
+            <span className="text-sm font-medium text-[var(--color-text)]">Configuración</span>
+          </div>
+          <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
+        </button>
+      )}
     </div>
   )
 }

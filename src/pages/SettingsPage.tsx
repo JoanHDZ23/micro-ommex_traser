@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, Save, Trash2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
-import { getCompanyId } from '../lib/context'
+import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
 
@@ -24,8 +24,14 @@ const DAYS_OPTIONS = [7, 14, 20, 30, 45, 60, 90]
 export function SettingsPage() {
   const navigate = useNavigate()
   const companyId = getCompanyId()
+  const admin = isAdmin()
 
-  // Drive folder
+  // Solo el administrador principal puede ver Configuración.
+  // Si alguien entra por URL directa sin ser admin, se redirige al inicio.
+  useEffect(() => {
+    if (!admin) navigate('/', { replace: true })
+  }, [admin, navigate])
+
   const [loading, setLoading] = useState(true)
 
   // Cleanup config
@@ -79,6 +85,9 @@ export function SettingsPage() {
       setFeedbackSheets(err instanceof Error ? err.message : 'Error al guardar')
     } finally { setSavingSheets(false) }
   }
+
+  // No-admin: no renderizar nada (el useEffect ya redirige al inicio).
+  if (!admin) return null
 
   if (loading) {
     return (
