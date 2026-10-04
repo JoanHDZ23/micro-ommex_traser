@@ -7,6 +7,7 @@ import { settingsRouter } from './routes/settings.js'
 import { sheetsRouter } from './routes/sheets.js'
 import { whatsappRouter } from './routes/whatsapp.js'
 import { whatsappWebRouter } from './routes/whatsapp-web.js'
+import { uploadsRouter } from './routes/uploads.js'
 import { runCleanupOldOperations } from './jobs/cleanupOldOperations.js'
 
 const app = express()
@@ -28,6 +29,7 @@ app.use('/api/operations', operationsRouter)
 app.use('/api/photos', photosRouter)
 app.use('/api/settings', settingsRouter)
 app.use('/api/sheets', sheetsRouter)
+app.use('/api/uploads', uploadsRouter)
 app.use('/api/whatsapp', whatsappRouter)
 // WhatsApp Web (Baileys, vía QR) — módulo opcional, solo si está habilitado.
 if (process.env.ENABLE_WHATSAPP_WEB === 'true') {
