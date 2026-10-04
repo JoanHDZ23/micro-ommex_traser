@@ -248,3 +248,39 @@ settingsRouter.put('/features', async (req, res) => {
     res.status(500).json({ message: 'Error al guardar funciones.' })
   }
 })
+
+/**
+ * GET /api/settings/whatsapp?companyId=xxx
+ * Destino de WhatsApp (número o JID de grupo) al que se envían los registros.
+ */
+settingsRouter.get('/whatsapp', async (req, res) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const doc = await getDb().collection(COLLECTION).findOne({ companyId })
+    res.json({ whatsappTo: (doc?.whatsappTo as string) ?? '' })
+  } catch (err) {
+    console.error('[settings] Error al leer whatsapp:', err)
+    res.status(500).json({ message: 'Error al leer el destino de WhatsApp.' })
+  }
+})
+
+/**
+ * PUT /api/settings/whatsapp
+ * Body: { companyId, whatsappTo }  — número (+57...) o JID de grupo (xxxx@g.us)
+ */
+settingsRouter.put('/whatsapp', async (req, res) => {
+  const { companyId, whatsappTo } = req.body ?? {}
+  if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    await getDb().collection(COLLECTION).updateOne(
+      { companyId: companyId.trim() },
+      { $set: { companyId: companyId.trim(), whatsappTo: (whatsappTo ?? '').trim(), updatedAt: new Date().toISOString() } },
+      { upsert: true },
+    )
+    res.json({ message: 'Destino de WhatsApp guardado.', whatsappTo: (whatsappTo ?? '').trim() })
+  } catch (err) {
+    console.error('[settings] Error al guardar whatsapp:', err)
+    res.status(500).json({ message: 'Error al guardar el destino de WhatsApp.' })
+  }
+})

@@ -129,6 +129,78 @@ whatsappWebRouter.post('/send-github', async (req, res) => {
   }
 })
 
+/**
+ * POST /api/whatsapp-web/send-operation
+ * Envía un registro completo en secuencia (encabezado → por producto: info + fotos)
+ * al destino configurado de la empresa (o al "to" del body).
+ * Body: { trackingCode, to? }
+ *
+ * Las fotos ya están almacenadas (GitHub/R2); se envían por su URL. Entre
+ * mensajes se intercala una pausa para reducir el riesgo de bloqueo.
+ */
+whatsappWebRouter.post('/send-operation', async (req, res) => {
+  const { trackingCode, to: toOverride } = req.body ?? {}
+  if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
+
+  try {
+    const { getOperationsCollection, getDb } = await import('../lib/mongodb.js')
+    const op = await getOperationsCollection().findOne({ trackingCode })
+    if (!op) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    // Resolver destino: body > config de la empresa
+    let to = (toOverride ?? '').trim()
+    if (!to && op.companyId) {
+      const settings = await getDb().collection('company_settings').findOne({ companyId: op.companyId })
+      to = (settings?.whatsappTo as string) ?? ''
+    }
+    if (!to) { res.status(400).json({ message: 'No hay destino de WhatsApp configurado para esta empresa.' }); return }
+
+    const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    const PAUSE = 1500 // pausa entre mensajes (anti-spam)
+
+    type Photo = { driveUrl?: string; fileId?: string; comment?: string; stepName?: string }
+    const isSendable = (ph: Photo) => {
+      const u = ph.driveUrl
+      return Boolean(u && u !== 'pending-verification' && /^https?:\/\//.test(u))
+    }
+
+    let sent = 0
+    const fecha = new Date(op.createdAt as string).toLocaleString('es-CO')
+
+    // 1. Encabezado
+    const header = `📋 *Registro ${op.trackingCode}*\n${op.operationType}${op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}\n👤 ${op.operatorName}\n🕒 ${fecha}`
+    await sendText(to, header); sent++
+    await delay(PAUSE)
+
+    // 2. Fotos generales de la operación (si las hay)
+    const generalPhotos = ((op.photos as Photo[]) ?? []).filter(isSendable)
+    for (const ph of generalPhotos) {
+      await sendImage(to, ph.driveUrl as string, ph.comment || ph.stepName || '')
+      sent++
+      await delay(PAUSE)
+    }
+
+    // 3. Por cada producto: info + sus fotos en orden
+    const products = (op.lineaBlanca as Array<{ productCode: string; labelData?: { descripcion?: string }; photos: Photo[] }>) ?? []
+    for (const prod of products) {
+      const desc = prod.labelData?.descripcion ? `\n${prod.labelData.descripcion}` : ''
+      await sendText(to, `📦 *${prod.productCode}*${desc}`)
+      sent++
+      await delay(PAUSE)
+      for (const ph of (prod.photos ?? []).filter(isSendable)) {
+        await sendImage(to, ph.driveUrl as string, ph.comment || '')
+        sent++
+        await delay(PAUSE)
+      }
+    }
+
+    res.json({ message: `Registro enviado a WhatsApp (${sent} mensaje(s)).`, to, sent })
+  } catch (err) {
+    console.error('[whatsapp-web] Error al enviar operación:', err)
+    res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo enviar el registro.' })
+  }
+})
+
 whatsappWebRouter.post('/logout', async (_req, res) => {
   try {
     await clearSession()
