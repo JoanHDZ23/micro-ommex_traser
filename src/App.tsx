@@ -10,6 +10,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import { ProductsCatalogPage } from './pages/ProductsCatalogPage'
 import { RecoveryPage } from './pages/RecoveryPage'
 import { DocumentsPage } from './pages/DocumentsPage'
+import { PhotoUploadPage } from './pages/PhotoUploadPage'
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/history" element={<HistoryPage />} />
           <Route path="/products" element={<ProductsCatalogPage />} />
           <Route path="/documentos" element={<DocumentsPage />} />
+          <Route path="/foto" element={<PhotoUploadPage />} />
           <Route path="/recovery" element={<RecoveryPage />} />
           <Route path="/operation/:trackingCode" element={<OperationDetailPage />} />
           <Route path="/settings" element={<SettingsPage />} />
