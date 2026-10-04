@@ -1,30 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, FileSpreadsheet, Loader2, Save, Trash2 } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, Save, Trash2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 
 const SETTINGS_GUIDE: GuideStep[] = [
   {
-    emoji: '📁',
-    title: 'Carpeta de Drive',
-    description: 'Aquí conectas la carpeta de Google Drive donde se guardarán todas las fotos de tu empresa. Solo necesitas hacerlo una vez.',
-  },
-  {
-    emoji: '🔗',
-    title: 'Pega la URL',
-    description: 'Copia el enlace de tu carpeta en Drive y pégalo en el campo "URL de la carpeta de Drive". Debe verse como https://drive.google.com/drive/folders/...',
-  },
-  {
-    emoji: '🔐',
-    title: 'Da permisos',
-    description: 'Asegúrate de que la carpeta tenga permiso de editor para el correo del Apps Script, de lo contrario las fotos no podrán subirse.',
-  },
-  {
     emoji: '🗑️',
     title: 'Limpieza automática',
-    description: 'Puedes habilitar la eliminación automática de registros antiguos. Los registros van a la papelera de Drive (no se borran permanentemente) y pueden recuperarse en "Recuperar registros".',
+    description: 'Puedes habilitar la eliminación automática de registros antiguos. Al activarla, los registros que superen los días configurados se eliminan automáticamente.',
   },
   {
     emoji: '💾',
@@ -40,10 +25,7 @@ export function SettingsPage() {
   const companyId = getCompanyId()
 
   // Drive folder
-  const [driveFolderUrl, setDriveFolderUrl] = useState('')
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [feedback, setFeedback] = useState<string | null>(null)
 
   // Cleanup config
   const [cleanupEnabled, setCleanupEnabled] = useState(false)
@@ -60,12 +42,10 @@ export function SettingsPage() {
     if (!companyId) { setLoading(false); return }
     const load = async () => {
       try {
-        const [driveData, cleanupData, featuresData] = await Promise.all([
-          apiRequest<{ driveFolderUrl: string }>(`/settings?companyId=${encodeURIComponent(companyId)}`),
+        const [cleanupData, featuresData] = await Promise.all([
           apiRequest<{ cleanupEnabled: boolean; cleanupDays: number }>(`/settings/cleanup?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ sheetsEnabled: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
         ])
-        setDriveFolderUrl(driveData.driveFolderUrl ?? '')
         setCleanupEnabled(cleanupData.cleanupEnabled ?? false)
         setCleanupDays(cleanupData.cleanupDays ?? 20)
         setSheetsEnabled(featuresData.sheetsEnabled ?? false)
@@ -74,17 +54,6 @@ export function SettingsPage() {
     }
     void load()
   }, [companyId])
-
-  const handleSave = async () => {
-    if (!companyId) { setFeedback('No se encontró el ID de empresa.'); return }
-    setSaving(true); setFeedback(null)
-    try {
-      await apiRequest('/settings', { method: 'PUT', body: { companyId, driveFolderUrl } })
-      setFeedback('✓ Carpeta de Drive guardada correctamente')
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'Error al guardar')
-    } finally { setSaving(false) }
-  }
 
   const handleSaveCleanup = async () => {
     if (!companyId) { setFeedbackCleanup('No se encontró el ID de empresa.'); return }
@@ -129,53 +98,12 @@ export function SettingsPage() {
         </button>
         <div>
           <h2 className="text-lg font-bold text-gray-900">Configuración</h2>
-          <p className="text-xs text-gray-500">Drive, limpieza automática y herramientas</p>
+          <p className="text-xs text-gray-500">Limpieza automática y herramientas</p>
         </div>
       </div>
 
-      {/* ── Drive folder ── */}
-      <section className="space-y-3 p-4 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
-        <div className="flex items-center gap-2">
-          <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg" alt="Drive" className="w-6 h-6" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Carpeta de Google Drive</h3>
-        </div>
-        <p className="text-xs text-[var(--color-text-2)]">
-          Pega la URL de la carpeta de Google Drive donde se guardarán las fotos. Asegúrate de que el correo del Apps Script tenga acceso de editor.
-        </p>
-        <div className="space-y-1.5">
-          <label className="text-xs font-medium text-[var(--color-text-2)]">URL de la carpeta de Drive</label>
-          <input
-            type="url"
-            value={driveFolderUrl}
-            onChange={(e) => setDriveFolderUrl(e.target.value)}
-            placeholder="https://drive.google.com/drive/folders/..."
-            className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-          />
-          <p className="text-[10px] text-[var(--color-text-3)]">
-            Ejemplo: <code>https://drive.google.com/drive/folders/1BxiMVs0XRA...</code>
-          </p>
-        </div>
-      </section>
-
-      {driveFolderUrl && (
-        <a href={driveFolderUrl} target="_blank" rel="noopener noreferrer"
-          className="w-full py-2.5 rounded-xl border border-[var(--color-border)] text-[var(--color-primary)] text-sm font-medium flex items-center justify-center gap-2 hover:bg-[var(--color-primary-bg)] transition-colors">
-          <ExternalLink className="w-4 h-4" /> Abrir carpeta en Drive
-        </a>
-      )}
-
-      <button onClick={() => void handleSave()} disabled={saving || !driveFolderUrl.trim()}
-        className="w-full py-3 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-        {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-        Guardar carpeta
-      </button>
-
-      {feedback && (
-        <div className={`flex items-start gap-2 p-3 rounded-xl text-sm ${feedback.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-          <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>{feedback}</span>
-        </div>
-      )}
+      {/* Sección "Carpeta de Google Drive" eliminada: las fotos se almacenan
+          automáticamente en la nube; ya no se configura carpeta de Drive. */}
 
       {/* ── Limpieza automática ── */}
       <section className="space-y-3 p-4 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
