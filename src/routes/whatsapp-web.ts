@@ -14,7 +14,8 @@
 import { Router } from 'express'
 import { getDb } from '../lib/mongodb.js'
 import {
-  startWhatsAppWeb, getStatus, getQrDataUrl, sendText, sendImage, sendAlbum, sendImageFromGitHub, clearSession, toJid,
+  startWhatsAppWeb, getStatus, getQrDataUrl, sendText, sendImage, sendAlbum, sendImageFromGitHub,
+  listGroups, resolveGroupInvite, clearSession, toJid,
 } from '../lib/whatsapp-web.js'
 import { isGitHubConfigured } from '../lib/github-storage.js'
 
@@ -203,6 +204,34 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
   } catch (err) {
     console.error('[whatsapp-web] Error al enviar operación:', err)
     res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo enviar el registro.' })
+  }
+})
+
+/**
+ * GET /api/whatsapp-web/groups
+ * Lista los grupos (id JID + nombre) de la cuenta conectada.
+ */
+whatsappWebRouter.get('/groups', async (_req, res) => {
+  try {
+    const groups = await listGroups()
+    res.json({ groups })
+  } catch (err) {
+    res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudieron listar los grupos.' })
+  }
+})
+
+/**
+ * GET /api/whatsapp-web/resolve-invite?link=...
+ * Devuelve el JID de un grupo a partir de su enlace/código de invitación.
+ */
+whatsappWebRouter.get('/resolve-invite', async (req, res) => {
+  const link = (req.query.link as string) ?? ''
+  if (!link) { res.status(400).json({ message: 'Parámetro "link" requerido.' }); return }
+  try {
+    const group = await resolveGroupInvite(link)
+    res.json(group)
+  } catch (err) {
+    res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo resolver el enlace del grupo.' })
   }
 })
 

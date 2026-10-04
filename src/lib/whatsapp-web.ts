@@ -219,6 +219,24 @@ export async function sendImageFromGitHub(
   return { id: res?.key?.id ?? null, rawUrl }
 }
 
+/** Lista los grupos a los que pertenece la cuenta: { id (JID), name }. */
+export async function listGroups(): Promise<Array<{ id: string; name: string }>> {
+  const sock = ensureOpen()
+  const groups = await sock.groupFetchAllParticipating()
+  return Object.values(groups).map((g) => ({ id: g.id, name: g.subject || g.id }))
+}
+
+/**
+ * Resuelve un enlace/código de invitación de grupo a su JID (y nombre).
+ * Acepta la URL completa (https://chat.whatsapp.com/XXXX) o solo el código.
+ */
+export async function resolveGroupInvite(linkOrCode: string): Promise<{ id: string; name: string }> {
+  const sock = ensureOpen()
+  const code = (linkOrCode || '').trim().replace(/^https?:\/\/chat\.whatsapp\.com\//i, '').replace(/\/+$/, '')
+  const meta = await sock.groupGetInviteInfo(code)
+  return { id: meta.id, name: meta.subject || meta.id }
+}
+
 /** Cierra la sesión y borra las credenciales (fuerza nuevo QR la próxima vez). */
 export async function clearSession(): Promise<void> {
   try { await S.sock?.logout() } catch { /* noop */ }
