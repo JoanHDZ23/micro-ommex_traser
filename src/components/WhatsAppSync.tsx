@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  MessageCircle, Loader2, QrCode, CheckCircle2, LogOut, Save, RefreshCw,
+  MessageCircle, Loader2, QrCode, CheckCircle2, LogOut, Save, RefreshCw, Link2,
 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId } from '../lib/context'
@@ -30,6 +30,11 @@ export function WhatsAppSync() {
   const [whatsappTo, setWhatsappTo] = useState('')
   const [savingTo, setSavingTo] = useState(false)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
+
+  // Resolver el ID del grupo (JID) a partir del link de invitación
+  const [groupLink, setGroupLink] = useState('')
+  const [resolvingGroup, setResolvingGroup] = useState(false)
+  const [groupMsg, setGroupMsg] = useState<string | null>(null)
 
   const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null } }
 
@@ -107,6 +112,26 @@ export function WhatsAppSync() {
     } finally { setSavingTo(false) }
   }
 
+  /**
+   * A partir del link de invitación del grupo (https://chat.whatsapp.com/XXXX)
+   * resuelve internamente el ID del grupo (JID xxxx@g.us) usando Baileys en el
+   * backend y lo coloca como destino.
+   */
+  const resolveGroupLink = async () => {
+    const link = groupLink.trim()
+    if (!link) { setGroupMsg('Pega el link del grupo primero.'); return }
+    setResolvingGroup(true); setGroupMsg(null)
+    try {
+      const g = await apiRequest<{ id: string; name: string }>(
+        `/whatsapp-web/resolve-invite?link=${encodeURIComponent(link)}&${cq}`,
+      )
+      setWhatsappTo(g.id)
+      setGroupMsg(`✓ Grupo "${g.name}" → ${g.id}`)
+    } catch (err) {
+      setGroupMsg(err instanceof Error ? err.message : 'No se pudo resolver el grupo. ¿WhatsApp está conectado?')
+    } finally { setResolvingGroup(false) }
+  }
+
   return (
     <section className="space-y-3 p-4 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
       <div className="flex items-center gap-2">
@@ -156,6 +181,32 @@ export function WhatsAppSync() {
       {/* Destino + desvincular (cuando está conectado) */}
       {status === 'open' && (
         <>
+          {/* Pegar el link del grupo → trae internamente su ID (JID) */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-[var(--color-text-2)]">Link del grupo de WhatsApp</label>
+            <div className="flex items-center gap-2">
+              <input
+                value={groupLink}
+                onChange={(e) => setGroupLink(e.target.value)}
+                placeholder="https://chat.whatsapp.com/XXXXXXXX"
+                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
+              />
+              <button onClick={() => void resolveGroupLink()} disabled={resolvingGroup || !groupLink.trim()}
+                className="px-3 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0">
+                {resolvingGroup ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+                Traer ID
+              </button>
+            </div>
+            <p className="text-[10px] text-[var(--color-text-3)]">
+              Pega el enlace de invitación del grupo y pulsa "Traer ID": se completa automáticamente el destino con el ID del grupo.
+            </p>
+            {groupMsg && (
+              <div className={`p-2 rounded-lg text-xs ${groupMsg.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                {groupMsg}
+              </div>
+            )}
+          </div>
+
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-[var(--color-text-2)]">Chat o grupo destino</label>
             <input
