@@ -180,15 +180,17 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
       await delay(PAUSE)
     }
 
-    // 3. Por cada producto: info + sus fotos en orden
+    // 3. Por cada producto: enviar cada foto con el título del producto y sus
+    //    observaciones como texto (caption), sin un mensaje de texto separado.
     const products = (op.lineaBlanca as Array<{ productCode: string; labelData?: { descripcion?: string }; photos: Photo[] }>) ?? []
     for (const prod of products) {
       const desc = prod.labelData?.descripcion ? `\n${prod.labelData.descripcion}` : ''
-      await sendText(to, `📦 *${prod.productCode}*${desc}`)
-      sent++
-      await delay(PAUSE)
-      for (const ph of (prod.photos ?? []).filter(isSendable)) {
-        await sendImage(to, ph.driveUrl as string, ph.comment || '')
+      const sendable = (prod.photos ?? []).filter(isSendable)
+      for (const ph of sendable) {
+        // Caption = título del producto + descripción + observación de la foto.
+        const obs = ph.comment ? `\n📝 ${ph.comment}` : ''
+        const caption = `📦 *${prod.productCode}*${desc}${obs}`
+        await sendImage(to, ph.driveUrl as string, caption)
         sent++
         await delay(PAUSE)
       }
