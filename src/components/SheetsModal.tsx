@@ -225,15 +225,22 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
         method: 'POST',
         body: { companyId, fileName: file.name, mimeType: file.type, base64, sheetName: name },
       })
-      setSuccess(`✓ Tabla "${res.sheet.sheetName}" importada a la app con ${res.sheet.rowCount} fila(s).`)
+      setSuccess(`✓ Tabla "${res.sheet.sheetName}" importada con ${res.sheet.rowCount} fila(s). Disponible en todos los dispositivos.`)
       setSheets((prev) => [res.sheet, ...prev])
       resetUpload()
-    } catch {
-      // Sin backend: guardar la tabla localmente para poder visualizarla (modo prueba)
-      const meta = saveLocalTable(companyId, name, file.name, preview)
-      setSuccess(`✓ Tabla "${meta.sheetName}" importada a la app con ${meta.rowCount} fila(s). (guardada en este navegador)`)
-      setSheets((prev) => [meta, ...prev])
-      resetUpload()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : ''
+      // Si la función no está habilitada para la empresa (403), avisar en vez de
+      // guardar en local silenciosamente (local = solo este dispositivo).
+      if (/habilitada|no está habilitada|403/i.test(msg)) {
+        setError('La función "Documentos a Sheets" no está habilitada para esta empresa. Pídele al administrador que la active en Configuración para guardar las tablas en la nube (visibles desde cualquier dispositivo).')
+      } else {
+        // Fallo de red real: respaldo local, avisando que es solo en este dispositivo.
+        const meta = saveLocalTable(companyId, name, file.name, preview)
+        setSuccess(`⚠️ Tabla "${meta.sheetName}" guardada SOLO en este dispositivo (sin conexión al servidor). No se verá en otros dispositivos.`)
+        setSheets((prev) => [meta, ...prev])
+        resetUpload()
+      }
     } finally {
       setImporting(false)
     }
