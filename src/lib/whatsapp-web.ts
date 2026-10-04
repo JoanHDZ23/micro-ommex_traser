@@ -153,6 +153,53 @@ export async function sendImage(to: string, image: Buffer | string, caption?: st
 }
 
 /**
+ * Envía varias imágenes como un ÁLBUM (agrupadas, como una galería en WhatsApp)
+ * con un único texto (caption) que aparece una sola vez al final del grupo.
+ *
+ * @param to       número o JID de grupo
+ * @param images   URLs (o Buffers) de las imágenes
+ * @param caption  texto del álbum (va en la primera imagen)
+ */
+export async function sendAlbum(
+  to: string,
+  images: Array<string | Buffer>,
+  caption?: string,
+): Promise<{ id: string | null; count: number }> {
+  const sock = ensureOpen()
+  const jid = toJid(to)
+
+  // Si es una sola imagen, no tiene sentido el álbum: envío normal.
+  if (images.length <= 1) {
+    const only = images[0]
+    if (only === undefined) return { id: null, count: 0 }
+    const img = typeof only === 'string' ? { url: only } : only
+    const res = await sock.sendMessage(jid, { image: img, caption })
+    return { id: res?.key?.id ?? null, count: 1 }
+  }
+
+  // 1. Mensaje de álbum "padre" que declara cuántas imágenes vienen.
+  const parent = await sock.sendMessage(jid, {
+    album: { expectedImageCount: images.length, expectedVideoCount: 0 },
+  } as never)
+  const albumParentKey = parent?.key
+
+  // 2. Cada imagen asociada al álbum. El caption va solo en la primera.
+  let count = 0
+  for (let i = 0; i < images.length; i++) {
+    const im = images[i]
+    const img = typeof im === 'string' ? { url: im } : im
+    await sock.sendMessage(jid, {
+      image: img,
+      ...(i === 0 && caption ? { caption } : {}),
+      albumParentKey,
+    } as never)
+    count++
+  }
+
+  return { id: parent?.key?.id ?? null, count }
+}
+
+/**
  * Sube una imagen a GitHub (raw.githubusercontent.com) y la envía por WhatsApp.
  * @param to      número (+57...) o JID de grupo (xxxx@g.us)
  * @param image   Buffer o base64 de la imagen

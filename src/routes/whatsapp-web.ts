@@ -14,7 +14,7 @@
 import { Router } from 'express'
 import { getDb } from '../lib/mongodb.js'
 import {
-  startWhatsAppWeb, getStatus, getQrDataUrl, sendText, sendImage, sendImageFromGitHub, clearSession, toJid,
+  startWhatsAppWeb, getStatus, getQrDataUrl, sendText, sendImage, sendAlbum, sendImageFromGitHub, clearSession, toJid,
 } from '../lib/whatsapp-web.js'
 import { isGitHubConfigured } from '../lib/github-storage.js'
 
@@ -180,20 +180,23 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
       await delay(PAUSE)
     }
 
-    // 3. Por cada producto: enviar cada foto con el título del producto y sus
-    //    observaciones como texto (caption), sin un mensaje de texto separado.
+    // 3. Por cada producto: enviar sus fotos como un ÁLBUM (galería agrupada)
+    //    con el título del producto y las observaciones como texto único al final.
     const products = (op.lineaBlanca as Array<{ productCode: string; labelData?: { descripcion?: string }; photos: Photo[] }>) ?? []
     for (const prod of products) {
-      const desc = prod.labelData?.descripcion ? `\n${prod.labelData.descripcion}` : ''
       const sendable = (prod.photos ?? []).filter(isSendable)
-      for (const ph of sendable) {
-        // Caption = título del producto + descripción + observación de la foto.
-        const obs = ph.comment ? `\n📝 ${ph.comment}` : ''
-        const caption = `📦 *${prod.productCode}*${desc}${obs}`
-        await sendImage(to, ph.driveUrl as string, caption)
-        sent++
-        await delay(PAUSE)
-      }
+      if (sendable.length === 0) continue
+
+      const desc = prod.labelData?.descripcion ? `\n${prod.labelData.descripcion}` : ''
+      // Observaciones: junta los comentarios distintos de las fotos del producto.
+      const obsList = [...new Set(sendable.map((p) => (p.comment ?? '').trim()).filter(Boolean))]
+      const obs = obsList.length ? `\n📝 ${obsList.join(' · ')}` : ''
+      const caption = `📦 *${prod.productCode}*${desc}${obs}`
+
+      const urls = sendable.map((p) => p.driveUrl as string)
+      const r = await sendAlbum(to, urls, caption)
+      sent += r.count
+      await delay(PAUSE)
     }
 
     res.json({ message: `Registro enviado a WhatsApp (${sent} mensaje(s)).`, to, sent })
