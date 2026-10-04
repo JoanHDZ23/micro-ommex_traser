@@ -101,6 +101,8 @@ export function SharePage() {
   const [lightboxPhoto, setLightboxPhoto] = useState<PhotoRecord | null>(null)
   const [lightboxAll, setLightboxAll] = useState<PhotoRecord[]>([])
   const [lightboxIdx, setLightboxIdx] = useState(0)
+  const [sendingWa, setSendingWa] = useState(false)
+  const [waMsg, setWaMsg] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!trackingCode) return
@@ -151,6 +153,24 @@ export function SharePage() {
     } else {
       const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
       window.open(waUrl, '_blank')
+    }
+  }
+
+  // Envía el registro completo (encabezado → por producto: info + fotos, en
+  // orden) al WhatsApp configurado para la empresa, vía el WhatsApp sincronizado.
+  const handleSendWhatsApp = async () => {
+    if (!operation) return
+    setSendingWa(true); setWaMsg(null)
+    try {
+      const r = await apiRequest<{ message: string; sent: number }>('/whatsapp-web/send-operation', {
+        method: 'POST',
+        body: { trackingCode: operation.trackingCode },
+      })
+      setWaMsg(`✓ ${r.message}`)
+    } catch (err) {
+      setWaMsg(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
+    } finally {
+      setSendingWa(false)
     }
   }
 
@@ -320,6 +340,20 @@ export function SharePage() {
         )}
 
         {/* Share button */}
+        {/* Enviar al WhatsApp configurado (chat/grupo), en orden: info + fotos */}
+        <button onClick={() => void handleSendWhatsApp()} disabled={sendingWa}
+          className="w-full py-3 rounded-xl bg-[#128c7e] text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
+          {sendingWa ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+          Enviar al WhatsApp configurado
+        </button>
+
+        {waMsg && (
+          <div className={`p-3 rounded-xl text-sm text-center ${waMsg.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+            {waMsg}
+          </div>
+        )}
+
+        {/* Compartir con el WhatsApp del dispositivo (enlace) */}
         <button onClick={handleShare}
           className="w-full py-3 rounded-xl bg-[#25d366] text-white font-semibold text-sm flex items-center justify-center gap-2">
           <Share2 className="w-4 h-4" /> Compartir por WhatsApp
