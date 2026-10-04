@@ -5,6 +5,8 @@ import { operationsRouter } from './routes/operations.js'
 import { photosRouter } from './routes/photos.js'
 import { settingsRouter } from './routes/settings.js'
 import { sheetsRouter } from './routes/sheets.js'
+import { whatsappRouter } from './routes/whatsapp.js'
+import { whatsappWebRouter } from './routes/whatsapp-web.js'
 import { runCleanupOldOperations } from './jobs/cleanupOldOperations.js'
 
 const app = express()
@@ -26,6 +28,12 @@ app.use('/api/operations', operationsRouter)
 app.use('/api/photos', photosRouter)
 app.use('/api/settings', settingsRouter)
 app.use('/api/sheets', sheetsRouter)
+app.use('/api/whatsapp', whatsappRouter)
+// WhatsApp Web (Baileys, vía QR) — módulo opcional, solo si está habilitado.
+if (process.env.ENABLE_WHATSAPP_WEB === 'true') {
+  app.use('/api/whatsapp-web', whatsappWebRouter)
+  console.log('[ommex-tracer] WhatsApp Web (Baileys) HABILITADO en /api/whatsapp-web')
+}
 
 // Health check
 app.get('/api/health', (_req, res) => {
@@ -299,8 +307,19 @@ function retryMongo() {
   setTimeout(attempt, RETRY_INTERVAL)
 }
 
-/** Revisa cada hora si toca ejecutar la limpieza según la config de cada empresa. */
+/**
+ * Programa la limpieza automática SOLO si está explícitamente habilitada por
+ * la variable de entorno ENABLE_AUTO_CLEANUP=true.
+ *
+ * Por seguridad está DESACTIVADA por defecto: el job envía carpetas de Drive
+ * (con sus imágenes) a la papelera por antigüedad, y debe activarse de forma
+ * consciente. El endpoint manual POST /api/admin/cleanup sigue disponible.
+ */
 function scheduleCleanup() {
+  if (process.env.ENABLE_AUTO_CLEANUP !== 'true') {
+    console.log('[ommex-tracer] Limpieza automática DESACTIVADA (define ENABLE_AUTO_CLEANUP=true para habilitarla).')
+    return
+  }
   const CHECK_INTERVAL = 60 * 60 * 1000 // cada 1 hora
   const check = async () => {
     try { await runCleanupOldOperations() } catch { /* silent */ }
@@ -308,6 +327,7 @@ function scheduleCleanup() {
   }
   // Primera comprobación al iniciar (con un pequeño delay)
   setTimeout(check, 5 * 60 * 1000)
+  console.log('[ommex-tracer] Limpieza automática ACTIVADA (ENABLE_AUTO_CLEANUP=true).')
 }
 
 start().catch((err) => {

@@ -1,0 +1,185 @@
+/**
+ * Cliente de WhatsApp Web vía Baileys (NO oficial — conexión por QR).
+ *
+ * ⚠️ Esta vía automatiza WhatsApp Web y VIOLA los Términos de Servicio de
+ * WhatsApp; el número conectado puede ser baneado. Úsese bajo responsabilidad
+ * propia y preferiblemente con un número secundario.
+ *
+ * Está DESACTIVADO por defecto. Se activa con ENABLE_WHATSAPP_WEB=true.
+ * La sesión se persiste en MongoDB (ver baileys-auth-mongo.ts) para sobrevivir
+ * a los reinicios de Render.
+ */
+
+import { Boom } from '@hapi/boom'
+import makeWASocket, {
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  type WASocket,
+} from '@whiskeysockets/baileys'
+import QRCode from 'qrcode'
+import { useMongoAuthState } from './baileys-auth-mongo.js'
+import { getDb } from './mongodb.js'
+
+const MESSAGES_COLLECTION = 'whatsapp_messages'
+
+type ConnStatus = 'disconnected' | 'connecting' | 'qr' | 'open'
+
+interface State {
+  sock: WASocket | null
+  status: ConnStatus
+  qrDataUrl: string | null   // QR como data URL (image/png) para mostrar en la app
+  lastError: string | null
+  starting: boolean
+}
+
+const S: State = { sock: null, status: 'disconnected', qrDataUrl: null, lastError: null, starting: false }
+
+export function isWhatsAppWebEnabled(): boolean {
+  return process.env.ENABLE_WHATSAPP_WEB === 'true'
+}
+
+export function getStatus(): { status: ConnStatus; hasQr: boolean; error: string | null } {
+  return { status: S.status, hasQr: Boolean(S.qrDataUrl), error: S.lastError }
+}
+
+export function getQrDataUrl(): string | null {
+  return S.qrDataUrl
+}
+
+/** Inicia (o reutiliza) la conexión con WhatsApp Web. Idempotente. */
+export async function startWhatsAppWeb(): Promise<void> {
+  if (!isWhatsAppWebEnabled()) throw new Error('WhatsApp Web está desactivado (define ENABLE_WHATSAPP_WEB=true).')
+  if (S.sock && (S.status === 'open' || S.status === 'connecting' || S.status === 'qr')) return
+  if (S.starting) return
+  S.starting = true
+
+  try {
+    const { state, saveCreds } = await useMongoAuthState('default')
+    const { version } = await fetchLatestBaileysVersion()
+
+    const sock = makeWASocket({
+      version,
+      auth: state,
+      printQRInTerminal: false,
+      markOnlineOnConnect: false,
+    })
+    S.sock = sock
+    S.status = 'connecting'
+    S.lastError = null
+
+    sock.ev.on('creds.update', saveCreds)
+
+    sock.ev.on('connection.update', (update) => {
+      const { connection, lastDisconnect, qr } = update
+      if (qr) {
+        S.status = 'qr'
+        QRCode.toDataURL(qr).then((url) => { S.qrDataUrl = url }).catch(() => { /* noop */ })
+      }
+      if (connection === 'open') {
+        S.status = 'open'
+        S.qrDataUrl = null
+        S.lastError = null
+      }
+      if (connection === 'close') {
+        const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode
+        const loggedOut = statusCode === DisconnectReason.loggedOut
+        S.status = 'disconnected'
+        S.sock = null
+        if (loggedOut) {
+          // Sesión cerrada desde el teléfono: limpiar credenciales.
+          S.lastError = 'Sesión cerrada. Vuelve a escanear el QR.'
+          void clearSession()
+        } else {
+          // Reconexión automática (caída de red, reinicio, etc.)
+          S.lastError = statusCode ? `Conexión cerrada (código ${statusCode}). Reintentando…` : 'Conexión cerrada. Reintentando…'
+          S.starting = false
+          setTimeout(() => { void startWhatsAppWeb() }, 3000)
+        }
+      }
+    })
+
+    // Guardar mensajes entrantes
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return
+      for (const m of messages) {
+        if (m.key.fromMe) continue
+        try {
+          await getDb().collection(MESSAGES_COLLECTION).insertOne({
+            direction: 'inbound',
+            channel: 'whatsapp-web',
+            from: m.key.remoteJid ?? null,
+            pushName: m.pushName ?? null,
+            body: m.message?.conversation ?? m.message?.extendedTextMessage?.text ?? null,
+            messageId: m.key.id ?? null,
+            hasMedia: Boolean(m.message?.imageMessage || m.message?.videoMessage || m.message?.documentMessage),
+            createdAt: new Date().toISOString(),
+          })
+        } catch { /* db opcional */ }
+      }
+    })
+  } finally {
+    S.starting = false
+  }
+}
+
+/** Normaliza un destino a JID de WhatsApp. Acepta número (+57...) o JID (grupo @g.us). */
+export function toJid(input: string): string {
+  const t = (input || '').trim()
+  if (t.endsWith('@g.us') || t.endsWith('@s.whatsapp.net')) return t
+  const digits = t.replace(/[^\d]/g, '')
+  return `${digits}@s.whatsapp.net`
+}
+
+function ensureOpen(): WASocket {
+  if (!S.sock || S.status !== 'open') {
+    throw new Error('WhatsApp Web no está conectado. Escanea el QR primero (GET /api/whatsapp-web/qr).')
+  }
+  return S.sock
+}
+
+/** Envía texto a un número o grupo. */
+export async function sendText(to: string, text: string): Promise<{ id: string | null }> {
+  const sock = ensureOpen()
+  const res = await sock.sendMessage(toJid(to), { text })
+  return { id: res?.key?.id ?? null }
+}
+
+/** Envía una imagen (desde Buffer o URL) a un número o grupo, con caption opcional. */
+export async function sendImage(to: string, image: Buffer | string, caption?: string): Promise<{ id: string | null }> {
+  const sock = ensureOpen()
+  const img = typeof image === 'string' ? { url: image } : image
+  const res = await sock.sendMessage(toJid(to), { image: img, caption })
+  return { id: res?.key?.id ?? null }
+}
+
+/**
+ * Sube una imagen a GitHub (raw.githubusercontent.com) y la envía por WhatsApp.
+ * @param to      número (+57...) o JID de grupo (xxxx@g.us)
+ * @param image   Buffer o base64 de la imagen
+ * @param caption texto que acompaña la imagen
+ * @param opts    path/fileName dentro del repo de GitHub
+ */
+export async function sendImageFromGitHub(
+  to: string,
+  image: Buffer | string,
+  caption?: string,
+  opts: { path?: string; fileName?: string } = {},
+): Promise<{ id: string | null; rawUrl: string }> {
+  const sock = ensureOpen()
+  const { uploadImageToGitHub } = await import('./github-storage.js')
+  const { rawUrl } = await uploadImageToGitHub(image, { path: opts.path || 'whatsapp', fileName: opts.fileName })
+  const res = await sock.sendMessage(toJid(to), { image: { url: rawUrl }, caption })
+  return { id: res?.key?.id ?? null, rawUrl }
+}
+
+/** Cierra la sesión y borra las credenciales (fuerza nuevo QR la próxima vez). */
+export async function clearSession(): Promise<void> {
+  try { await S.sock?.logout() } catch { /* noop */ }
+  S.sock = null
+  S.status = 'disconnected'
+  S.qrDataUrl = null
+  try {
+    const { clear } = await useMongoAuthState('default')
+    await clear()
+  } catch { /* noop */ }
+}

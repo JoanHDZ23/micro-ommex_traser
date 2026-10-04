@@ -1,28 +1,24 @@
 /**
- * Sube una imagen a Google Drive a través del webhook de Google Apps Script.
+ * Subida de imágenes — ahora respaldada por Cloudflare R2 (antes Google Drive).
+ *
+ * Se mantiene la firma `uploadToDrive(payload) → DriveUploadResult` para no tocar
+ * los call sites existentes (routes/photos.ts, routes/operations.ts). Internamente
+ * la imagen se sube a R2 vía lib/storage.ts.
+ *
+ * Mapeo de campos (compatibilidad con el modelo existente):
+ *   - fileId   → key del objeto en R2 (ej. operations/<trackingCode>/<archivo>.jpg)
+ *   - driveUrl → URL de la imagen en R2 (pública o firmada)
+ *
+ * El parámetro subfolderName/subSubfolderName se usa para construir el prefijo
+ * de la key, preservando la organización por operación/producto.
  */
 
-import { getDb } from './mongodb.js'
+import { uploadImage, isStorageConfigured } from './storage.js'
 
-// Obtiene la URL del GAS desde env (global para todas las empresas)
-function getGasUrl(): string {
-  return process.env.GAS_WEBHOOK_URL ?? ''
-}
-
-// Obtiene el folderId de Drive configurado para una empresa específica
-async function getCompanyFolderId(companyId?: string): Promise<string> {
-  if (!companyId) return process.env.DRIVE_FOLDER_ID ?? ''
-  try {
-    const db = getDb()
-    const settings = await db.collection('company_settings').findOne({ companyId })
-    if (settings?.driveFolderId) return settings.driveFolderId as string
-  } catch { /* DB not ready */ }
-  return process.env.DRIVE_FOLDER_ID ?? ''
-}
 export interface DriveUploadResult {
   status: 'success' | 'error'
-  fileId?: string
-  driveUrl?: string
+  fileId?: string      // key de R2
+  driveUrl?: string    // URL de R2
   downloadUrl?: string
   thumbnailUrl?: string
   message?: string
@@ -33,65 +29,41 @@ export interface DriveUploadPayload {
   fileName: string
   mimeType: string
   subfolderName: string
-  subSubfolderName?: string   // Subcarpeta dentro del vehículo (código de producto)
-  companyId?: string          // Para usar la carpeta de Drive de la empresa
+  subSubfolderName?: string   // Subcarpeta lógica (código de producto)
+  companyId?: string
 }
 
 export async function uploadToDrive(payload: DriveUploadPayload): Promise<DriveUploadResult> {
-  const GAS_WEBHOOK_URL = getGasUrl()
-
-  if (!GAS_WEBHOOK_URL) {
-    console.warn('[Drive] GAS_WEBHOOK_URL no configurado. Saltando upload.')
-    return { status: 'error', message: 'GAS_WEBHOOK_URL no configurado. Ve a Configuración para agregar el link de Google Drive.' }
+  if (!isStorageConfigured()) {
+    console.warn('[storage] R2 no configurado. Saltando upload.')
+    return { status: 'error', message: 'Almacenamiento no configurado. Define las variables R2_* en el servidor.' }
   }
 
-  // Obtener folderId de la empresa si está configurado
-  const parentFolderId = await getCompanyFolderId(payload.companyId)
-
   try {
-    const bodyStr = JSON.stringify({ ...payload, parentFolderId: parentFolderId || undefined, companyId: undefined })
-    console.log(`[Drive] Subiendo ${payload.fileName} a carpeta ${payload.subfolderName}${parentFolderId ? ` (empresa folderId: ${parentFolderId})` : ''} (${Math.round(payload.base64Image.length / 1024)} KB)...`)
+    // Prefijo de key: <subfolder>/<subSubfolder?> — preserva la organización.
+    const parts = [payload.subfolderName]
+    if (payload.subSubfolderName) parts.push(payload.subSubfolderName)
+    const keyPrefix = parts
+      .map((p) => p.replace(/[^a-zA-Z0-9._-]/g, '_'))
+      .join('/')
 
-    // POST al GAS — seguir redirects automáticamente
-    const postResponse = await fetch(GAS_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: bodyStr,
-      redirect: 'follow',
-      signal: AbortSignal.timeout(120_000), // 2 min timeout — imágenes grandes
+    const result = await uploadImage(payload.base64Image, {
+      contentType: payload.mimeType || 'image/jpeg',
+      keyPrefix,
+      fileName: payload.fileName,
     })
 
-    const text = await postResponse.text()
-    console.log(`[Drive] Respuesta (${postResponse.status}):`, text.substring(0, 300))
-
-    // Intentar parsear JSON
-    if (text) {
-      try {
-        const result = JSON.parse(text) as DriveUploadResult
-        if (result.status === 'success') {
-          console.log(`[Drive] ✓ Subido: ${payload.fileName} → fileId: ${result.fileId}`)
-          return result
-        }
-        console.warn(`[Drive] ✗ GAS error: ${result.message}`)
-        return result
-      } catch {
-        // Si no es JSON, intenta extraer de un wrapper {success: true, data: {...}}
-        try {
-          const wrapper = JSON.parse(text) as { success?: boolean; data?: DriveUploadResult }
-          if (wrapper.success && wrapper.data?.status === 'success') {
-            console.log(`[Drive] ✓ Subido (wrapper): ${payload.fileName} → fileId: ${wrapper.data.fileId}`)
-            return wrapper.data
-          }
-        } catch { /* ignore */ }
-        console.warn('[Drive] Respuesta no-JSON:', text.substring(0, 200))
-      }
+    console.log(`[storage] ✓ Subido: ${result.key}`)
+    return {
+      status: 'success',
+      fileId: result.key,      // la "key" de R2 ocupa el lugar del antiguo fileId
+      driveUrl: result.url,    // URL final de R2
+      downloadUrl: result.url,
+      thumbnailUrl: result.url,
     }
-
-    return { status: 'error', message: 'No se recibió confirmación de Google Drive.' }
-
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Error desconocido'
-    console.error('[Drive] Error de red:', message)
+    console.error('[storage] Error al subir a R2:', message)
     return { status: 'error', message }
   }
 }

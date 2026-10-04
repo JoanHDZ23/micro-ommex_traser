@@ -916,11 +916,10 @@ operationsRouter.patch('/:trackingCode', async (req, res) => {
 
 /**
  * DELETE /api/operations/:trackingCode
- * Elimina una operación de MongoDB y su carpeta completa de Drive.
+ * Elimina una operación de MongoDB y todas sus imágenes en R2.
  */
 operationsRouter.delete('/:trackingCode', async (req, res) => {
   const { trackingCode } = req.params
-  const GAS_URL = process.env.GAS_WEBHOOK_URL ?? ''
 
   try {
     const col = getOperationsCollection()
@@ -931,48 +930,21 @@ operationsRouter.delete('/:trackingCode', async (req, res) => {
       return
     }
 
-    const folderName = operation.vehiclePlate
-      ? `${operation.operationType}_${operation.vehiclePlate}`
-      : `${operation.operationType}_${trackingCode}`
-
-    // Obtener parentFolderId de la empresa
-    let parentFolderId = ''
-    if (operation.companyId) {
-      try {
-        const { getDb } = await import('../lib/mongodb.js')
-        const db = getDb()
-        const settings = await db.collection('company_settings').findOne({ companyId: operation.companyId })
-        if (settings?.driveFolderId) parentFolderId = settings.driveFolderId as string
-      } catch { /* no settings */ }
+    // Eliminar todos los objetos de la operación en R2 (prefijo operations/<trackingCode>/)
+    let storageDeleted = 0
+    try {
+      const { deleteByPrefix } = await import('../lib/storage.js')
+      storageDeleted = await deleteByPrefix(`operations/${trackingCode}/`)
+    } catch (storageErr) {
+      console.warn('[delete] Error al eliminar objetos de R2:', storageErr instanceof Error ? storageErr.message : storageErr)
     }
 
-    // Eliminar carpeta de Drive vía GAS
-    let driveDeleted = false
-    if (GAS_URL) {
-      try {
-        let deleteUrl = `${GAS_URL}?action=delete&folder=${encodeURIComponent(folderName)}`
-        if (parentFolderId) deleteUrl += `&parentFolderId=${encodeURIComponent(parentFolderId)}`
-        const gasResp = await fetch(deleteUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(20_000) })
-        const gasText = await gasResp.text()
-        try {
-          const gasData = JSON.parse(gasText) as { status: string; message?: string }
-          driveDeleted = gasData.status === 'success'
-          if (!driveDeleted) console.warn(`[delete] GAS no pudo eliminar carpeta: ${gasData.message}`)
-        } catch {
-          console.warn('[delete] Respuesta GAS no válida (no JSON):', gasText.substring(0, 100))
-        }
-      } catch (gasErr) {
-        console.warn('[delete] Error al eliminar carpeta de Drive:', gasErr instanceof Error ? gasErr.message : gasErr)
-      }
-    }
-
-    // Siempre eliminar de MongoDB, independiente del resultado de Drive
+    // Siempre eliminar de MongoDB, independiente del resultado del storage
     await col.deleteOne({ trackingCode })
 
     res.json({
       message: `Operación ${trackingCode} eliminada.`,
-      driveDeleted,
-      folderName,
+      storageDeleted,
     })
   } catch (err) {
     console.error('[operations] Error al eliminar:', err)
@@ -1000,24 +972,12 @@ operationsRouter.delete('/:trackingCode/linea-blanca/:productCode', async (req, 
       return
     }
 
-    // Eliminar subcarpeta del producto en Drive
-    const GAS_URL = process.env.GAS_WEBHOOK_URL ?? ''
-    if (GAS_URL && productToDelete) {
+    // Eliminar las imágenes del producto en R2 (prefijo operations/<trackingCode>/<productCode>/)
+    if (productToDelete) {
       try {
-        const folderName = operation.vehiclePlate
-          ? `${operation.operationType}_${operation.vehiclePlate}`
-          : `${operation.operationType}_${trackingCode}`
-        let parentFolderId = ''
-        if (operation.companyId) {
-          const { getDb } = await import('../lib/mongodb.js')
-          const db = getDb()
-          const settings = await db.collection('company_settings').findOne({ companyId: operation.companyId })
-          if (settings?.driveFolderId) parentFolderId = settings.driveFolderId as string
-        }
-        let deleteUrl = `${GAS_URL}?action=deleteSubfolder&folder=${encodeURIComponent(folderName)}&subfolder=${encodeURIComponent(productCode)}`
-        if (parentFolderId) deleteUrl += `&parentFolderId=${encodeURIComponent(parentFolderId)}`
-        await fetch(deleteUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(15_000) })
-      } catch (e) { console.warn('[operations] Error al eliminar subcarpeta de Drive:', e) }
+        const { deleteByPrefix } = await import('../lib/storage.js')
+        await deleteByPrefix(`operations/${trackingCode}/${productCode.replace(/[^a-zA-Z0-9._-]/g, '_')}/`)
+      } catch (e) { console.warn('[operations] Error al eliminar imágenes del producto en R2:', e instanceof Error ? e.message : e) }
     }
 
     await col.updateOne({ trackingCode }, { $set: { lineaBlanca: filtered, updatedAt: new Date().toISOString() } })
