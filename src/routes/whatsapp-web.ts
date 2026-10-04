@@ -208,6 +208,53 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
 })
 
 /**
+ * POST /api/whatsapp-web/send-product
+ * Envía UN producto (sus fotos como álbum + título/observaciones) al destino.
+ * Body: { trackingCode, productCode, to? }
+ */
+whatsappWebRouter.post('/send-product', async (req, res) => {
+  const { trackingCode, productCode, to: toOverride } = req.body ?? {}
+  if (!trackingCode || !productCode) { res.status(400).json({ message: 'trackingCode y productCode son requeridos.' }); return }
+
+  try {
+    const { getOperationsCollection, getDb } = await import('../lib/mongodb.js')
+    const op = await getOperationsCollection().findOne({ trackingCode })
+    if (!op) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    let to = (toOverride ?? '').trim()
+    if (!to && op.companyId) {
+      const settings = await getDb().collection('company_settings').findOne({ companyId: op.companyId })
+      to = (settings?.whatsappTo as string) ?? ''
+    }
+    if (!to) { res.status(400).json({ message: 'No hay destino de WhatsApp configurado para esta empresa.' }); return }
+
+    type Photo = { driveUrl?: string; comment?: string }
+    const isSendable = (ph: Photo) => {
+      const u = ph.driveUrl
+      return Boolean(u && u !== 'pending-verification' && /^https?:\/\//.test(u))
+    }
+
+    const products = (op.lineaBlanca as Array<{ productCode: string; labelData?: { descripcion?: string }; photos: Photo[] }>) ?? []
+    const prod = products.find((p) => p.productCode === productCode)
+    if (!prod) { res.status(404).json({ message: `Producto "${productCode}" no encontrado.` }); return }
+
+    const sendable = (prod.photos ?? []).filter(isSendable)
+    if (sendable.length === 0) { res.status(400).json({ message: 'El producto no tiene fotos subidas para enviar.' }); return }
+
+    const desc = prod.labelData?.descripcion ? `\n${prod.labelData.descripcion}` : ''
+    const obsList = [...new Set(sendable.map((p) => (p.comment ?? '').trim()).filter(Boolean))]
+    const obs = obsList.length ? `\n📝 ${obsList.join(' · ')}` : ''
+    const caption = `📦 *${prod.productCode}*${desc}${obs}`
+
+    const r = await sendAlbum(to, sendable.map((p) => p.driveUrl as string), caption)
+    res.json({ message: `Producto ${productCode} enviado (${r.count} foto(s)).`, to, sent: r.count })
+  } catch (err) {
+    console.error('[whatsapp-web] Error al enviar producto:', err)
+    res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo enviar el producto.' })
+  }
+})
+
+/**
  * GET /api/whatsapp-web/groups
  * Lista los grupos (id JID + nombre) de la cuenta conectada.
  */
