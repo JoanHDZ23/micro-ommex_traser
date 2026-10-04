@@ -14,6 +14,7 @@
  */
 
 import { uploadImage, isStorageConfigured } from './storage.js'
+import { isGitHubConfigured, uploadImageToGitHub } from './github-storage.js'
 
 export interface DriveUploadResult {
   status: 'success' | 'error'
@@ -34,36 +35,60 @@ export interface DriveUploadPayload {
 }
 
 export async function uploadToDrive(payload: DriveUploadPayload): Promise<DriveUploadResult> {
-  if (!isStorageConfigured()) {
-    console.warn('[storage] R2 no configurado. Saltando upload.')
-    return { status: 'error', message: 'Almacenamiento no configurado. Define las variables R2_* en el servidor.' }
-  }
+  // Prefijo de key/carpeta lógica: <subfolder>/<subSubfolder?>
+  const parts = [payload.subfolderName]
+  if (payload.subSubfolderName) parts.push(payload.subSubfolderName)
+  const keyPrefix = parts
+    .map((p) => p.replace(/[^a-zA-Z0-9._-]/g, '_'))
+    .join('/')
 
-  try {
-    // Prefijo de key: <subfolder>/<subSubfolder?> — preserva la organización.
-    const parts = [payload.subfolderName]
-    if (payload.subSubfolderName) parts.push(payload.subSubfolderName)
-    const keyPrefix = parts
-      .map((p) => p.replace(/[^a-zA-Z0-9._-]/g, '_'))
-      .join('/')
-
-    const result = await uploadImage(payload.base64Image, {
-      contentType: payload.mimeType || 'image/jpeg',
-      keyPrefix,
-      fileName: payload.fileName,
-    })
-
-    console.log(`[storage] ✓ Subido: ${result.key}`)
-    return {
-      status: 'success',
-      fileId: result.key,      // la "key" de R2 ocupa el lugar del antiguo fileId
-      driveUrl: result.url,    // URL final de R2
-      downloadUrl: result.url,
-      thumbnailUrl: result.url,
+  // 1. Preferir Cloudflare R2 (object storage real) si está configurado.
+  if (isStorageConfigured()) {
+    try {
+      const result = await uploadImage(payload.base64Image, {
+        contentType: payload.mimeType || 'image/jpeg',
+        keyPrefix,
+        fileName: payload.fileName,
+      })
+      console.log(`[storage] ✓ Subido a R2: ${result.key}`)
+      return {
+        status: 'success',
+        fileId: result.key,
+        driveUrl: result.url,
+        downloadUrl: result.url,
+        thumbnailUrl: result.url,
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      console.error('[storage] Error al subir a R2:', message)
+      return { status: 'error', message }
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Error desconocido'
-    console.error('[storage] Error al subir a R2:', message)
-    return { status: 'error', message }
   }
+
+  // 2. Fallback a GitHub si está configurado.
+  if (isGitHubConfigured()) {
+    try {
+      const gh = await uploadImageToGitHub(payload.base64Image, {
+        path: keyPrefix,
+        fileName: payload.fileName,
+        ext: (payload.mimeType || '').includes('png') ? 'png' : 'jpg',
+      })
+      console.log(`[storage] ✓ Subido a GitHub: ${gh.path}`)
+      return {
+        status: 'success',
+        fileId: gh.path,       // la key/ruta de GitHub ocupa el lugar del antiguo fileId
+        driveUrl: gh.rawUrl,   // URL raw.githubusercontent.com
+        downloadUrl: gh.rawUrl,
+        thumbnailUrl: gh.rawUrl,
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      console.error('[storage] Error al subir a GitHub:', message)
+      return { status: 'error', message }
+    }
+  }
+
+  // 3. Ninguno configurado.
+  console.warn('[storage] Sin almacenamiento configurado (R2 ni GitHub).')
+  return { status: 'error', message: 'Almacenamiento no configurado. Define las variables R2_* o GITHUB_* en el servidor.' }
 }

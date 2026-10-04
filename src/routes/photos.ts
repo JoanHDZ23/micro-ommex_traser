@@ -126,7 +126,7 @@ photosRouter.post('/upload', async (req, res) => {
 
     if (driveResult.status === 'error') {
       if ((driveResult.message ?? '').includes('no configurado')) {
-        res.status(502).json({ message: 'GAS_WEBHOOK_URL no configurado.' }); return
+        res.status(502).json({ message: 'Almacenamiento no configurado en el servidor (R2 o GitHub).' }); return
       }
       fileId = fileId || 'pending'
       driveUrl = driveUrl || 'pending-verification'

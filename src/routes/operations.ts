@@ -401,7 +401,7 @@ operationsRouter.post('/products-catalog/:productCode/photo', async (req, res) =
     let fileId = driveResult.fileId ?? ''
     let driveUrl = driveResult.driveUrl ?? ''
     if (driveResult.status === 'error') {
-      if ((driveResult.message ?? '').includes('no configurado')) { res.status(502).json({ message: 'GAS_WEBHOOK_URL no configurado.' }); return }
+      if ((driveResult.message ?? '').includes('no configurado')) { res.status(502).json({ message: 'Almacenamiento no configurado en el servidor (R2 o GitHub).' }); return }
       fileId = fileId || 'pending'
       driveUrl = driveUrl || 'pending-verification'
     }
@@ -731,7 +731,7 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
     if (driveResult.status === 'error') {
       const errorMsg = driveResult.message ?? ''
       if (errorMsg.includes('no configurado')) {
-        res.status(502).json({ message: 'Error al subir imagen a Google Drive.', detail: errorMsg })
+        res.status(502).json({ message: 'Error al subir la imagen: almacenamiento no configurado en el servidor.', detail: errorMsg })
         return
       }
       console.warn(`[linea-blanca] GAS: ${errorMsg}. Registrando igualmente.`)
