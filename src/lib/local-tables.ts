@@ -6,7 +6,8 @@
  * - Persistencia de tablas importadas en localStorage, para poder importarlas y
  *   visualizarlas desde la app sin servidor (útil para pruebas).
  *
- * Los PDF requieren el backend (el parseo de PDF se hace en el servidor).
+ * CSV, Excel y PDF (de texto) se parsean en el navegador. Los PDF escaneados
+ * (imágenes) no tienen texto extraíble y requieren otro flujo.
  */
 
 import * as XLSX from 'xlsx'
@@ -16,6 +17,80 @@ const STORAGE_KEY = 'ommex_local_tables_v1'
 
 export function isPdf(fileName: string, mimeType?: string): boolean {
   return fileName.toLowerCase().endsWith('.pdf') || (mimeType ?? '').includes('pdf')
+}
+
+/**
+ * Parsea un PDF de texto en el navegador usando pdfjs-dist.
+ * Extrae los items con coordenadas, agrupa por fila (misma Y) y asigna
+ * columnas por la posición X de la fila con más celdas.
+ */
+export async function parsePdfLocally(file: File): Promise<ParsedTable> {
+  const pdfjs = await import('pdfjs-dist')
+  // Worker servido por Vite a partir del paquete (sin CDN externo).
+  const workerUrl = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default
+  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+
+  const data = new Uint8Array(await file.arrayBuffer())
+  const pdf = await pdfjs.getDocument({ data }).promise
+
+  interface Item { str: string; x: number; y: number }
+  const allRows: Item[][] = []
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p)
+    const content = await page.getTextContent()
+    const items: Item[] = []
+    for (const it of content.items as Array<{ str?: string; transform?: number[] }>) {
+      const text = (it.str ?? '').trim()
+      if (!text || !it.transform) continue
+      items.push({ str: text, x: it.transform[4], y: it.transform[5] })
+    }
+    const Y_TOL = 3
+    items.sort((a, b) => b.y - a.y || a.x - b.x)
+    const rows: Item[][] = []
+    for (const it of items) {
+      const last = rows[rows.length - 1]
+      if (last && Math.abs(last[0].y - it.y) <= Y_TOL) last.push(it)
+      else rows.push([it])
+    }
+    for (const r of rows) { r.sort((a, b) => a.x - b.x); allRows.push(r) }
+  }
+
+  if (allRows.length === 0) {
+    throw new Error('El PDF no contiene texto extraíble. Si es escaneado, usa CSV o Excel.')
+  }
+
+  const template = allRows.reduce((best, r) => (r.length > best.length ? r : best), allRows[0])
+  const colStarts = template.map((c) => c.x)
+  const assign = (x: number) => {
+    let bi = 0, bd = Infinity
+    for (let i = 0; i < colStarts.length; i++) {
+      const d = Math.abs(colStarts[i] - x)
+      if (d < bd) { bd = d; bi = i }
+    }
+    return bi
+  }
+  const numCols = Math.max(colStarts.length, 1)
+  const matrix: string[][] = allRows.map((row) => {
+    const cells = new Array<string>(numCols).fill('')
+    for (const it of row) {
+      const c = assign(it.x)
+      cells[c] = cells[c] ? `${cells[c]} ${it.str}` : it.str
+    }
+    return cells
+  })
+
+  const cleaned = matrix.filter((r) => r.some((c) => c !== ''))
+  if (cleaned.length === 0) return { headers: [], rows: [] }
+  const headers = cleaned[0]
+  const rows = cleaned.slice(1)
+  const width = Math.max(headers.length, ...rows.map((r) => r.length))
+  const pad = (r: string[]) => {
+    const out = r.slice(0, width)
+    while (out.length < width) out.push('')
+    return out
+  }
+  return { headers: pad(headers), rows: rows.map(pad) }
 }
 
 /** Parsea un archivo CSV/XLSX en el navegador a { headers, rows }. */

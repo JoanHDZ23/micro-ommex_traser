@@ -8,6 +8,34 @@ import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate }
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { compressImageToBase64 } from '../lib/image-compress'
 import { BarcodeScanner } from '../components/BarcodeScanner'
+import type { PhotoRecord } from '../lib/api'
+
+/** URL directa de R2: driveUrl http(s) que no es de Google. */
+function directUrl(photo: Pick<PhotoRecord, 'driveUrl'>): string | null {
+  const u = photo.driveUrl
+  if (!u || u === 'pending-verification') return null
+  if (/^https?:\/\//.test(u) && !/google\.com|googleusercontent\.com/.test(u)) return u
+  return null
+}
+
+/** URL de imagen embebible para una foto (R2 directo o CDN de Drive). */
+function photoSrc(photo: Pick<PhotoRecord, 'driveUrl' | 'fileId'>, size = 400): string | null {
+  const direct = directUrl(photo)
+  if (direct) return direct
+  const { fileId } = photo
+  if (!fileId || fileId === 'pending' || fileId === 'note') return null
+  if (fileId.includes('/')) return null // key de R2 sin URL directa
+  return `https://lh3.googleusercontent.com/d/${fileId}=w${size}`
+}
+
+/** URL para abrir/compartir la foto (R2 directo o Drive). */
+function photoViewUrl(photo: Pick<PhotoRecord, 'driveUrl' | 'fileId'>): string | null {
+  const direct = directUrl(photo)
+  if (direct) return direct
+  const { fileId } = photo
+  if (!fileId || fileId === 'pending' || fileId === 'note' || fileId.includes('/')) return null
+  return `https://drive.google.com/file/d/${fileId}/view`
+}
 
 const WIZARD_GUIDE: GuideStep[] = [
   {
@@ -616,16 +644,18 @@ export function WizardPage() {
                 <div key={i} className="flex justify-end">
                   <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
                     {/* Photo thumbnail — solo si es imagen real (no nota ni pendiente) */}
-                    {photo.fileId && photo.fileId !== 'pending' && photo.fileId !== 'note' && (
+                    {photoSrc(photo, 300) && (
                       <img
-                        src={`https://lh3.googleusercontent.com/d/${photo.fileId}=w300`}
+                        src={photoSrc(photo, 300)!}
                         alt={photo.stepName}
                         className="w-full rounded-md mb-1.5 max-h-48 object-cover"
                         loading="lazy"
                         onError={(e) => {
                           const img = e.target as HTMLImageElement
-                          const fb = `https://drive.google.com/thumbnail?id=${photo.fileId}&sz=w300`
-                          if (img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
+                          // Fallback a thumbnail de Drive solo si es una foto de Drive.
+                          const fb = photo.fileId && !photo.fileId.includes('/') && !directUrl(photo)
+                            ? `https://drive.google.com/thumbnail?id=${photo.fileId}&sz=w300` : ''
+                          if (fb && img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
                         }}
                       />
                     )}
@@ -716,8 +746,8 @@ export function WizardPage() {
                         className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: photos.length === 1 ? '1fr' : '1fr 1fr' }}>
                         {visiblePhotos.map((ph, idx) => (
                           <div key={idx} className="aspect-square bg-gray-200 rounded overflow-hidden relative">
-                            {ph.fileId && ph.fileId !== 'pending' ? (
-                              <img src={`https://lh3.googleusercontent.com/d/${ph.fileId}=w400`}
+                            {photoSrc(ph, 400) ? (
+                              <img src={photoSrc(ph, 400)!}
                                 className="w-full h-full object-cover" loading="lazy"
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                             ) : (
@@ -729,8 +759,8 @@ export function WizardPage() {
                         ))}
                         {lastVisiblePhoto && (
                           <div className="aspect-square bg-gray-200 rounded overflow-hidden relative">
-                            {lastVisiblePhoto.fileId && lastVisiblePhoto.fileId !== 'pending' ? (
-                              <img src={`https://lh3.googleusercontent.com/d/${lastVisiblePhoto.fileId}=w400`}
+                            {photoSrc(lastVisiblePhoto, 400) ? (
+                              <img src={photoSrc(lastVisiblePhoto, 400)!}
                                 className="w-full h-full object-cover opacity-60" loading="lazy"
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                             ) : null}
@@ -798,8 +828,8 @@ export function WizardPage() {
                         if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
                           try {
                             const imageFiles: File[] = []
-                            for (const ph of photos.filter((p) => p.fileId && p.fileId !== 'pending').slice(0, 10)) {
-                              const imgUrl = `https://lh3.googleusercontent.com/d/${ph.fileId}=w800`
+                            for (const ph of photos.filter((p) => photoSrc(p, 800)).slice(0, 10)) {
+                              const imgUrl = photoSrc(ph, 800)!
                               const resp = await fetch(imgUrl)
                               if (resp.ok) {
                                 const blob = await resp.blob()
@@ -814,8 +844,8 @@ export function WizardPage() {
                         }
                         // Fallback: WhatsApp link with photo URLs
                         const photoLinks = photos
-                          .filter((p) => p.fileId && p.fileId !== 'pending')
-                          .map((p, i) => `📷 Foto ${i + 1}: https://drive.google.com/file/d/${p.fileId}/view`)
+                          .filter((p) => photoViewUrl(p))
+                          .map((p, i) => `📷 Foto ${i + 1}: ${photoViewUrl(p)}`)
                           .join('\n')
                         const fullText = `${text}\n\n${photoLinks}`
                         window.open(`https://wa.me/?text=${encodeURIComponent(fullText)}`, '_blank')
@@ -832,8 +862,8 @@ export function WizardPage() {
                           <div className="grid grid-cols-3 gap-1 pt-2">
                             {photos.map((ph, phIdx) => (
                               <div key={phIdx} className="relative aspect-square rounded overflow-hidden bg-gray-200">
-                                {ph.fileId && ph.fileId !== 'pending' ? (
-                                  <img src={`https://lh3.googleusercontent.com/d/${ph.fileId}=w200`}
+                                {photoSrc(ph, 200) ? (
+                                  <img src={photoSrc(ph, 200)!}
                                     className="w-full h-full object-cover" loading="lazy"
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                                 ) : (

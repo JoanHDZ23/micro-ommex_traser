@@ -7,7 +7,7 @@ import {
 import { apiRequest, fileToBase64, type CompanySheet, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import {
-  parseFileLocally, isPdf, saveLocalTable, listLocalTables,
+  parseFileLocally, parsePdfLocally, isPdf, saveLocalTable, listLocalTables,
   getLocalTable, updateLocalTableRows, deleteLocalTable,
 } from '../lib/local-tables'
 
@@ -176,23 +176,18 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
       })
       setPreview(table)
     } catch (err) {
-      // Sin backend: intentar parsear CSV/XLSX en el navegador (modo prueba)
-      if (!isPdf(f.name, f.type)) {
-        try {
-          const table = await parseFileLocally(f)
-          if (table.headers.length > 0 || table.rows.length > 0) {
-            setPreview(table)
-            return
-          }
-          setError('No se encontró ninguna tabla en el documento.')
+      // Sin backend: parsear en el navegador (CSV/XLSX con SheetJS, PDF con pdfjs)
+      try {
+        const table = isPdf(f.name, f.type) ? await parsePdfLocally(f) : await parseFileLocally(f)
+        if (table.headers.length > 0 || table.rows.length > 0) {
+          setPreview(table)
           return
-        } catch { /* cae al mensaje de abajo */ }
+        }
+        setError('No se encontró ninguna tabla en el documento.')
+        return
+      } catch (localErr) {
+        setError(localErr instanceof Error ? localErr.message : (err instanceof Error ? err.message : 'No se pudo leer el documento.'))
       }
-      setError(
-        isPdf(f.name, f.type)
-          ? 'Los PDF necesitan el servidor para leerse. Prueba con un archivo CSV o Excel.'
-          : (err instanceof Error ? err.message : 'No se pudo leer el documento.'),
-      )
     } finally {
       setParsing(false)
     }

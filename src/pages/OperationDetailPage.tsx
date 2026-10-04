@@ -33,36 +33,45 @@ const DETAIL_GUIDE: GuideStep[] = [
   },
 ]
 
+/** URL directa de R2: driveUrl http(s) que no es de Google. */
+function getDirectUrl(photo: PhotoRecord): string | null {
+  const { driveUrl } = photo
+  if (!driveUrl || driveUrl === 'pending-verification') return null
+  if (/^https?:\/\//.test(driveUrl) && !/google\.com|googleusercontent\.com/.test(driveUrl)) return driveUrl
+  return null
+}
+
 /** Convierte una driveUrl o fileId en una URL de imagen embebible */
 function getDriveImageUrl(photo: PhotoRecord): string | null {
+  // Preferir URL directa de almacenamiento en la nube (R2).
+  const direct = getDirectUrl(photo)
+  if (direct) return direct
+
   const { driveUrl, fileId } = photo
 
-  // Si tiene fileId válido, usar lh3.googleusercontent.com (más confiable que thumbnail)
+  // Fotos en R2: el fileId es una key (contiene '/'), no un ID de Drive.
+  if (fileId && fileId.includes('/')) return null
+
+  // Si tiene fileId válido de Drive, usar lh3.googleusercontent.com
   if (fileId && fileId !== 'pending') {
     return `https://lh3.googleusercontent.com/d/${fileId}=w800`
   }
 
-  // Intentar extraer fileId de la driveUrl
+  // Intentar extraer fileId de la driveUrl (datos antiguos de Drive)
   if (driveUrl && driveUrl !== 'pending-verification') {
-    // Formato: https://drive.google.com/file/d/XXXXX/view...
     const match = driveUrl.match(/\/d\/([a-zA-Z0-9_-]+)/)
-    if (match?.[1]) {
-      return `https://lh3.googleusercontent.com/d/${match[1]}=w800`
-    }
-    // Formato: https://drive.google.com/open?id=XXXXX
+    if (match?.[1]) return `https://lh3.googleusercontent.com/d/${match[1]}=w800`
     const match2 = driveUrl.match(/id=([a-zA-Z0-9_-]+)/)
-    if (match2?.[1]) {
-      return `https://lh3.googleusercontent.com/d/${match2[1]}=w800`
-    }
+    if (match2?.[1]) return `https://lh3.googleusercontent.com/d/${match2[1]}=w800`
   }
 
   return null
 }
 
-/** URL directa para abrir en Drive */
+/** URL directa para abrir la imagen (R2 o Drive) */
 function getDriveViewUrl(photo: PhotoRecord): string | null {
   if (photo.driveUrl && photo.driveUrl !== 'pending-verification') return photo.driveUrl
-  if (photo.fileId && photo.fileId !== 'pending') return `https://drive.google.com/file/d/${photo.fileId}/view`
+  if (photo.fileId && photo.fileId !== 'pending' && !photo.fileId.includes('/')) return `https://drive.google.com/file/d/${photo.fileId}/view`
   return null
 }
 
@@ -279,7 +288,9 @@ function PhotoCard({ photo, onClick, useCommentAsTitle }: { photo: PhotoRecord; 
   const imageUrl = getDriveImageUrl(photo)
   const isPending = !imageUrl
   const title = useCommentAsTitle && photo.comment ? photo.comment : photo.stepName
-  const fallbackUrl = photo.fileId && photo.fileId !== 'pending'
+  // Fallback de thumbnail solo aplica a fotos de Drive (fileId = ID de Drive).
+  // Para fotos en R2 (fileId con '/') el imageUrl ya es la URL final.
+  const fallbackUrl = photo.fileId && photo.fileId !== 'pending' && !photo.fileId.includes('/')
     ? `https://drive.google.com/thumbnail?id=${photo.fileId}&sz=w400`
     : null
 

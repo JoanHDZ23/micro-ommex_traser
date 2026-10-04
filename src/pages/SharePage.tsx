@@ -3,6 +3,21 @@ import { useParams } from 'react-router-dom'
 import { Calendar, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, Loader2, MapPin, Package, Share2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 
+/**
+ * Devuelve una URL directa de imagen si la foto está en almacenamiento en la
+ * nube (R2): driveUrl es una URL http(s) que NO es de Google Drive. En ese caso
+ * se usa tal cual. Las fotos antiguas de Drive devuelven null aquí y caen al
+ * flujo basado en fileId.
+ */
+function getDirectUrl(photo: PhotoRecord): string | null {
+  const { driveUrl } = photo
+  if (!driveUrl || driveUrl === 'pending-verification') return null
+  if (/^https?:\/\//.test(driveUrl) && !/google\.com|googleusercontent\.com/.test(driveUrl)) {
+    return driveUrl
+  }
+  return null
+}
+
 /** Devuelve el fileId real de una foto, o null si es nota/pendiente/sin imagen */
 function getRealFileId(photo: PhotoRecord): string | null {
   const { driveUrl, fileId } = photo
@@ -15,13 +30,21 @@ function getRealFileId(photo: PhotoRecord): string | null {
 }
 
 function getDriveImageUrl(photo: PhotoRecord, size = 800): string | null {
+  // Preferir URL directa de R2 si existe.
+  const direct = getDirectUrl(photo)
+  if (direct) return direct
   const id = getRealFileId(photo)
+  // Fotos en R2: el fileId es una key (contiene '/'), no un ID de Drive.
+  if (id && id.includes('/')) return null
   return id ? `https://lh3.googleusercontent.com/d/${id}=w${size}` : null
 }
 
-/** URL de respaldo (thumbnail) si falla lh3 */
+/** URL de respaldo (thumbnail) si falla la principal */
 function getDriveThumbUrl(photo: PhotoRecord, size = 800): string | null {
+  const direct = getDirectUrl(photo)
+  if (direct) return direct
   const id = getRealFileId(photo)
+  if (id && id.includes('/')) return null
   return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w${size}` : null
 }
 
@@ -31,13 +54,16 @@ function getDriveThumbUrl(photo: PhotoRecord, size = 800): string | null {
  * directamente en vez de abrir el visor de Drive.
  */
 async function downloadPhoto(photo: PhotoRecord, filename: string): Promise<void> {
+  const direct = getDirectUrl(photo)
   const id = getRealFileId(photo)
-  if (!id) return
-  // =s0 devuelve la imagen en su tamaño original
-  const sources = [
-    `https://lh3.googleusercontent.com/d/${id}=s0`,
-    `https://drive.google.com/thumbnail?id=${id}&sz=w2000`,
-  ]
+  if (!direct && !id) return
+  // Fuentes a intentar: URL directa de R2 primero; si no, el CDN de Drive.
+  const sources = direct
+    ? [direct]
+    : [
+        `https://lh3.googleusercontent.com/d/${id}=s0`,
+        `https://drive.google.com/thumbnail?id=${id}&sz=w2000`,
+      ]
   for (const src of sources) {
     try {
       const resp = await fetch(src, { mode: 'cors' })
@@ -56,13 +82,14 @@ async function downloadPhoto(photo: PhotoRecord, filename: string): Promise<void
       /* prueba siguiente fuente */
     }
   }
-  // Último recurso: abre la URL de descarga de Drive en otra pestaña
-  const fallback = `https://drive.google.com/uc?export=download&id=${id}`
-  window.open(fallback, '_blank')
+  // Último recurso: abre la mejor URL disponible en otra pestaña
+  const fallback = direct ?? (id ? `https://drive.google.com/uc?export=download&id=${id}` : null)
+  if (fallback) window.open(fallback, '_blank')
 }
 
 /** True si la foto es una nota de solo texto (sin imagen) */
 function isTextNote(photo: PhotoRecord): boolean {
+  if (getDirectUrl(photo)) return false
   return photo.fileId === 'note' || (getRealFileId(photo) === null && !!photo.comment)
 }
 
