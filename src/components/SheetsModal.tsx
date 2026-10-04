@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2,
   Search, CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
-  Pencil, Save, Plus, Database, RefreshCw,
+  Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus,
 } from 'lucide-react'
-import { apiRequest, fileToBase64, type CompanySheet, type ParsedTable, type SheetData } from '../lib/api'
-import { getCompanyId } from '../lib/context'
+import { apiRequest, fileToBase64, type CompanySheet, type Operation, type OperationType, type ParsedTable, type SheetData } from '../lib/api'
+import { getCompanyId, getOperatorName } from '../lib/context'
+import { BarcodeScanner } from './BarcodeScanner'
 import {
   parseFileLocally, parsePdfLocally, isPdf, saveLocalTable, listLocalTables,
   getLocalTable, updateLocalTableRows, deleteLocalTable,
@@ -23,9 +25,32 @@ const MAX_VISIBLE_ROWS = 200
  * Tabla con filtro por columna + texto. Reutilizada por la vista previa de la
  * subida y por el visor de una hoja ya importada.
  */
-function DataTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
+interface DataTableProps {
+  headers: string[]
+  rows: string[][]
+  /** Si se definen, habilita las acciones por fila / selección múltiple (modo registros). */
+  actions?: {
+    /** Columna usada como código/nombre del producto. */
+    codeCol: number
+    /** Columna usada como descripción (opcional, -1 = ninguna). */
+    descCol: number
+    onCodeColChange: (col: number) => void
+    onDescColChange: (col: number) => void
+    /** Crear un registro nuevo con una sola fila. */
+    onCreateRecord: (row: string[]) => void
+    /** Crear un producto desde una fila (en un registro nuevo o existente). */
+    onCreateProduct: (row: string[]) => void
+    /** Traer varias filas seleccionadas a un registro (crea los grupos de producto). */
+    onBringToRecord: (rows: string[][]) => void
+    busy?: boolean
+  }
+}
+
+function DataTable({ headers, rows, actions }: DataTableProps) {
   const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas
   const [filterText, setFilterText] = useState('')
+  const [scanning, setScanning] = useState(false)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
 
   const filtered = useMemo(() => {
     const q = filterText.trim().toLowerCase()
@@ -35,6 +60,18 @@ function DataTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
       return row.some((cell) => (cell ?? '').toLowerCase().includes(q))
     })
   }, [rows, filterText, filterCol])
+
+  const visible = filtered.slice(0, MAX_VISIBLE_ROWS)
+  const toggleRow = (globalIdx: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(globalIdx)) next.delete(globalIdx); else next.add(globalIdx)
+      return next
+    })
+  }
+  // Índice global de una fila (en `rows`), para que la selección sobreviva al filtrado.
+  const indexOfRow = (row: string[]) => rows.indexOf(row)
+  const selectedRows = Array.from(selected).map((i) => rows[i]).filter(Boolean)
 
   return (
     <div className="space-y-3">
@@ -56,10 +93,67 @@ function DataTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
             placeholder="Filtrar filas…"
-            className="w-full pl-8 pr-3 py-2 rounded-lg border border-[var(--color-border)] text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+            className="w-full pl-8 pr-8 py-2 rounded-lg border border-[var(--color-border)] text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
           />
+          {filterText && (
+            <button onClick={() => setFilterText('')} aria-label="Limpiar filtro"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-3)] hover:text-[var(--color-text)]">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
+        {/* Filtrar al escanear un código (igual que al agregar producto en registros) */}
+        <button onClick={() => setScanning(true)} title="Filtrar escaneando un código"
+          className="px-2.5 py-2 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0 hover:bg-amber-200">
+          <QrCode className="w-4 h-4" />
+        </button>
       </div>
+
+      {/* Escáner: al detectar un código, lo coloca en el filtro de texto */}
+      {scanning && (
+        <BarcodeScanner
+          onResult={(code) => { setScanning(false); setFilterText(code) }}
+          onClose={() => setScanning(false)}
+        />
+      )}
+
+      {/* Mapeo de columnas → producto (solo en modo registros) */}
+      {actions && (
+        <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+          <span className="text-[10px] font-semibold text-slate-500 uppercase w-full">¿Qué columnas usar para los productos?</span>
+          <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+            Código/Nombre
+            <select value={actions.codeCol} onChange={(e) => actions.onCodeColChange(Number(e.target.value))}
+              className="px-2 py-1.5 rounded-lg border border-slate-200 text-[11px] bg-white">
+              {headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+            Descripción
+            <select value={actions.descCol} onChange={(e) => actions.onDescColChange(Number(e.target.value))}
+              className="px-2 py-1.5 rounded-lg border border-slate-200 text-[11px] bg-white">
+              <option value={-1}>— ninguna —</option>
+              {headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+
+      {/* Barra de selección múltiple (traer varias filas a un registro) */}
+      {actions && selectedRows.length > 0 && (
+        <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200">
+          <span className="text-xs font-medium text-emerald-800">{selectedRows.length} fila(s) seleccionada(s)</span>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSelected(new Set())}
+              className="text-[11px] text-emerald-700 hover:underline">Limpiar</button>
+            <button onClick={() => actions.onBringToRecord(selectedRows)} disabled={actions.busy}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-[11px] font-semibold flex items-center gap-1.5 disabled:opacity-50">
+              {actions.busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackagePlus className="w-3.5 h-3.5" />}
+              Traer a un registro
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Tabla */}
       <div className="border border-[var(--color-border)] rounded-xl overflow-hidden">
@@ -73,23 +167,64 @@ function DataTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
           <table className="w-full text-xs border-collapse">
             <thead className="sticky top-0 bg-slate-800 text-white">
               <tr>
+                {actions && (
+                  <th className="w-8 px-2 py-2 text-center">
+                    <input type="checkbox"
+                      aria-label="Seleccionar todas las visibles"
+                      checked={visible.length > 0 && visible.every((r) => selected.has(indexOfRow(r)))}
+                      onChange={(e) => {
+                        setSelected((prev) => {
+                          const next = new Set(prev)
+                          if (e.target.checked) visible.forEach((r) => next.add(indexOfRow(r)))
+                          else visible.forEach((r) => next.delete(indexOfRow(r)))
+                          return next
+                        })
+                      }} />
+                  </th>
+                )}
                 {headers.map((h, i) => (
                   <th key={i} className="text-left font-semibold px-2.5 py-2 whitespace-nowrap border-r border-slate-700 last:border-r-0">
                     {h || `Columna ${i + 1}`}
                   </th>
                 ))}
+                {actions && <th className="px-2.5 py-2 text-left font-semibold whitespace-nowrap">Acciones</th>}
               </tr>
             </thead>
             <tbody>
-              {filtered.slice(0, MAX_VISIBLE_ROWS).map((row, ri) => (
-                <tr key={ri} className="even:bg-gray-50">
-                  {headers.map((_, ci) => (
-                    <td key={ci} className="px-2.5 py-1.5 whitespace-nowrap border-r border-[var(--color-border)] last:border-r-0 text-[var(--color-text)]">
-                      {row[ci] ?? ''}
-                    </td>
-                  ))}
-                </tr>
-              ))}
+              {visible.map((row, ri) => {
+                const gIdx = indexOfRow(row)
+                const isSel = selected.has(gIdx)
+                return (
+                  <tr key={ri} className={isSel ? 'bg-emerald-50' : 'even:bg-gray-50'}>
+                    {actions && (
+                      <td className="px-2 py-1.5 text-center border-r border-[var(--color-border)]">
+                        <input type="checkbox" checked={isSel} onChange={() => toggleRow(gIdx)} />
+                      </td>
+                    )}
+                    {headers.map((_, ci) => (
+                      <td key={ci} className="px-2.5 py-1.5 whitespace-nowrap border-r border-[var(--color-border)] last:border-r-0 text-[var(--color-text)]">
+                        {row[ci] ?? ''}
+                      </td>
+                    ))}
+                    {actions && (
+                      <td className="px-2.5 py-1.5 whitespace-nowrap">
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => actions.onCreateRecord(row)} disabled={actions.busy}
+                            title="Crear un registro nuevo con esta fila"
+                            className="px-2 py-1 rounded-lg bg-[var(--color-primary)] text-white text-[10px] font-medium flex items-center gap-1 disabled:opacity-50">
+                            <FilePlus className="w-3 h-3" /> Registro
+                          </button>
+                          <button onClick={() => actions.onCreateProduct(row)} disabled={actions.busy}
+                            title="Crear un producto con esta fila"
+                            className="px-2 py-1 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-[10px] font-medium flex items-center gap-1 disabled:opacity-50">
+                            <PackagePlus className="w-3 h-3" /> Producto
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -109,6 +244,7 @@ function DataTable({ headers, rows }: { headers: string[]; rows: string[][] }) {
  * (listar / verificar en la app / eliminar) las hojas creadas por la empresa.
  */
 export function SheetsModal({ open, onClose }: SheetsModalProps) {
+  const navigate = useNavigate()
   // Si no viene companyId (p. ej. abriendo la app directamente para probar),
   // usamos 'demo' para que las tablas locales tengan dónde agruparse.
   const companyId = getCompanyId() || 'demo'
@@ -135,6 +271,106 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
   const [editing, setEditing] = useState(false)
   const [editRows, setEditRows] = useState<string[][]>([])
   const [savingEdit, setSavingEdit] = useState(false)
+
+  // ── Traer productos del documento a los registros ──
+  // Mapeo de columnas: qué columna es el código/nombre y cuál la descripción.
+  const [codeCol, setCodeCol] = useState(0)
+  const [descCol, setDescCol] = useState(-1)
+  const [bringingBusy, setBringingBusy] = useState(false)
+  // Modal de destino: filas a volcar + a qué operación.
+  const [bringRows, setBringRows] = useState<string[][] | null>(null)
+  const [existingOps, setExistingOps] = useState<Operation[]>([])
+  const [bringType, setBringType] = useState<OperationType>('PRODUCTOS_ENTRANTES')
+
+  // Al abrir el visor, intenta adivinar la columna de código y la de descripción
+  // por el nombre del encabezado (SKU/código, descripción/ítem).
+  useEffect(() => {
+    if (!viewing) return
+    const hs = viewing.headers.map((h) => (h || '').toLowerCase())
+    const guessCode = hs.findIndex((h) => /sku|c[oó]digo|code|ref|producto/.test(h))
+    const guessDesc = hs.findIndex((h) => /descrip|[ií]tem|detalle|nombre|art[ií]culo/.test(h))
+    setCodeCol(guessCode >= 0 ? guessCode : 0)
+    setDescCol(guessDesc >= 0 ? guessDesc : -1)
+  }, [viewing])
+
+  /** Construye {productCode, descripcion} desde una fila usando el mapeo actual. */
+  const rowToProduct = (row: string[]): { productCode: string; descripcion?: string } => {
+    const code = (row[codeCol] ?? '').trim()
+    const descripcion = descCol >= 0 ? (row[descCol] ?? '').trim() : undefined
+    // Fallback: si la columna de código está vacía, usa la descripción como nombre.
+    const productCode = code || descripcion || 'PRODUCTO'
+    return { productCode, descripcion: descripcion || undefined }
+  }
+
+  /** Agrega un producto (grupo) a una operación existente vía linea-blanca. */
+  const addProductToOperation = async (trackingCode: string, row: string[]) => {
+    const { productCode, descripcion } = rowToProduct(row)
+    await apiRequest(`/operations/${encodeURIComponent(trackingCode)}/linea-blanca`, {
+      method: 'POST',
+      body: { productCode, labelData: descripcion ? { descripcion } : undefined },
+    })
+  }
+
+  /** Crea una operación nueva y devuelve su trackingCode. */
+  const createOperation = async (operationType: OperationType): Promise<string> => {
+    const op = await apiRequest<Operation>('/operations', {
+      method: 'POST',
+      body: { operationType, operatorName: getOperatorName() || 'Operador', companyId: getCompanyId() || undefined },
+    })
+    return op.trackingCode
+  }
+
+  /** Carga las operaciones en proceso para elegir destino en "crear producto". */
+  const loadExistingOps = async () => {
+    try {
+      const res = await apiRequest<{ operations: Operation[] }>(
+        `/operations/search-for-link?${new URLSearchParams(companyId ? { companyId } : {}).toString()}`,
+      )
+      setExistingOps(res.operations ?? [])
+    } catch { setExistingOps([]) }
+  }
+
+  // Crear REGISTRO nuevo con una sola fila (nueva operación + 1 producto) y abrir el wizard.
+  const handleCreateRecordFromRow = async (row: string[]) => {
+    setBringRows([row])
+    setBringType('PRODUCTOS_ENTRANTES')
+    void loadExistingOps()
+  }
+
+  // Crear PRODUCTO desde una fila: abre el selector de destino (nueva o existente).
+  const handleCreateProductFromRow = async (row: string[]) => {
+    setBringRows([row])
+    setBringType('PRODUCTOS_ENTRANTES')
+    void loadExistingOps()
+  }
+
+  // Traer VARIAS filas seleccionadas a un registro.
+  const handleBringToRecord = async (rows: string[][]) => {
+    setBringRows(rows)
+    setBringType('PRODUCTOS_ENTRANTES')
+    void loadExistingOps()
+  }
+
+  // Confirma el destino: crea la operación (o usa una existente), agrega los
+  // productos (grupos) con la info de las filas y navega al registro.
+  const confirmBring = async (target: 'new' | string) => {
+    if (!bringRows || bringRows.length === 0) return
+    setBringingBusy(true)
+    setError(null)
+    try {
+      const trackingCode = target === 'new' ? await createOperation(bringType) : target
+      for (const row of bringRows) {
+        await addProductToOperation(trackingCode, row)
+      }
+      setBringRows(null)
+      onClose()
+      navigate(`/wizard/${trackingCode}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron crear los productos.')
+    } finally {
+      setBringingBusy(false)
+    }
+  }
 
   // Cargar listado al abrir
   useEffect(() => {
@@ -514,7 +750,19 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
                     <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full">En vivo desde Sheets</span>
                   )}
                 </div>
-                <DataTable headers={viewing.headers} rows={viewing.rows} />
+                <DataTable
+                  headers={viewing.headers}
+                  rows={viewing.rows}
+                  actions={{
+                    codeCol, descCol,
+                    onCodeColChange: setCodeCol,
+                    onDescColChange: setDescCol,
+                    onCreateRecord: (row) => void handleCreateRecordFromRow(row),
+                    onCreateProduct: (row) => void handleCreateProductFromRow(row),
+                    onBringToRecord: (rows) => void handleBringToRecord(rows),
+                    busy: bringingBusy,
+                  }}
+                />
               </>
             )}
           </div>
@@ -649,6 +897,80 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
           </div>
         )}
       </div>
+
+      {/* ── Modal: destino para traer productos del documento a los registros ── */}
+      {bringRows && (
+        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+              <h3 className="text-sm font-bold text-[var(--color-text)]">
+                Traer {bringRows.length} producto(s) a un registro
+              </h3>
+              <button onClick={() => setBringRows(null)} aria-label="Cerrar"
+                className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-[var(--color-text-2)]" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto px-4 py-4 space-y-4">
+              <p className="text-xs text-[var(--color-text-3)]">
+                Se crearán los grupos de producto con la información del documento. Solo tendrás que agregar las fotos.
+              </p>
+
+              {error && (
+                <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              {/* Opción A: nuevo registro */}
+              <section className="space-y-2">
+                <h4 className="text-[10px] font-semibold text-[var(--color-text-3)] uppercase">Crear un registro nuevo</h4>
+                <div className="grid grid-cols-2 gap-2">
+                  {(['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES'] as OperationType[]).map((t) => (
+                    <button key={t} type="button" onClick={() => setBringType(t)}
+                      className={`px-3 py-2 rounded-xl border text-xs font-medium ${
+                        bringType === t
+                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)] text-[var(--color-primary)]'
+                          : 'border-[var(--color-border)] text-[var(--color-text-2)] hover:border-gray-300'
+                      }`}>
+                      {t === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => void confirmBring('new')} disabled={bringingBusy}
+                  className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                  {bringingBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus className="w-4 h-4" />}
+                  Crear registro con {bringRows.length} producto(s)
+                </button>
+              </section>
+
+              {/* Opción B: agregar a un registro existente (en proceso) */}
+              {existingOps.length > 0 && (
+                <section className="space-y-2 pt-2 border-t border-[var(--color-border)]">
+                  <h4 className="text-[10px] font-semibold text-[var(--color-text-3)] uppercase">O agregar a un registro en proceso</h4>
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {existingOps.map((op) => (
+                      <button key={op.trackingCode} onClick={() => void confirmBring(op.trackingCode)} disabled={bringingBusy}
+                        className="w-full flex items-center gap-2 p-2.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] text-left disabled:opacity-50">
+                        <PackagePlus className="w-4 h-4 text-[var(--color-primary)] flex-shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-semibold text-[var(--color-text)] truncate">{op.trackingCode}</p>
+                          <p className="text-[10px] text-[var(--color-text-3)] truncate">
+                            {op.operationType === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'} · {op.operatorName}
+                            {op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -823,11 +823,12 @@ export function WizardPage() {
                       </div>
                     </div>
 
-                    {/* Action buttons — top right */}
-                    <div className="absolute top-1 right-1 flex gap-0.5">
+                    {/* Action buttons — barra inferior visible (reubicada desde el flotante top-right) */}
+                    <div className="flex items-center gap-1 px-2.5 pb-2 pt-1 border-t border-gray-200/70">
                       <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
-                        className="w-6 h-6 rounded-full bg-white/80 shadow flex items-center justify-center">
-                        <Pencil className="w-3 h-3 text-white" />
+                        title="Editar nombre"
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-gray-600 hover:bg-gray-100">
+                        <Pencil className="w-3.5 h-3.5" /> Editar
                       </button>
                       <button onClick={async () => {
                         if (!confirm(`¿Quitar "${product.productCode}"?`)) return
@@ -841,14 +842,15 @@ export function WizardPage() {
                             await loadOperation()
                           }
                         } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error') }
-                      }} className="w-6 h-6 rounded-full bg-white/80 shadow flex items-center justify-center">
-                        <Trash2 className="w-3 h-3 text-white" />
+                      }} title="Quitar producto"
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-red-500 hover:bg-red-50">
+                        <Trash2 className="w-3.5 h-3.5" /> Quitar
                       </button>
                       {/* Enviar ESTE producto al WhatsApp configurado (álbum + texto) */}
                       <button onClick={() => void handleSendProduct(product.productCode)}
                         title="Enviar este producto por WhatsApp"
-                        className="w-6 h-6 rounded-full bg-[#128c7e] shadow flex items-center justify-center">
-                        <Send className="w-3 h-3 text-white" />
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-white bg-[#128c7e] hover:bg-[#0f7a6e] ml-auto">
+                        <Send className="w-3.5 h-3.5" /> Enviar
                       </button>
                       {/* Share this product via WhatsApp — sends photos if supported */}
                       <button onClick={async () => {
@@ -880,8 +882,9 @@ export function WizardPage() {
                           .join('\n')
                         const fullText = `${text}\n\n${photoLinks}`
                         window.open(`https://wa.me/?text=${encodeURIComponent(fullText)}`, '_blank')
-                      }} className="w-6 h-6 rounded-full bg-white/80 shadow flex items-center justify-center">
-                        <Share2 className="w-3 h-3 text-white" />
+                      }} title="Compartir"
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-gray-600 hover:bg-gray-100">
+                        <Share2 className="w-3.5 h-3.5" /> Compartir
                       </button>
                     </div>
 
