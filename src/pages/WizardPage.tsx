@@ -397,21 +397,13 @@ export function WizardPage() {
 
   const handleLbCapture = async (base64: string, comment: string) => {
     if (!trackingCode || !activeLbProduct) return
+    const productCode = activeLbProduct
     setLbCameraOpen(false)
-    setUploading(true)
-    const photoCount = activeLbData?.photos.length ?? 0
-    try {
-      await apiRequest<UploadPhotoResponse>(
-        `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(activeLbProduct)}/photo`,
-        { method: 'POST', body: { stepIndex: photoCount, base64Image: base64, mimeType: 'image/jpeg', comment } },
-      )
-      setFeedback(`✓ Foto de ${activeLbProduct}`)
-      await loadOperation()
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'Error.')
-    } finally {
-      setUploading(false)
-    }
+    setFeedback(`✓ Foto de ${productCode}`)
+    // Mismo flujo que galería/cámara general: cache temporal (IndexedDB) →
+    // sube a GitHub en background → al subir se borra del cache y se recarga
+    // el registro para mostrar la foto ya anexada.
+    await uploadSinglePhoto(base64, comment, true, productCode)
   }
 
   // ── Finalize / Reopen ──
@@ -729,6 +721,8 @@ export function WizardPage() {
             {/* Product list — WhatsApp style */}
             {lbProducts.map((product) => {
               const isActive = activeLbProduct === product.productCode
+              // Fotos de ESTE producto que están en el cache local y aún no suben.
+              const pendingLocal = localPhotos.filter((p) => !p.uploaded && p.productCode === product.productCode)
               const photos = product.photos ?? []
               const maxShow = 4
               const extraCount = photos.length > maxShow ? photos.length - maxShow + 1 : 0
@@ -741,6 +735,21 @@ export function WizardPage() {
                 <div key={product.productCode} className="flex justify-end">
                   <div className="w-[92%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none shadow-sm overflow-hidden relative">
                     {/* Photo grid */}
+                    {/* Fotos tomadas pendientes de subir (storage temporal → GitHub) */}
+                    {pendingLocal.length > 0 && (
+                      <div className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: pendingLocal.length === 1 ? '1fr' : '1fr 1fr' }}>
+                        {pendingLocal.map((ph) => (
+                          <div key={ph.id} className="aspect-square bg-gray-200 rounded overflow-hidden relative">
+                            <img src={ph.dataUrl} className="w-full h-full object-cover" />
+                            <div className="absolute inset-0 bg-black/35 flex items-center justify-center">
+                              <Loader2 className="w-5 h-5 text-white animate-spin" />
+                            </div>
+                            <span className="absolute bottom-1 left-1 text-[9px] bg-black/60 text-white px-1.5 py-0.5 rounded-full">Subiendo…</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {photos.length > 0 && (
                       <button type="button" onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
                         className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: photos.length === 1 ? '1fr' : '1fr 1fr' }}>
@@ -785,7 +794,9 @@ export function WizardPage() {
                         <button onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
                           className="text-[10px] font-medium text-[var(--color-primary)] flex items-center gap-1">
                           <Camera className="w-3 h-3" />
-                          {photos.length === 0 ? 'Agregar fotos' : isActive ? 'Ocultar' : `${photos.length} foto(s)`}
+                          {photos.length + pendingLocal.length === 0
+                            ? 'Agregar fotos'
+                            : isActive ? 'Ocultar' : `${photos.length + pendingLocal.length} foto(s)${pendingLocal.length ? ` (${pendingLocal.length} subiendo)` : ''}`}
                         </button>
                         <div className="flex items-center gap-1">
                           <span className="text-[10px] text-gray-500">{createdTime}</span>
