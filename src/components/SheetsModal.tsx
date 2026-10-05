@@ -16,6 +16,13 @@ import {
 interface SheetsModalProps {
   open: boolean
   onClose: () => void
+  /**
+   * Si viene, el modal opera en modo "traer al registro actual": las acciones
+   * por fila agregan los productos a ESTA operación (sin crear una nueva) y al
+   * terminar se llama onBrought() para refrescar el registro.
+   */
+  targetTrackingCode?: string
+  onBrought?: () => void
 }
 
 const ACCEPTED = '.csv,.xlsx,.xls,.pdf'
@@ -28,29 +35,63 @@ const MAX_VISIBLE_ROWS = 200
 interface DataTableProps {
   headers: string[]
   rows: string[][]
+  /** Clave estable para persistir las filas marcadas (color) en localStorage. */
+  markKey?: string
   /** Si se definen, habilita las acciones por fila / selección múltiple (modo registros). */
   actions?: {
     /** Columna usada como código/nombre del producto. */
     codeCol: number
     /** Columna usada como descripción (opcional, -1 = ninguna). */
     descCol: number
+    /** Columnas extra que se añaden a la descripción del producto. */
+    extraCols: number[]
     onCodeColChange: (col: number) => void
     onDescColChange: (col: number) => void
+    onToggleExtraCol: (col: number) => void
     /** Crear un registro nuevo con una sola fila. */
     onCreateRecord: (row: string[]) => void
     /** Crear un producto desde una fila (en un registro nuevo o existente). */
     onCreateProduct: (row: string[]) => void
     /** Traer varias filas seleccionadas a un registro (crea los grupos de producto). */
     onBringToRecord: (rows: string[][]) => void
+    /** Texto del botón principal por fila ('Registro' o 'Traer' según el modo). */
+    primaryLabel?: string
     busy?: boolean
   }
 }
 
-function DataTable({ headers, rows, actions }: DataTableProps) {
+/** Lee/guarda las filas marcadas (índices) por tabla en localStorage. */
+function loadMarked(key?: string): Set<number> {
+  if (!key) return new Set()
+  try {
+    const raw = localStorage.getItem(`ommex_marked_${key}`)
+    if (raw) return new Set(JSON.parse(raw) as number[])
+  } catch { /* ignore */ }
+  return new Set()
+}
+
+function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
   const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas
   const [filterText, setFilterText] = useState('')
   const [scanning, setScanning] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  // Filas "marcadas" (producto ya cogido/listo) → se pintan de color. Persistente.
+  const [marked, setMarked] = useState<Set<number>>(() => loadMarked(markKey))
+
+  useEffect(() => { setMarked(loadMarked(markKey)) }, [markKey])
+
+  const persistMarked = (next: Set<number>) => {
+    setMarked(new Set(next))
+    if (markKey) {
+      try { localStorage.setItem(`ommex_marked_${markKey}`, JSON.stringify([...next])) } catch { /* ignore */ }
+    }
+  }
+
+  const toggleMark = (globalIdx: number) => {
+    const next = new Set(marked)
+    if (next.has(globalIdx)) next.delete(globalIdx); else next.add(globalIdx)
+    persistMarked(next)
+  }
 
   const filtered = useMemo(() => {
     const q = filterText.trim().toLowerCase()
@@ -119,23 +160,44 @@ function DataTable({ headers, rows, actions }: DataTableProps) {
 
       {/* Mapeo de columnas → producto (solo en modo registros) */}
       {actions && (
-        <div className="flex flex-wrap items-center gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
-          <span className="text-[10px] font-semibold text-slate-500 uppercase w-full">¿Qué columnas usar para los productos?</span>
-          <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
-            Código/Nombre
-            <select value={actions.codeCol} onChange={(e) => actions.onCodeColChange(Number(e.target.value))}
-              className="px-2 py-1.5 rounded-lg border border-slate-200 text-[11px] bg-white">
-              {headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
-            </select>
-          </label>
-          <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
-            Descripción
-            <select value={actions.descCol} onChange={(e) => actions.onDescColChange(Number(e.target.value))}
-              className="px-2 py-1.5 rounded-lg border border-slate-200 text-[11px] bg-white">
-              <option value={-1}>— ninguna —</option>
-              {headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
-            </select>
-          </label>
+        <div className="space-y-2 p-2.5 rounded-lg bg-slate-50 border border-slate-200">
+          <span className="text-[10px] font-semibold text-slate-500 uppercase block">¿Qué columnas usar para los productos?</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+              Código/Nombre
+              <select value={actions.codeCol} onChange={(e) => actions.onCodeColChange(Number(e.target.value))}
+                className="px-2 py-1.5 rounded-lg border border-slate-200 text-[11px] bg-white">
+                {headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-1.5 text-[11px] text-slate-600">
+              Descripción
+              <select value={actions.descCol} onChange={(e) => actions.onDescColChange(Number(e.target.value))}
+                className="px-2 py-1.5 rounded-lg border border-slate-200 text-[11px] bg-white">
+                <option value={-1}>— ninguna —</option>
+                {headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
+              </select>
+            </label>
+          </div>
+          {/* Columnas EXTRA que se añaden a la info del producto (pueden ser varias) */}
+          <div className="space-y-1">
+            <span className="text-[10px] text-slate-500">Columnas extra a incluir (toca para agregar/quitar):</span>
+            <div className="flex flex-wrap gap-1.5">
+              {headers.map((h, i) => {
+                if (i === actions.codeCol || i === actions.descCol) return null
+                const on = actions.extraCols.includes(i)
+                return (
+                  <button key={i} type="button" onClick={() => actions.onToggleExtraCol(i)}
+                    className={`px-2 py-1 rounded-full text-[10px] font-medium border ${
+                      on ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                         : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                    }`}>
+                    {h || `Columna ${i + 1}`}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
         </div>
       )}
 
@@ -182,6 +244,8 @@ function DataTable({ headers, rows, actions }: DataTableProps) {
                       }} />
                   </th>
                 )}
+                {/* Columna de "marcar" (producto cogido/listo) */}
+                <th className="w-9 px-1 py-2 text-center" title="Marcar como listo">✓</th>
                 {headers.map((h, i) => (
                   <th key={i} className="text-left font-semibold px-2.5 py-2 whitespace-nowrap border-r border-slate-700 last:border-r-0">
                     {h || `Columna ${i + 1}`}
@@ -194,15 +258,28 @@ function DataTable({ headers, rows, actions }: DataTableProps) {
               {visible.map((row, ri) => {
                 const gIdx = indexOfRow(row)
                 const isSel = selected.has(gIdx)
+                const isMarked = marked.has(gIdx)
+                // La fila marcada se pinta de verde (producto cogido); la seleccionada, de azul tenue.
+                const rowClass = isMarked ? 'bg-green-100' : isSel ? 'bg-sky-50' : 'even:bg-gray-50'
                 return (
-                  <tr key={ri} className={isSel ? 'bg-emerald-50' : 'even:bg-gray-50'}>
+                  <tr key={ri} className={rowClass}>
                     {actions && (
                       <td className="px-2 py-1.5 text-center border-r border-[var(--color-border)]">
                         <input type="checkbox" checked={isSel} onChange={() => toggleRow(gIdx)} />
                       </td>
                     )}
+                    {/* Botón de marcar: cambia el color de la fila */}
+                    <td className="px-1 py-1.5 text-center border-r border-[var(--color-border)]">
+                      <button onClick={() => toggleMark(gIdx)}
+                        title={isMarked ? 'Quitar marca' : 'Marcar como listo/cogido'}
+                        className={`w-6 h-6 rounded-full flex items-center justify-center mx-auto ${
+                          isMarked ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                        }`}>
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
                     {headers.map((_, ci) => (
-                      <td key={ci} className="px-2.5 py-1.5 whitespace-nowrap border-r border-[var(--color-border)] last:border-r-0 text-[var(--color-text)]">
+                      <td key={ci} className={`px-2.5 py-1.5 whitespace-nowrap border-r border-[var(--color-border)] last:border-r-0 ${isMarked ? 'text-green-900 line-through decoration-green-400/60' : 'text-[var(--color-text)]'}`}>
                         {row[ci] ?? ''}
                       </td>
                     ))}
@@ -210,15 +287,18 @@ function DataTable({ headers, rows, actions }: DataTableProps) {
                       <td className="px-2.5 py-1.5 whitespace-nowrap">
                         <div className="flex items-center gap-1">
                           <button onClick={() => actions.onCreateRecord(row)} disabled={actions.busy}
-                            title="Crear un registro nuevo con esta fila"
+                            title={actions.primaryLabel === 'Traer' ? 'Traer esta fila al registro' : 'Crear un registro nuevo con esta fila'}
                             className="px-2 py-1 rounded-lg bg-[var(--color-primary)] text-white text-[10px] font-medium flex items-center gap-1 disabled:opacity-50">
-                            <FilePlus className="w-3 h-3" /> Registro
+                            {actions.primaryLabel === 'Traer' ? <PackagePlus className="w-3 h-3" /> : <FilePlus className="w-3 h-3" />}
+                            {actions.primaryLabel ?? 'Registro'}
                           </button>
-                          <button onClick={() => actions.onCreateProduct(row)} disabled={actions.busy}
-                            title="Crear un producto con esta fila"
-                            className="px-2 py-1 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-[10px] font-medium flex items-center gap-1 disabled:opacity-50">
-                            <PackagePlus className="w-3 h-3" /> Producto
-                          </button>
+                          {actions.primaryLabel !== 'Traer' && (
+                            <button onClick={() => actions.onCreateProduct(row)} disabled={actions.busy}
+                              title="Crear un producto con esta fila"
+                              className="px-2 py-1 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-[10px] font-medium flex items-center gap-1 disabled:opacity-50">
+                              <PackagePlus className="w-3 h-3" /> Producto
+                            </button>
+                          )}
                         </div>
                       </td>
                     )}
@@ -243,7 +323,7 @@ function DataTable({ headers, rows, actions }: DataTableProps) {
  * con filtro por columna, crear un Google Sheet filtrable y gestionar
  * (listar / verificar en la app / eliminar) las hojas creadas por la empresa.
  */
-export function SheetsModal({ open, onClose }: SheetsModalProps) {
+export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: SheetsModalProps) {
   const navigate = useNavigate()
   // Si no viene companyId (p. ej. abriendo la app directamente para probar),
   // usamos 'demo' para que las tablas locales tengan dónde agruparse.
@@ -276,11 +356,19 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
   // Mapeo de columnas: qué columna es el código/nombre y cuál la descripción.
   const [codeCol, setCodeCol] = useState(0)
   const [descCol, setDescCol] = useState(-1)
+  // Columnas EXTRA (pueden ser varias) que se añaden a la info del producto.
+  const [extraCols, setExtraCols] = useState<number[]>([])
   const [bringingBusy, setBringingBusy] = useState(false)
   // Modal de destino: filas a volcar + a qué operación.
   const [bringRows, setBringRows] = useState<string[][] | null>(null)
   const [existingOps, setExistingOps] = useState<Operation[]>([])
   const [bringType, setBringType] = useState<OperationType>('PRODUCTOS_ENTRANTES')
+  // Placa opcional al crear un registro nuevo desde el documento.
+  const [bringPlate, setBringPlate] = useState('')
+
+  const toggleExtraCol = (col: number) => {
+    setExtraCols((prev) => prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col])
+  }
 
   // Al abrir el visor, intenta adivinar la columna de código y la de descripción
   // por el nombre del encabezado (SKU/código, descripción/ítem).
@@ -293,13 +381,27 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
     setDescCol(guessDesc >= 0 ? guessDesc : -1)
   }, [viewing])
 
-  /** Construye {productCode, descripcion} desde una fila usando el mapeo actual. */
+  /**
+   * Construye {productCode, descripcion} desde una fila usando el mapeo actual.
+   * La descripción incluye la columna de descripción + todas las columnas extra
+   * seleccionadas, con el formato "Encabezado: valor" separadas por " · ".
+   */
   const rowToProduct = (row: string[]): { productCode: string; descripcion?: string } => {
+    const headers = viewing?.headers ?? []
     const code = (row[codeCol] ?? '').trim()
-    const descripcion = descCol >= 0 ? (row[descCol] ?? '').trim() : undefined
-    // Fallback: si la columna de código está vacía, usa la descripción como nombre.
+    const parts: string[] = []
+    if (descCol >= 0 && (row[descCol] ?? '').trim()) {
+      parts.push((row[descCol] ?? '').trim())
+    }
+    for (const c of extraCols) {
+      const val = (row[c] ?? '').trim()
+      if (!val) continue
+      const h = (headers[c] ?? `Columna ${c + 1}`).trim()
+      parts.push(`${h}: ${val}`)
+    }
+    const descripcion = parts.join(' · ') || undefined
     const productCode = code || descripcion || 'PRODUCTO'
-    return { productCode, descripcion: descripcion || undefined }
+    return { productCode, descripcion }
   }
 
   /** Agrega un producto (grupo) a una operación existente vía linea-blanca. */
@@ -311,11 +413,16 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
     })
   }
 
-  /** Crea una operación nueva y devuelve su trackingCode. */
-  const createOperation = async (operationType: OperationType): Promise<string> => {
+  /** Crea una operación nueva (opcionalmente con placa) y devuelve su trackingCode. */
+  const createOperation = async (operationType: OperationType, vehiclePlate?: string): Promise<string> => {
     const op = await apiRequest<Operation>('/operations', {
       method: 'POST',
-      body: { operationType, operatorName: getOperatorName() || 'Operador', companyId: getCompanyId() || undefined },
+      body: {
+        operationType,
+        operatorName: getOperatorName() || 'Operador',
+        companyId: getCompanyId() || undefined,
+        ...(vehiclePlate?.trim() ? { vehiclePlate: vehiclePlate.trim().toUpperCase() } : {}),
+      },
     })
     return op.trackingCode
   }
@@ -330,24 +437,38 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
     } catch { setExistingOps([]) }
   }
 
-  // Crear REGISTRO nuevo con una sola fila (nueva operación + 1 producto) y abrir el wizard.
+  // Agrega filas directamente a la operación destino (modo "traer al registro actual").
+  const bringRowsToTarget = async (rows: string[][]) => {
+    if (!targetTrackingCode) return
+    setBringingBusy(true); setError(null)
+    try {
+      for (const row of rows) await addProductToOperation(targetTrackingCode, row)
+      setSuccess(`✓ ${rows.length} producto(s) traído(s) al registro.`)
+      onBrought?.()
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron traer los productos.')
+    } finally { setBringingBusy(false) }
+  }
+
+  // Acción primaria por fila. En modo target: agrega a la operación actual.
+  // Si no: abre el selector de destino (crear nuevo o agregar a existente).
   const handleCreateRecordFromRow = async (row: string[]) => {
-    setBringRows([row])
-    setBringType('PRODUCTOS_ENTRANTES')
+    if (targetTrackingCode) { await bringRowsToTarget([row]); return }
+    setBringRows([row]); setBringType('PRODUCTOS_ENTRANTES'); setBringPlate('')
     void loadExistingOps()
   }
 
-  // Crear PRODUCTO desde una fila: abre el selector de destino (nueva o existente).
   const handleCreateProductFromRow = async (row: string[]) => {
-    setBringRows([row])
-    setBringType('PRODUCTOS_ENTRANTES')
+    if (targetTrackingCode) { await bringRowsToTarget([row]); return }
+    setBringRows([row]); setBringType('PRODUCTOS_ENTRANTES'); setBringPlate('')
     void loadExistingOps()
   }
 
-  // Traer VARIAS filas seleccionadas a un registro.
+  // Traer VARIAS filas seleccionadas.
   const handleBringToRecord = async (rows: string[][]) => {
-    setBringRows(rows)
-    setBringType('PRODUCTOS_ENTRANTES')
+    if (targetTrackingCode) { await bringRowsToTarget(rows); return }
+    setBringRows(rows); setBringType('PRODUCTOS_ENTRANTES'); setBringPlate('')
     void loadExistingOps()
   }
 
@@ -358,7 +479,7 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
     setBringingBusy(true)
     setError(null)
     try {
-      const trackingCode = target === 'new' ? await createOperation(bringType) : target
+      const trackingCode = target === 'new' ? await createOperation(bringType, bringPlate) : target
       for (const row of bringRows) {
         await addProductToOperation(trackingCode, row)
       }
@@ -753,13 +874,16 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
                 <DataTable
                   headers={viewing.headers}
                   rows={viewing.rows}
+                  markKey={`${companyId}_${viewing.id}`}
                   actions={{
-                    codeCol, descCol,
+                    codeCol, descCol, extraCols,
                     onCodeColChange: setCodeCol,
                     onDescColChange: setDescCol,
+                    onToggleExtraCol: toggleExtraCol,
                     onCreateRecord: (row) => void handleCreateRecordFromRow(row),
                     onCreateProduct: (row) => void handleCreateProductFromRow(row),
                     onBringToRecord: (rows) => void handleBringToRecord(rows),
+                    primaryLabel: targetTrackingCode ? 'Traer' : 'Registro',
                     busy: bringingBusy,
                   }}
                 />
@@ -938,6 +1062,13 @@ export function SheetsModal({ open, onClose }: SheetsModalProps) {
                       {t === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'}
                     </button>
                   ))}
+                </div>
+                {/* Placa opcional del vehículo */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-medium text-[var(--color-text-3)]">Placa del vehículo (opcional)</label>
+                  <input value={bringPlate} onChange={(e) => setBringPlate(e.target.value.toUpperCase())}
+                    placeholder="EJ: ABC123"
+                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
                 </div>
                 <button onClick={() => void confirmBring('new')} disabled={bringingBusy}
                   className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">

@@ -1,24 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Calendar, Camera, CheckCircle2, ChevronLeft, ChevronRight, Clock, Download, Loader2, MapPin, Package, Share2, User, X } from 'lucide-react'
+import { Calendar, Camera, CheckCircle2, Clock, Loader2, MapPin, Package, User } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 
-/**
- * Devuelve una URL directa de imagen si la foto está en almacenamiento en la
- * nube (R2): driveUrl es una URL http(s) que NO es de Google Drive. En ese caso
- * se usa tal cual. Las fotos antiguas de Drive devuelven null aquí y caen al
- * flujo basado en fileId.
- */
+/** Devuelve una URL directa de imagen si la foto NO es de Google Drive (R2/GitHub). */
 function getDirectUrl(photo: PhotoRecord): string | null {
   const { driveUrl } = photo
   if (!driveUrl || driveUrl === 'pending-verification') return null
-  if (/^https?:\/\//.test(driveUrl) && !/google\.com|googleusercontent\.com/.test(driveUrl)) {
-    return driveUrl
-  }
+  if (/^https?:\/\//.test(driveUrl) && !/google\.com|googleusercontent\.com/.test(driveUrl)) return driveUrl
   return null
 }
 
-/** Devuelve el fileId real de una foto, o null si es nota/pendiente/sin imagen */
+/** fileId real de una foto (o null si nota/pendiente). */
 function getRealFileId(photo: PhotoRecord): string | null {
   const { driveUrl, fileId } = photo
   if (fileId && fileId !== 'pending' && fileId !== 'note') return fileId
@@ -29,80 +22,25 @@ function getRealFileId(photo: PhotoRecord): string | null {
   return null
 }
 
-function getDriveImageUrl(photo: PhotoRecord, size = 800): string | null {
-  // Preferir URL directa de R2 si existe.
-  const direct = getDirectUrl(photo)
-  if (direct) return direct
-  const id = getRealFileId(photo)
-  // Fotos en R2: el fileId es una key (contiene '/'), no un ID de Drive.
-  if (id && id.includes('/')) return null
-  return id ? `https://lh3.googleusercontent.com/d/${id}=w${size}` : null
-}
-
-/** URL de respaldo (thumbnail) si falla la principal */
-function getDriveThumbUrl(photo: PhotoRecord, size = 800): string | null {
-  const direct = getDirectUrl(photo)
-  if (direct) return direct
-  const id = getRealFileId(photo)
-  if (id && id.includes('/')) return null
-  return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w${size}` : null
-}
-
-/**
- * Descarga real de la imagen: la trae como blob desde el CDN de Google (lh3),
- * que permite CORS, y fuerza la descarga con un enlace temporal. Así se descarga
- * directamente en vez de abrir el visor de Drive.
- */
-async function downloadPhoto(photo: PhotoRecord, filename: string): Promise<void> {
-  const direct = getDirectUrl(photo)
-  const id = getRealFileId(photo)
-  if (!direct && !id) return
-  // Fuentes a intentar: URL directa de R2 primero; si no, el CDN de Drive.
-  const sources = direct
-    ? [direct]
-    : [
-        `https://lh3.googleusercontent.com/d/${id}=s0`,
-        `https://drive.google.com/thumbnail?id=${id}&sz=w2000`,
-      ]
-  for (const src of sources) {
-    try {
-      const resp = await fetch(src, { mode: 'cors' })
-      if (!resp.ok) continue
-      const blob = await resp.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      setTimeout(() => URL.revokeObjectURL(url), 4000)
-      return
-    } catch {
-      /* prueba siguiente fuente */
-    }
-  }
-  // Último recurso: abre la mejor URL disponible en otra pestaña
-  const fallback = direct ?? (id ? `https://drive.google.com/uc?export=download&id=${id}` : null)
-  if (fallback) window.open(fallback, '_blank')
-}
-
-/** True si la foto es una nota de solo texto (sin imagen) */
+/** True si la foto es una nota de solo texto (sin imagen). */
 function isTextNote(photo: PhotoRecord): boolean {
   if (getDirectUrl(photo)) return false
   return photo.fileId === 'note' || (getRealFileId(photo) === null && !!photo.comment)
 }
 
+/**
+ * Página pública del enlace del registro.
+ *
+ * Nota: por decisión de producto NO se muestran las fotos aquí (se quitó la
+ * galería y el formato de carga de imágenes del link). Esta vista solo resume
+ * los datos del registro: operador, fecha/hora, notas y la lista de productos
+ * con su información. El envío de fotos se hace por el WhatsApp configurado.
+ */
 export function SharePage() {
   const { trackingCode } = useParams<{ trackingCode: string }>()
   const [operation, setOperation] = useState<Operation | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [lightboxPhoto, setLightboxPhoto] = useState<PhotoRecord | null>(null)
-  const [lightboxAll, setLightboxAll] = useState<PhotoRecord[]>([])
-  const [lightboxIdx, setLightboxIdx] = useState(0)
-  const [sendingWa, setSendingWa] = useState(false)
-  const [waMsg, setWaMsg] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!trackingCode) return
@@ -139,56 +77,17 @@ export function SharePage() {
   }
 
   const date = new Date(operation.createdAt)
-  const allPhotos = [
-    ...operation.photos,
-    ...(operation.lineaBlanca ?? []).flatMap((p) => p.photos),
-  ]
-  const totalPhotos = allPhotos.length
-
-  const handleShare = () => {
-    const url = window.location.href
-    const text = `📋 *Registro ${operation.trackingCode}*\n${operation.operationType}\nOperador: ${operation.operatorName}\n${totalPhotos} fotos\n\n${url}`
-    if (typeof navigator.share === 'function') {
-      void navigator.share({ title: `Registro ${operation.trackingCode}`, text, url })
-    } else {
-      const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
-      window.open(waUrl, '_blank')
-    }
-  }
-
-  // Envía el registro completo (encabezado → por producto: info + fotos, en
-  // orden) al WhatsApp configurado para la empresa, vía el WhatsApp sincronizado.
-  const handleSendWhatsApp = async () => {
-    if (!operation) return
-    setSendingWa(true); setWaMsg(null)
-    try {
-      const r = await apiRequest<{ message: string; sent: number }>('/whatsapp-web/send-operation', {
-        method: 'POST',
-        body: { trackingCode: operation.trackingCode },
-      })
-      setWaMsg(`✓ ${r.message}`)
-    } catch (err) {
-      setWaMsg(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
-    } finally {
-      setSendingWa(false)
-    }
-  }
+  const notes = operation.photos.filter((p) => isTextNote(p))
+  const totalPhotos = operation.photos.length + (operation.lineaBlanca ?? []).reduce((s, p) => s + p.photos.length, 0)
 
   return (
     <div className="min-h-[100dvh] bg-gray-50">
       {/* Header */}
       <header className="bg-[#075e54] text-white px-4 py-5">
         <div className="max-w-lg mx-auto">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-[10px] opacity-60 uppercase tracking-wide">Registro fotográfico</p>
-              <h1 className="text-lg font-bold mt-0.5">{operation.trackingCode}</h1>
-              <p className="text-xs opacity-80 mt-0.5">{operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''}</p>
-            </div>
-            <button onClick={handleShare} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
-              <Share2 className="w-5 h-5" />
-            </button>
-          </div>
+          <p className="text-[10px] opacity-60 uppercase tracking-wide">Registro fotográfico</p>
+          <h1 className="text-lg font-bold mt-0.5">{operation.trackingCode}</h1>
+          <p className="text-xs opacity-80 mt-0.5">{operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''}</p>
         </div>
       </header>
 
@@ -199,6 +98,10 @@ export function SharePage() {
           <InfoChip icon={Calendar} label="Fecha" value={date.toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' })} />
           {operation.vehiclePlate && <InfoChip icon={MapPin} label="Placa" value={operation.vehiclePlate} />}
           <InfoChip icon={Clock} label="Hora" value={date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} />
+          {operation.completedAt && (
+            <InfoChip icon={CheckCircle2} label="Finalizado"
+              value={new Date(operation.completedAt).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} />
+          )}
         </div>
 
         {/* Summary bar */}
@@ -211,249 +114,55 @@ export function SharePage() {
           </span>
         </div>
 
-        {/* Fotos generales (excluye notas de texto) */}
-        {(() => {
-          const realPhotos = operation.photos.filter((p) => !isTextNote(p))
-          const notes = operation.photos.filter((p) => isTextNote(p))
-          return (
-            <>
-              {realPhotos.length > 0 && (
-                <section className="space-y-3">
-                  <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                    Fotos del registro ({realPhotos.length})
-                  </h4>
-                  <div className="grid grid-cols-2 gap-2">
-                    {realPhotos.map((photo, i) => (
-                      <PhotoCard key={i} photo={photo} onClick={() => { setLightboxAll(realPhotos); setLightboxIdx(i); setLightboxPhoto(photo) }} />
-                    ))}
-                  </div>
-                </section>
-              )}
-              {notes.length > 0 && (
-                <section className="space-y-2">
-                  <h4 className="text-sm font-semibold text-gray-700">Notas</h4>
-                  {notes.map((note, i) => (
-                    <div key={i} className="p-3 rounded-xl bg-white border border-gray-200 text-sm text-gray-700">
-                      <span className="block">{note.comment}</span>
-                      <span className="text-[10px] text-gray-400 mt-1 block">
-                        {new Date(note.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                  ))}
-                </section>
-              )}
-            </>
-          )
-        })()}
-
-        {/* Productos con fotos */}
-        {(operation.lineaBlanca ?? []).length > 0 && (
-          <section className="space-y-4">
-            <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-              <Package className="w-4 h-4 text-[#075e54]" />
-              Productos ({operation.lineaBlanca.length})
-            </h4>
-            {operation.lineaBlanca.map((product) => (
-              <div key={product.productCode} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-                {/* Product photo grid */}
-                {product.photos.length > 0 && (
-                  <div className="grid gap-0.5" style={{ gridTemplateColumns: product.photos.length === 1 ? '1fr' : '1fr 1fr' }}>
-                    {product.photos.slice(0, 4).map((ph, idx) => {
-                      const url = getDriveImageUrl(ph, 400)
-                      const isLast = idx === 3 && product.photos.length > 4
-                      return (
-                        <div key={idx} className="aspect-square relative bg-gray-100 cursor-pointer"
-                          onClick={() => { setLightboxAll(product.photos); setLightboxIdx(idx); setLightboxPhoto(ph) }}>
-                          {url && (
-                            <img src={url} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" loading="lazy"
-                              onError={(e) => {
-                                const img = e.target as HTMLImageElement
-                                const fb = getDriveThumbUrl(ph, 400)
-                                if (fb && img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
-                              }} />
-                          )}
-                          {isLast && (
-                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                              <span className="text-white text-xl font-bold">+{product.photos.length - 3}</span>
-                            </div>
-                          )}
-                          {/* Download button per photo */}
-                          {getRealFileId(ph) && (
-                            <button onClick={(e) => { e.stopPropagation(); void downloadPhoto(ph, `${product.productCode}_${idx + 1}.jpg`) }}
-                              className="absolute bottom-1 right-1 w-6 h-6 rounded-full bg-black/40 flex items-center justify-center">
-                              <Download className="w-3 h-3 text-white" />
-                            </button>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-                {/* Product info */}
-                <div className="p-3 space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold text-[#075e54]">{product.productCode}</span>
-                    {product.isLineaBlanca && <span className="text-[8px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>}
-                  </div>
-                  {product.labelData?.descripcion && (
-                    <p className="text-xs text-gray-700">{product.labelData.descripcion}</p>
-                  )}
-                  {product.labelData && Object.keys(product.labelData).filter((k) => k !== 'descripcion' && product.labelData![k as keyof typeof product.labelData]).length > 0 && (
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
-                      {product.labelData.sku && <span><b>SKU:</b> {product.labelData.sku}</span>}
-                      {product.labelData.sscc && <span><b>SSCC:</b> {product.labelData.sscc}</span>}
-                      {product.labelData.transportadora && <span><b>Transp:</b> {product.labelData.transportadora}</span>}
-                      {product.labelData.poNumber && <span><b>PO:</b> {product.labelData.poNumber}</span>}
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[10px] text-gray-400">{product.photos.length} fotos</span>
-                    {/* Download all photos of this product */}
-                    {product.photos.length > 0 && product.photos.some((p) => getRealFileId(p)) && (
-                      <button onClick={async () => {
-                        let n = 1
-                        for (const ph of product.photos) {
-                          if (getRealFileId(ph)) { await downloadPhoto(ph, `${product.productCode}_${n}.jpg`); n++ }
-                        }
-                      }} className="text-[10px] text-[#075e54] font-medium flex items-center gap-1 hover:underline">
-                        <Download className="w-3 h-3" /> Descargar todas
-                      </button>
-                    )}
-                  </div>
-                </div>
+        {/* Notas */}
+        {notes.length > 0 && (
+          <section className="space-y-2">
+            <h4 className="text-sm font-semibold text-gray-700">Notas</h4>
+            {notes.map((note, i) => (
+              <div key={i} className="p-3 rounded-xl bg-white border border-gray-200 text-sm text-gray-700">
+                <span className="block">{note.comment}</span>
+                <span className="text-[10px] text-gray-400 mt-1 block">
+                  {new Date(note.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                </span>
               </div>
             ))}
           </section>
         )}
 
-        {/* Download all button */}
-        {totalPhotos > 0 && (
-          <button onClick={async () => {
-            let n = 1
-            for (const ph of allPhotos) {
-              if (getRealFileId(ph)) { await downloadPhoto(ph, `${operation.trackingCode}_${n}.jpg`); n++ }
-            }
-          }} className="w-full py-3 rounded-xl bg-[#075e54] text-white font-semibold text-sm flex items-center justify-center gap-2">
-            <Download className="w-4 h-4" /> Descargar todas las fotos ({totalPhotos})
-          </button>
+        {/* Productos (solo información, sin fotos) */}
+        {(operation.lineaBlanca ?? []).length > 0 && (
+          <section className="space-y-3">
+            <h4 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Package className="w-4 h-4 text-[#075e54]" />
+              Productos ({operation.lineaBlanca.length})
+            </h4>
+            {operation.lineaBlanca.map((product) => (
+              <div key={product.productCode} className="bg-white rounded-xl border border-gray-200 p-3 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-[#075e54]">{product.productCode}</span>
+                  {product.isLineaBlanca && <span className="text-[8px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium">L.B</span>}
+                  <span className="ml-auto text-[10px] text-gray-400">{product.photos.length} fotos</span>
+                </div>
+                {product.labelData?.descripcion && (
+                  <p className="text-xs text-gray-700">{product.labelData.descripcion}</p>
+                )}
+                {product.labelData && Object.keys(product.labelData).filter((k) => k !== 'descripcion' && product.labelData![k as keyof typeof product.labelData]).length > 0 && (
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] text-gray-500">
+                    {product.labelData.sku && <span><b>SKU:</b> {product.labelData.sku}</span>}
+                    {product.labelData.sscc && <span><b>SSCC:</b> {product.labelData.sscc}</span>}
+                    {product.labelData.transportadora && <span><b>Transp:</b> {product.labelData.transportadora}</span>}
+                    {product.labelData.poNumber && <span><b>PO:</b> {product.labelData.poNumber}</span>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </section>
         )}
-
-        {/* Share button */}
-        {/* Enviar al WhatsApp configurado (chat/grupo), en orden: info + fotos */}
-        <button onClick={() => void handleSendWhatsApp()} disabled={sendingWa}
-          className="w-full py-3 rounded-xl bg-[#128c7e] text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
-          {sendingWa ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
-          Enviar al WhatsApp configurado
-        </button>
-
-        {waMsg && (
-          <div className={`p-3 rounded-xl text-sm text-center ${waMsg.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-            {waMsg}
-          </div>
-        )}
-
-        {/* Compartir con el WhatsApp del dispositivo (enlace) */}
-        <button onClick={handleShare}
-          className="w-full py-3 rounded-xl bg-[#25d366] text-white font-semibold text-sm flex items-center justify-center gap-2">
-          <Share2 className="w-4 h-4" /> Compartir por WhatsApp
-        </button>
 
         {/* Footer */}
         <footer className="text-center py-4 text-[10px] text-gray-400">
           Ommex Tracer · Registro fotográfico de operaciones
         </footer>
-      </div>
-
-      {/* Lightbox */}
-      {lightboxPhoto && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col" onClick={() => setLightboxPhoto(null)}>
-          {/* Header */}
-          <div className="flex items-center justify-between p-3 text-white">
-            <div>
-              <span className="text-xs opacity-70">{lightboxIdx + 1} / {lightboxAll.length}</span>
-              {lightboxPhoto.comment && <span className="text-sm block mt-0.5">{lightboxPhoto.comment}</span>}
-            </div>
-            <div className="flex items-center gap-2">
-              {getRealFileId(lightboxPhoto) && (
-                <button onClick={(e) => { e.stopPropagation(); void downloadPhoto(lightboxPhoto, `${lightboxPhoto.productCode || lightboxPhoto.stepName || 'foto'}.jpg`) }}
-                  className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
-                  <Download className="w-4 h-4 text-white" />
-                </button>
-              )}
-              <button className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Image */}
-          <div className="flex-1 flex items-center justify-center p-4 relative" onClick={(e) => e.stopPropagation()}>
-            {getDriveImageUrl(lightboxPhoto, 1200) && (
-              <img src={getDriveImageUrl(lightboxPhoto, 1200)!} alt="Foto"
-                onError={(e) => {
-                  const img = e.target as HTMLImageElement
-                  const fb = getDriveThumbUrl(lightboxPhoto, 1200)
-                  if (fb && img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
-                }}
-                className="max-w-full max-h-[80vh] object-contain rounded" />
-            )}
-            {/* Nav arrows */}
-            {lightboxAll.length > 1 && (
-              <>
-                <button onClick={(e) => { e.stopPropagation(); const prev = (lightboxIdx - 1 + lightboxAll.length) % lightboxAll.length; setLightboxIdx(prev); setLightboxPhoto(lightboxAll[prev]) }}
-                  className="absolute left-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
-                  <ChevronLeft className="w-6 h-6 text-white" />
-                </button>
-                <button onClick={(e) => { e.stopPropagation(); const next = (lightboxIdx + 1) % lightboxAll.length; setLightboxIdx(next); setLightboxPhoto(lightboxAll[next]) }}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
-                  <ChevronRight className="w-6 h-6 text-white" />
-                </button>
-              </>
-            )}
-          </div>
-
-          {/* Timestamp */}
-          <div className="text-center pb-4 text-[10px] text-white/50">
-            {new Date(lightboxPhoto.timestamp).toLocaleString('es-CO', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function PhotoCard({ photo, onClick }: { photo: PhotoRecord; onClick?: () => void }) {
-  const url = getDriveImageUrl(photo)
-  const canDownload = Boolean(getRealFileId(photo))
-  const title = photo.comment || photo.stepName
-  return (
-    <div className="rounded-xl overflow-hidden border border-gray-200 bg-white shadow-sm cursor-pointer" onClick={onClick}>
-      <div className="aspect-[4/3] bg-gray-100 relative">
-        {url ? (
-          <img src={url} alt={title} className="w-full h-full object-cover" loading="lazy"
-            onError={(e) => {
-              const img = e.target as HTMLImageElement
-              const fb = getDriveThumbUrl(photo)
-              if (fb && img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
-            }} />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <Camera className="w-6 h-6 text-gray-300" />
-          </div>
-        )}
-        {canDownload && (
-          <button onClick={(e) => { e.stopPropagation(); void downloadPhoto(photo, `${title || 'foto'}.jpg`) }}
-            className="absolute bottom-1.5 right-1.5 w-7 h-7 rounded-full bg-black/40 flex items-center justify-center backdrop-blur-sm">
-            <Download className="w-3.5 h-3.5 text-white" />
-          </button>
-        )}
-      </div>
-      <div className="px-2.5 py-2">
-        <p className="text-[11px] font-medium text-gray-700 truncate">{title}</p>
-        <p className="text-[9px] text-gray-400 mt-0.5">
-          {new Date(photo.timestamp).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-        </p>
       </div>
     </div>
   )

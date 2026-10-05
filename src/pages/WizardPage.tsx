@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Edit3, Link2, Loader2, Package, Pencil, Plus, QrCode, Search, Send, Share2, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Database, Edit3, Link2, Loader2, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, Trash2, X } from 'lucide-react'
 import { apiRequest, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
+import { SheetsModal } from '../components/SheetsModal'
+import { WhatsAppSync } from '../components/WhatsAppSync'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
@@ -29,14 +31,6 @@ function photoSrc(photo: Pick<PhotoRecord, 'driveUrl' | 'fileId'>, size = 400): 
 }
 
 /** URL para abrir/compartir la foto (R2 directo o Drive). */
-function photoViewUrl(photo: Pick<PhotoRecord, 'driveUrl' | 'fileId'>): string | null {
-  const direct = directUrl(photo)
-  if (direct) return direct
-  const { fileId } = photo
-  if (!fileId || fileId === 'pending' || fileId === 'note' || fileId.includes('/')) return null
-  return `https://drive.google.com/file/d/${fileId}/view`
-}
-
 const WIZARD_GUIDE: GuideStep[] = [
   {
     emoji: '💬',
@@ -105,6 +99,10 @@ export function WizardPage() {
   const [templates, setTemplates] = useState<TextTemplate[]>(() => getFrequentTemplates())
   const [showPlusMenu, setShowPlusMenu] = useState(false)
   const [showAddProductModal, setShowAddProductModal] = useState(false)
+  // Modal para traer productos de la base de datos a ESTE registro.
+  const [showDbModal, setShowDbModal] = useState(false)
+  // Modal para sincronizar/conectar el WhatsApp de la empresa desde el registro.
+  const [showWaSync, setShowWaSync] = useState(false)
 
   // Búsqueda de productos existentes (para saber si ya existe)
   interface ProductMatch { productCode: string; descripcion?: string; photosCount: number; trackingCode: string; operationType: string }
@@ -664,16 +662,6 @@ export function WizardPage() {
     void handleAddProduct(productName)
   }
 
-  const handleShare = () => {
-    const shareUrl = `${window.location.origin}/share/${trackingCode}`
-    const text = `📋 Registro ${trackingCode}\n${operation?.operationType} · ${operation?.vehiclePlate}\n\n${shareUrl}`
-    if (typeof navigator.share === 'function' && !window.frameElement) {
-      void navigator.share({ title: `Registro ${trackingCode}`, text, url: shareUrl })
-    } else {
-      void navigator.clipboard.writeText(shareUrl).then(() => setFeedback('✓ Link copiado'))
-    }
-  }
-
   if (loading) return <div className="flex-1 flex items-center justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-[var(--color-primary)]" /></div>
   if (error || !operation) return (
     <div className="p-4 space-y-4">
@@ -702,6 +690,11 @@ export function WizardPage() {
             <Pencil className="w-2.5 h-2.5 opacity-50" />
           </button>
         </div>
+        {/* Sincronizar WhatsApp de la empresa */}
+        <button onClick={() => setShowWaSync(true)} title="Sincronizar WhatsApp"
+          className="w-8 h-8 rounded-full bg-[#128c7e]/10 flex items-center justify-center flex-shrink-0">
+          <MessageCircle className="w-4 h-4 text-[#128c7e]" />
+        </button>
         {isCompleted ? (
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium"
             title={operation.completedAt ? `Finalizado el ${new Date(operation.completedAt).toLocaleString('es-CO')}` : undefined}>
@@ -725,9 +718,6 @@ export function WizardPage() {
               </div>
             )}
             <div className="flex gap-2">
-              <button onClick={handleShare} className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5">
-                <Share2 className="w-3.5 h-3.5" /> Compartir
-              </button>
               <button onClick={() => void handleReopen()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-white text-gray-600 text-xs font-medium flex items-center justify-center gap-1.5 border border-gray-200">
                 <Edit3 className="w-3.5 h-3.5" /> Editar
               </button>
@@ -748,18 +738,6 @@ export function WizardPage() {
           <section className="space-y-2">
             <div className="flex items-center justify-between">
               <h4 className="text-[10px] font-semibold text-gray-500 uppercase">Fotos ({operation.photos.length})</h4>
-              <button onClick={() => {
-                const msgs = operation.photos.map((p, i) => `${i + 1}. ${p.comment || p.stepName} (${new Date(p.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })})`).join('\n')
-                const text = `📋 *${operation.trackingCode}*\n${operation.operationType}\n\n${msgs}\n\n${operation.photos.length} fotos registradas`
-                if (typeof navigator.share === 'function') {
-                  void navigator.share({ title: operation.trackingCode, text })
-                } else {
-                  const waUrl = `https://wa.me/?text=${encodeURIComponent(text)}`
-                  window.open(waUrl, '_blank')
-                }
-              }} className="px-2 py-1 rounded-lg bg-[var(--color-primary-bg)] text-[var(--color-primary)] text-[10px] font-medium flex items-center gap-1 border border-[var(--color-primary)]/20">
-                <Share2 className="w-3 h-3" /> Compartir
-              </button>
             </div>
             <div className="space-y-2 rounded-xl p-3">
               {(() => {
@@ -1045,40 +1023,6 @@ export function WizardPage() {
                         className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-white bg-[#128c7e] hover:bg-[#0f7a6e] ml-auto">
                         <Send className="w-3.5 h-3.5" /> Enviar
                       </button>
-                      {/* Share this product via WhatsApp — sends photos if supported */}
-                      <button onClick={async () => {
-                        const shareUrl = `${window.location.origin}/share/${trackingCode}`
-                        const text = `📦 *${product.productCode}*\n${desc ? desc + '\n' : ''}${photos.length} fotos\n\n🔗 ${shareUrl}`
-
-                        // Try sharing actual images (mobile only)
-                        if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function') {
-                          try {
-                            const imageFiles: File[] = []
-                            for (const ph of photos.filter((p) => photoSrc(p, 800)).slice(0, 10)) {
-                              const imgUrl = photoSrc(ph, 800)!
-                              const resp = await fetch(imgUrl)
-                              if (resp.ok) {
-                                const blob = await resp.blob()
-                                imageFiles.push(new File([blob], `${product.productCode}_${imageFiles.length + 1}.jpg`, { type: 'image/jpeg' }))
-                              }
-                            }
-                            if (imageFiles.length > 0 && navigator.canShare({ files: imageFiles })) {
-                              await navigator.share({ text, files: imageFiles })
-                              return
-                            }
-                          } catch { /* fallback to text-only */ }
-                        }
-                        // Fallback: WhatsApp link with photo URLs
-                        const photoLinks = photos
-                          .filter((p) => photoViewUrl(p))
-                          .map((p, i) => `📷 Foto ${i + 1}: ${photoViewUrl(p)}`)
-                          .join('\n')
-                        const fullText = `${text}\n\n${photoLinks}`
-                        window.open(`https://wa.me/?text=${encodeURIComponent(fullText)}`, '_blank')
-                      }} title="Compartir"
-                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-gray-600 hover:bg-gray-100">
-                        <Share2 className="w-3.5 h-3.5" /> Compartir
-                      </button>
                     </div>
 
                     {/* Expanded: photo list + add photo */}
@@ -1217,6 +1161,10 @@ export function WizardPage() {
               <button onClick={() => { setShowPlusMenu(false); setShowAddProductModal(true) }}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
                 <Package className="w-4 h-4 text-[var(--color-primary)]" /> Agregar producto
+              </button>
+              <button onClick={() => { setShowPlusMenu(false); setShowDbModal(true) }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                <Database className="w-4 h-4 text-emerald-600" /> Traer producto de la base de datos
               </button>
               <label className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
                 <Camera className="w-4 h-4 text-emerald-500" /> Seleccionar imagen
@@ -1392,6 +1340,35 @@ export function WizardPage() {
               <p className="text-[10px] text-gray-400 text-center">
                 Puedes crear el producto sin foto y agregar las fotos después.
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Traer productos de la base de datos a ESTE registro */}
+      {showDbModal && (
+        <SheetsModal
+          open={showDbModal}
+          onClose={() => setShowDbModal(false)}
+          targetTrackingCode={trackingCode}
+          onBrought={() => { void loadOperation() }}
+        />
+      )}
+
+      {/* Sincronizar WhatsApp de la empresa desde el registro */}
+      {showWaSync && (
+        <div className="fixed inset-0 z-[95] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <MessageCircle className="w-4 h-4 text-[#128c7e]" /> Sincronizar WhatsApp
+              </h3>
+              <button onClick={() => setShowWaSync(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4">
+              <WhatsAppSync />
             </div>
           </div>
         </div>
