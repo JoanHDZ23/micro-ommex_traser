@@ -1,10 +1,15 @@
 import { Router } from 'express'
 import { getOperationsCollection, getProductsCatalogCollection } from '../lib/mongodb.js'
 import { generateTrackingCode } from '../lib/tracking-code.js'
-import { uploadToDrive } from '../lib/drive-upload.js'
+import { uploadToDrive, deletePhotoStorage } from '../lib/drive-upload.js'
 import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, normalizeClientTimestamp, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
 
 export const operationsRouter = Router()
+
+/** Borra todas las fotos (R2+GitHub) de una lista de registros de foto. */
+async function deleteAllPhotosStorage(photos: Array<{ fileId?: string; driveUrl?: string }>): Promise<void> {
+  for (const ph of photos) await deletePhotoStorage(ph)
+}
 
 const VALID_TYPES: OperationType[] = ['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES']
 
@@ -941,6 +946,13 @@ operationsRouter.delete('/:trackingCode', async (req, res) => {
       console.warn('[delete] Error al eliminar objetos de R2:', storageErr instanceof Error ? storageErr.message : storageErr)
     }
 
+    // Eliminar también de GitHub (R2 por prefijo no cubre GitHub).
+    const allPhotos = [
+      ...((operation.photos as PhotoRecord[]) ?? []),
+      ...(((operation.lineaBlanca as LineaBlancaProduct[]) ?? []).flatMap((p) => p.photos ?? [])),
+    ]
+    await deleteAllPhotosStorage(allPhotos)
+
     // Siempre eliminar de MongoDB, independiente del resultado del storage
     await col.deleteOne({ trackingCode })
 
@@ -974,12 +986,13 @@ operationsRouter.delete('/:trackingCode/linea-blanca/:productCode', async (req, 
       return
     }
 
-    // Eliminar las imágenes del producto en R2 (prefijo operations/<trackingCode>/<productCode>/)
+    // Eliminar las imágenes del producto en R2 (prefijo) y en GitHub (por foto).
     if (productToDelete) {
       try {
         const { deleteByPrefix } = await import('../lib/storage.js')
         await deleteByPrefix(`operations/${trackingCode}/${productCode.replace(/[^a-zA-Z0-9._-]/g, '_')}/`)
       } catch (e) { console.warn('[operations] Error al eliminar imágenes del producto en R2:', e instanceof Error ? e.message : e) }
+      await deleteAllPhotosStorage(productToDelete.photos ?? [])
     }
 
     await col.updateOne({ trackingCode }, { $set: { lineaBlanca: filtered, updatedAt: new Date().toISOString() } })
@@ -1046,17 +1059,9 @@ operationsRouter.delete('/:trackingCode/linea-blanca/:productCode/photo/:photoIn
     const photos = products[productIdx].photos
     if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
 
-    // Eliminar archivo de Drive
+    // Eliminar archivo del almacenamiento (R2 y/o GitHub)
     const photoToDelete = photos[idx]
-    if (photoToDelete.fileId && photoToDelete.fileId !== 'pending') {
-      const GAS_URL = process.env.GAS_WEBHOOK_URL ?? ''
-      if (GAS_URL) {
-        try {
-          const deleteUrl = `${GAS_URL}?action=deleteFile&fileId=${encodeURIComponent(photoToDelete.fileId)}`
-          await fetch(deleteUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(15_000) })
-        } catch (e) { console.warn('[operations] Error al eliminar foto de Drive:', e) }
-      }
-    }
+    await deletePhotoStorage(photoToDelete)
 
     photos.splice(idx, 1)
     // Si quitó fotos y estaba completado, volver a EN_PROCESO

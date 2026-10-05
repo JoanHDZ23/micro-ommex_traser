@@ -104,3 +104,50 @@ export async function uploadImageToGitHub(
     sha: data.content?.sha ?? '',
   }
 }
+
+/** Extrae el repoPath (dir/archivo) desde una rawUrl o fileId de GitHub. */
+export function githubPathFromRef(ref: string): string | null {
+  if (!ref) return null
+  const raw = ref.match(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/(.+)$/)
+  if (raw?.[1]) return decodeURIComponent(raw[1])
+  // fileId guardado como path lógico (contiene '/', no es URL ni id de Drive)
+  if (!/^https?:\/\//.test(ref) && ref.includes('/')) return ref
+  return null
+}
+
+/**
+ * Borra un archivo del repo de GitHub. Acepta el repoPath, una rawUrl o el
+ * fileId (key). Best-effort: no lanza si no está configurado o no existe.
+ */
+export async function deleteImageFromGitHub(ref: string): Promise<boolean> {
+  if (!isGitHubConfigured()) return false
+  const repoPath = githubPathFromRef(ref) ?? (ref.includes('/') ? ref : null)
+  if (!repoPath) return false
+
+  const base = `https://api.github.com/repos/${OWNER()}/${REPO()}/contents/${repoPath}`
+  const headers = {
+    Authorization: `Bearer ${TOKEN()}`,
+    Accept: 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+    'Content-Type': 'application/json',
+  }
+  try {
+    // 1. Obtener el sha actual del archivo.
+    const getResp = await fetch(`${base}?ref=${encodeURIComponent(BRANCH())}`, { headers, signal: AbortSignal.timeout(30_000) })
+    if (getResp.status === 404) return false
+    if (!getResp.ok) return false
+    const data = await getResp.json() as { sha?: string }
+    if (!data.sha) return false
+
+    // 2. Borrar con el sha.
+    const delResp = await fetch(base, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({ message: `chore: eliminar ${repoPath}`, sha: data.sha, branch: BRANCH() }),
+      signal: AbortSignal.timeout(30_000),
+    })
+    return delResp.ok
+  } catch {
+    return false
+  }
+}

@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { uploadToDrive } from '../lib/drive-upload.js'
+import { uploadToDrive, deletePhotoStorage } from '../lib/drive-upload.js'
 import { getOperationsCollection } from '../lib/mongodb.js'
 import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, FREE_STEPS, PRODUCT_CODE_STEPS, OPTIONAL_PRODUCT_CODE_STEPS, normalizeClientTimestamp, type OperationType, type PhotoRecord } from '../types.js'
 
@@ -21,14 +21,8 @@ photosRouter.delete('/:trackingCode/:photoIndex', async (req, res) => {
     const photos = (operation.photos as PhotoRecord[]) ?? []
     if (idx < 0 || idx >= photos.length) { res.status(400).json({ message: 'Índice de foto inválido.' }); return }
 
-    // Eliminar objeto de R2 si la foto tiene una key real
     const photo = photos[idx]
-    if (photo.fileId && photo.fileId !== 'pending' && photo.fileId !== 'note') {
-      try {
-        const { deleteObject } = await import('../lib/storage.js')
-        await deleteObject(photo.fileId)
-      } catch (e) { console.warn('[photos] Error al eliminar de R2:', e instanceof Error ? e.message : e) }
-    }
+    await deletePhotoStorage(photo)
 
     photos.splice(idx, 1)
     await col.updateOne({ trackingCode }, { $set: { photos, updatedAt: new Date().toISOString() } })

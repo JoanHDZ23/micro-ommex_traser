@@ -92,3 +92,27 @@ export async function uploadToDrive(payload: DriveUploadPayload): Promise<DriveU
   console.warn('[storage] Sin almacenamiento configurado (R2 ni GitHub).')
   return { status: 'error', message: 'Almacenamiento no configurado. Define las variables R2_* o GITHUB_* en el servidor.' }
 }
+
+/**
+ * Borra el archivo de una foto de su almacenamiento (R2 y/o GitHub), según la
+ * referencia disponible (fileId key o driveUrl). Best-effort, no lanza.
+ */
+export async function deletePhotoStorage(photo: { fileId?: string; driveUrl?: string }): Promise<void> {
+  const fileId = photo.fileId
+  const driveUrl = photo.driveUrl
+  // R2: fileId es una key (sin ser 'pending'/'note').
+  if (fileId && fileId !== 'pending' && fileId !== 'note') {
+    try {
+      const { deleteObject } = await import('./storage.js')
+      await deleteObject(fileId)
+    } catch (e) { console.warn('[storage] Error al eliminar de R2:', e instanceof Error ? e.message : e) }
+  }
+  // GitHub: por rawUrl o por fileId-path.
+  const ref = (driveUrl && driveUrl.includes('raw.githubusercontent.com')) ? driveUrl : (fileId ?? '')
+  if (ref) {
+    try {
+      const { deleteImageFromGitHub } = await import('./github-storage.js')
+      await deleteImageFromGitHub(ref)
+    } catch (e) { console.warn('[storage] Error al eliminar de GitHub:', e instanceof Error ? e.message : e) }
+  }
+}
