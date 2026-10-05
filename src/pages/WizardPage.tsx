@@ -77,6 +77,14 @@ export function WizardPage() {
   const [showCamera, setShowCamera] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
 
+  // ── Captura con la app de cámara del dispositivo (estilo WhatsApp) ──
+  // Las fotos tomadas se acumulan aquí y se revisan antes de enviar.
+  const [captureTray, setCaptureTray] = useState<string[]>([]) // dataURLs de las fotos tomadas
+  const [showCaptureTray, setShowCaptureTray] = useState(false)
+  const [trayMessage, setTrayMessage] = useState('')
+  const [traySending, setTraySending] = useState(false)
+  const nativeCameraRef = useRef<HTMLInputElement>(null)
+
   // Línea Blanca
   const [lbProductCode, setLbProductCode] = useState('')
   const [lbIsLineaBlanca, setLbIsLineaBlanca] = useState(false)
@@ -244,6 +252,62 @@ export function WizardPage() {
       } catch {
         setFeedback('Error al leer una imagen')
       }
+    }
+  }
+
+  /**
+   * Flujo estilo WhatsApp con la app de cámara del dispositivo:
+   *  1. Abre la cámara nativa (input capture).
+   *  2. La foto tomada se agrega a una bandeja y se abre la revisión.
+   *  3. En la revisión puedes "Tomar otra foto", escribir un mensaje y enviar.
+   */
+  const openNativeCamera = () => {
+    nativeCameraRef.current?.click()
+  }
+
+  const handleNativeCameraShot = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // permite volver a tomar
+    if (!file) return
+    try {
+      // Comprime/redimensiona para subida rápida y para mostrar la miniatura.
+      const base64 = await compressImageToBase64(file)
+      const dataUrl = `data:image/jpeg;base64,${base64}`
+      setCaptureTray((prev) => [...prev, dataUrl])
+      setShowCaptureTray(true)
+    } catch {
+      setFeedback('No se pudo leer la foto')
+    }
+  }
+
+  const removeTrayPhoto = (idx: number) => {
+    setCaptureTray((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  const cancelCaptureTray = () => {
+    setShowCaptureTray(false)
+    setCaptureTray([])
+    setTrayMessage('')
+  }
+
+  // Envía todas las fotos de la bandeja; el mensaje se adjunta a la primera.
+  const sendCaptureTray = async () => {
+    if (captureTray.length === 0) { cancelCaptureTray(); return }
+    setTraySending(true)
+    const message = trayMessage.trim()
+    try {
+      for (let i = 0; i < captureTray.length; i++) {
+        const base64 = captureTray[i].split(',')[1] ?? ''
+        await uploadSinglePhoto(base64, i === 0 ? message : '', false)
+      }
+      setFeedback(captureTray.length > 1 ? `✓ ${captureTray.length} fotos enviadas` : '✓ Foto enviada')
+    } catch {
+      setFeedback('Error al enviar alguna foto')
+    } finally {
+      setTraySending(false)
+      setShowCaptureTray(false)
+      setCaptureTray([])
+      setTrayMessage('')
     }
   }
 
@@ -1112,12 +1176,15 @@ export function WizardPage() {
                 <Send className="w-4 h-4 text-white" />
               </button>
             )}
-            {/* Camera button — abre la cámara EN VIVO del dispositivo (CameraCapture) */}
-            <button type="button" onClick={() => setShowCamera(true)}
+            {/* Camera button — abre la app de cámara del dispositivo (estilo WhatsApp) */}
+            <button type="button" onClick={openNativeCamera}
               className="w-9 h-9 rounded-full bg-[var(--color-primary)] flex items-center justify-center cursor-pointer flex-shrink-0"
               aria-label="Abrir cámara">
               <Camera className="w-5 h-5 text-white" />
             </button>
+            {/* Input oculto: usa la cámara nativa del dispositivo */}
+            <input ref={nativeCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+              onChange={(e) => void handleNativeCameraShot(e)} />
           </div>
           {/* Quick actions */}
           {(operation.photos.length > 0 || lbProducts.length > 0) && (
@@ -1223,6 +1290,64 @@ export function WizardPage() {
               <p className="text-[10px] text-gray-400 text-center">
                 Puedes crear el producto sin foto y agregar las fotos después.
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bandeja de revisión de fotos tomadas con la cámara del dispositivo */}
+      {showCaptureTray && (
+        <div className="fixed inset-0 z-[95] bg-black/60 flex items-end sm:items-center justify-center">
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="text-sm font-bold text-gray-800">
+                {captureTray.length} foto{captureTray.length === 1 ? '' : 's'}
+              </h3>
+              <button onClick={cancelCaptureTray} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto px-4 py-4 space-y-4">
+              {/* Miniaturas */}
+              <div className="grid grid-cols-3 gap-2">
+                {captureTray.map((src, i) => (
+                  <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
+                    <img src={src} className="w-full h-full object-cover" />
+                    <button onClick={() => removeTrayPhoto(i)} aria-label="Quitar foto"
+                      className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
+                      <X className="w-3.5 h-3.5 text-white" />
+                    </button>
+                  </div>
+                ))}
+                {/* Tomar otra foto */}
+                <button onClick={openNativeCamera}
+                  className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 text-gray-500 hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]">
+                  <Camera className="w-6 h-6" />
+                  <span className="text-[10px] font-medium">Otra foto</span>
+                </button>
+              </div>
+
+              {/* Mensaje (como en WhatsApp) */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-gray-600">Mensaje (opcional)</label>
+                <input type="text" value={trayMessage} onChange={(e) => setTrayMessage(e.target.value)}
+                  placeholder="Escribe un comentario para estas fotos..."
+                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                  autoFocus />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200">
+              <button onClick={cancelCaptureTray} disabled={traySending}
+                className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 disabled:opacity-50">
+                Cancelar
+              </button>
+              <button onClick={() => void sendCaptureTray()} disabled={traySending || captureTray.length === 0}
+                className="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
+                {traySending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Enviar {captureTray.length > 0 ? `(${captureTray.length})` : ''}
+              </button>
             </div>
           </div>
         </div>
