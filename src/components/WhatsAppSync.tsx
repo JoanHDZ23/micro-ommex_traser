@@ -16,7 +16,7 @@ interface StatusResp { status: WaStatus; hasQr: boolean; error: string | null }
  * El envío de los registros se hace desde la vista de compartir (SharePage),
  * no desde aquí.
  */
-export function WhatsAppSync() {
+export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) {
   const companyId = getCompanyId() || 'demo'
 
   const [status, setStatus] = useState<WaStatus>('disconnected')
@@ -144,9 +144,9 @@ export function WhatsAppSync() {
         )}
       </div>
       <p className="text-xs text-[var(--color-text-2)]">
-        Vincula el WhatsApp de <strong>esta empresa</strong> (como WhatsApp Web) y define el chat o
-        grupo al que se enviarán los registros. Cada empresa usa su propia cuenta de WhatsApp.
-        El envío se hace desde cada registro con el botón de compartir.
+        {syncOnly
+          ? 'Vincula el WhatsApp de esta empresa escaneando el QR (como WhatsApp Web).'
+          : 'Vincula el WhatsApp de esta empresa (como WhatsApp Web) y define el chat o grupo al que se enviarán los registros. Cada empresa usa su propia cuenta de WhatsApp.'}
       </p>
 
       {unavailable && (
@@ -178,9 +178,16 @@ export function WhatsAppSync() {
         )
       )}
 
-      {/* Destino + desvincular (cuando está conectado) */}
+      {/* Conectado: aviso + (en modo completo) destino/link del grupo */}
       {status === 'open' && (
         <>
+          {syncOnly ? (
+            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+              WhatsApp de esta empresa vinculado correctamente.
+            </div>
+          ) : (
+          <>
           {/* Pegar el link del grupo → trae internamente su ID (JID) */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-[var(--color-text-2)]">Link del grupo de WhatsApp</label>
@@ -225,23 +232,27 @@ export function WhatsAppSync() {
               {savedMsg}
             </div>
           )}
+          </>
+          )}
 
           <div className="flex items-center gap-2">
-            <button onClick={() => void saveDestino()} disabled={savingTo}
-              className="flex-1 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-              {savingTo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Guardar destino
-            </button>
+            {!syncOnly && (
+              <button onClick={() => void saveDestino()} disabled={savingTo}
+                className="flex-1 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
+                {savingTo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Guardar destino
+              </button>
+            )}
             <button onClick={() => void logout()} disabled={loading}
-              className="px-3 py-2.5 rounded-xl border border-[var(--color-border)] text-sm text-red-600 hover:bg-red-50 flex items-center gap-1.5">
+              className={`${syncOnly ? 'w-full justify-center' : ''} px-3 py-2.5 rounded-xl border border-[var(--color-border)] text-sm text-red-600 hover:bg-red-50 flex items-center gap-1.5`}>
               <LogOut className="w-4 h-4" /> Desvincular
             </button>
           </div>
         </>
       )}
 
-      {/* Permite guardar el destino aunque aún no esté conectado */}
-      {!unavailable && status !== 'open' && (
+      {/* Permite guardar el destino aunque aún no esté conectado (solo modo completo) */}
+      {!syncOnly && !unavailable && status !== 'open' && (
         <div className="space-y-1.5 pt-2 border-t border-[var(--color-border)]">
           <label className="text-xs font-medium text-[var(--color-text-2)]">Chat o grupo destino</label>
           <div className="flex items-center gap-2">

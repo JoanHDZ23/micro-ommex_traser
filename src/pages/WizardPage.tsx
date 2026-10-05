@@ -1368,7 +1368,7 @@ export function WizardPage() {
               </button>
             </div>
             <div className="overflow-y-auto p-4">
-              <WhatsAppSync />
+              <WhatsAppSync syncOnly />
             </div>
           </div>
         </div>

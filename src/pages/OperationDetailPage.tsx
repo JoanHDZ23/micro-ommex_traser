@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Calendar, Camera, Clock, Edit3, ExternalLink, Loader2, MapPin, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
+import { ArrowLeft, Calendar, Camera, Clock, Edit3, ExternalLink, Loader2, MapPin, MessageCircle, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
+import { WhatsAppSync } from '../components/WhatsAppSync'
 
 const DETAIL_GUIDE: GuideStep[] = [
   {
@@ -76,6 +77,7 @@ export function OperationDetailPage() {
   const [operation, setOperation] = useState<Operation | null>(null)
   const [loading, setLoading] = useState(true)
   const [lightbox, setLightbox] = useState<PhotoRecord | null>(null)
+  const [showWaSync, setShowWaSync] = useState(false)
 
   const load = useCallback(async () => {
     if (!trackingCode) return
@@ -155,8 +157,33 @@ export function OperationDetailPage() {
         <SyncButton trackingCode={operation.trackingCode} onSynced={load} />
       )}
 
+      {/* Sincronizar WhatsApp de la empresa (QR) */}
+      <button onClick={() => setShowWaSync(true)}
+        className="w-full py-2.5 rounded-xl border border-[#128c7e] text-[#128c7e] font-medium text-sm flex items-center justify-center gap-2 hover:bg-[#128c7e]/5">
+        <MessageCircle className="w-4 h-4" /> Sincronizar WhatsApp
+      </button>
+
       {/* Enviar al WhatsApp configurado (foto + mensaje por producto, en orden) */}
       <SendWhatsAppButton trackingCode={operation.trackingCode} />
+
+      {/* Modal: sincronización de WhatsApp (solo QR, sin ID de grupo) */}
+      {showWaSync && (
+        <div className="fixed inset-0 z-[95] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[92vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <MessageCircle className="w-4 h-4 text-[#128c7e]" /> Sincronizar WhatsApp
+              </h3>
+              <button onClick={() => setShowWaSync(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4">
+              <WhatsAppSync syncOnly />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Edit/Reopen button — visible when completed */}
       {operation.status === 'COMPLETADO' && (
