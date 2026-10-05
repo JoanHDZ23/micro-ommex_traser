@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Camera, Check, Copy, ExternalLink, Image as ImageIcon, Loader2, RotateCcw, Upload } from 'lucide-react'
+import { Camera, Check, Copy, ExternalLink, Image as ImageIcon, RotateCcw, Upload } from 'lucide-react'
 import { CameraCapture } from '../components/CameraCapture'
+import { EmptyState, ErrorState, LoadingState, SectionHeader } from '../components/ui'
 import { apiRequest } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 
@@ -85,40 +86,44 @@ export function PhotoUploadPage() {
   return (
     <div className="p-4 space-y-4">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/')} className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center">
-          <ArrowLeft className="w-5 h-5 text-gray-600" />
-        </button>
-        <div>
-          <h2 className="text-lg font-bold text-gray-900">Subir foto</h2>
-          <p className="text-xs text-gray-500">Toma una foto o elige un archivo y obtén su enlace</p>
-        </div>
-      </div>
+      <SectionHeader
+        title="Subir foto"
+        subtitle="Toma una foto o elige un archivo y obtén su enlace"
+        onBack={() => navigate('/')}
+      />
 
-      {/* Sin imagen todavía: acciones para capturar/elegir */}
+      {/* Sin imagen todavía: cuadrícula de acciones para capturar/elegir + estado vacío */}
       {!preview && (
-        <div className="grid grid-cols-1 gap-3">
-          <button onClick={() => setCameraOpen(true)}
-            className="flex items-center gap-4 p-4 bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border)] hover:shadow-md transition-all text-left active:scale-[0.98]">
-            <div className="w-11 h-11 rounded-[var(--radius)] flex items-center justify-center bg-emerald-50 text-emerald-600">
-              <Camera className="w-5 h-5" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-[var(--color-text)]">Tomar foto</p>
-              <p className="text-xs text-[var(--color-text-2)]">Usa la cámara del dispositivo</p>
-            </div>
-          </button>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <button onClick={() => setCameraOpen(true)}
+              className="flex flex-col items-center justify-center gap-2 p-4 bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border)] hover:shadow-md transition-all text-center active:scale-[0.98]">
+              <div className="w-11 h-11 rounded-[var(--radius)] flex items-center justify-center bg-emerald-50 text-emerald-600">
+                <Camera className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-[var(--color-text)]">Tomar foto</p>
+                <p className="text-xs text-[var(--color-text-2)]">Usa la cámara del dispositivo</p>
+              </div>
+            </button>
 
-          <label className="flex items-center gap-4 p-4 bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border)] hover:shadow-md transition-all text-left active:scale-[0.98] cursor-pointer">
-            <div className="w-11 h-11 rounded-[var(--radius)] flex items-center justify-center bg-blue-50 text-blue-600">
-              <ImageIcon className="w-5 h-5" />
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-[var(--color-text)]">Elegir de la galería</p>
-              <p className="text-xs text-[var(--color-text-2)]">Selecciona una imagen existente</p>
-            </div>
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files?.[0] ?? null)} />
-          </label>
+            <label className="flex flex-col items-center justify-center gap-2 p-4 bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border)] hover:shadow-md transition-all text-center active:scale-[0.98] cursor-pointer">
+              <div className="w-11 h-11 rounded-[var(--radius)] flex items-center justify-center bg-blue-50 text-blue-600">
+                <ImageIcon className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-[var(--color-text)]">Elegir de la galería</p>
+                <p className="text-xs text-[var(--color-text-2)]">Selecciona una imagen existente</p>
+              </div>
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFile(e.target.files?.[0] ?? null)} />
+            </label>
+          </div>
+
+          <EmptyState
+            icon={<ImageIcon className="w-8 h-8" aria-hidden="true" />}
+            title="No hay imágenes todavía"
+            description="Toma una foto o elige un archivo para subirlo y obtener su enlace."
+          />
         </div>
       )}
 
@@ -130,7 +135,7 @@ export function PhotoUploadPage() {
           </div>
 
           {error && (
-            <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm">{error}</div>
+            <ErrorState message={error} onRetry={() => void handleUpload()} />
           )}
 
           {!url ? (
@@ -141,7 +146,7 @@ export function PhotoUploadPage() {
               </button>
               <button onClick={() => void handleUpload()} disabled={uploading}
                 className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                {uploading ? <LoadingState inline size="sm" label="Subiendo…" /> : <Upload className="w-4 h-4" />}
                 Subir y obtener enlace
               </button>
             </div>

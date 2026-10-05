@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, Save, Trash2 } from 'lucide-react'
+import { ArrowRight, CheckCircle2, FileSpreadsheet, Save, Trash2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
+import { Button, Card, ErrorState, LoadingState, SectionHeader } from '../components/ui'
 
 const SETTINGS_GUIDE: GuideStep[] = [
   {
@@ -92,31 +93,34 @@ export function SettingsPage() {
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
-        <Loader2 className="w-8 h-8 animate-spin text-[var(--color-primary)]" />
+        <LoadingState />
       </div>
     )
   }
+
+  // Separa el feedback de éxito (mensaje con ✓) del de error para presentarlos
+  // con componentes distintos sin alterar la lógica de estado existente.
+  const cleanupSuccess = feedbackCleanup?.startsWith('✓') ? feedbackCleanup : null
+  const cleanupError = feedbackCleanup && !feedbackCleanup.startsWith('✓') ? feedbackCleanup : null
+  const sheetsSuccess = feedbackSheets?.startsWith('✓') ? feedbackSheets : null
+  const sheetsError = feedbackSheets && !feedbackSheets.startsWith('✓') ? feedbackSheets : null
 
   return (
     <div className="p-4 space-y-4">
       <GuideModal storageKey="settings" heading="Configuración" steps={SETTINGS_GUIDE} />
 
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/')} className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center">
-          <ArrowLeft className="w-5 h-5 text-gray-600" />
-        </button>
-        <div>
-          <h2 className="text-lg font-bold text-gray-900">Configuración</h2>
-          <p className="text-xs text-gray-500">Limpieza automática y herramientas</p>
-        </div>
-      </div>
+      <SectionHeader
+        title="Configuración"
+        subtitle="Limpieza automática y herramientas"
+        onBack={() => navigate('/')}
+      />
 
       {/* Sección "Carpeta de Google Drive" eliminada: las fotos se almacenan
           automáticamente en la nube; ya no se configura carpeta de Drive. */}
 
       {/* ── Limpieza automática ── */}
-      <section className="space-y-3 p-4 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
+      <Card as="section" className="space-y-3">
         <div className="flex items-center gap-2">
           <Trash2 className="w-5 h-5 text-red-500" />
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Limpieza automática de registros</h3>
@@ -163,23 +167,29 @@ export function SettingsPage() {
             <span>Los registros irán a la <strong>papelera de Drive</strong> (no se borran permanentemente). Tienes 30 días para recuperarlos.</span>
           </div>
         )}
-      </section>
+      </Card>
 
-      <button onClick={() => void handleSaveCleanup()} disabled={savingCleanup}
-        className="w-full py-3 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-        {savingCleanup ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+      <Button
+        onClick={() => void handleSaveCleanup()}
+        loading={savingCleanup}
+        fullWidth
+        leftIcon={<Save className="w-4 h-4" />}
+      >
         Guardar configuración de limpieza
-      </button>
+      </Button>
 
-      {feedbackCleanup && (
-        <div className={`flex items-start gap-2 p-3 rounded-xl text-sm ${feedbackCleanup.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+      {cleanupSuccess && (
+        <div className="flex items-start gap-2 p-3 rounded-xl text-sm bg-emerald-50 text-emerald-700">
           <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>{feedbackCleanup}</span>
+          <span>{cleanupSuccess}</span>
         </div>
+      )}
+      {cleanupError && (
+        <ErrorState message={cleanupError} onRetry={() => void handleSaveCleanup()} />
       )}
 
       {/* ── Función: Documentos a Google Sheets ── */}
-      <section className="space-y-3 p-4 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
+      <Card as="section" className="space-y-3">
         <div className="flex items-center gap-2">
           <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Documentos a Google Sheets</h3>
@@ -198,20 +208,27 @@ export function SettingsPage() {
           </div>
         </label>
 
-        {feedbackSheets && (
-          <div className={`flex items-start gap-2 p-2.5 rounded-lg text-xs ${feedbackSheets.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+        {sheetsSuccess && (
+          <div className="flex items-start gap-2 p-2.5 rounded-lg text-xs bg-emerald-50 text-emerald-700">
             <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-            <span>{feedbackSheets}</span>
+            <span>{sheetsSuccess}</span>
           </div>
+        )}
+        {sheetsError && (
+          <ErrorState message={sheetsError} onRetry={() => void handleToggleSheets(sheetsEnabled)} />
         )}
 
         {sheetsEnabled && (
-          <button onClick={() => navigate('/documentos')}
-            className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-2 active:scale-[0.98]">
-            <FileSpreadsheet className="w-4 h-4" /> Abrir herramienta de documentos
-          </button>
+          <Button
+            variant="success"
+            onClick={() => navigate('/documentos')}
+            fullWidth
+            leftIcon={<FileSpreadsheet className="w-4 h-4" />}
+          >
+            Abrir herramienta de documentos
+          </Button>
         )}
-      </section>
+      </Card>
 
       {/* ── WhatsApp (sincronización por QR + envío) ── */}
       <WhatsAppSync />

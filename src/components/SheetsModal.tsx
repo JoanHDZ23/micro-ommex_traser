@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2,
@@ -8,6 +8,7 @@ import {
 import { apiRequest, fileToBase64, type CompanySheet, type Operation, type OperationType, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
+import { Button, Card, EmptyState, ErrorState, LoadingState, ModalSurface } from './ui'
 import {
   parseFileLocally, parsePdfLocally, isPdf, saveLocalTable, listLocalTables,
   getLocalTable, updateLocalTableRows, deleteLocalTable,
@@ -325,6 +326,7 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
  */
 export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: SheetsModalProps) {
   const navigate = useNavigate()
+  const titleId = useId()
   // Si no viene companyId (p. ej. abriendo la app directamente para probar),
   // usamos 'demo' para que las tablas locales tengan dónde agruparse.
   const companyId = getCompanyId() || 'demo'
@@ -735,31 +737,27 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
-      <div className="w-full sm:max-w-2xl bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[92vh] flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
-          <div className="flex items-center gap-2 min-w-0">
-            {viewing && (
-              <button onClick={closeViewer} aria-label="Volver"
-                className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center flex-shrink-0">
-                <ArrowLeft className="w-4 h-4 text-[var(--color-text-2)]" />
-              </button>
-            )}
-            <FileSpreadsheet className="w-5 h-5 text-emerald-600 flex-shrink-0" />
-            <h3 className="text-sm font-bold text-[var(--color-text)] truncate">
-              {viewing ? viewing.sheetName : 'Documentos a Google Sheets'}
-            </h3>
+    <>
+      <ModalSurface
+        open={open}
+        onClose={onClose}
+        title={viewing ? viewing.sheetName : 'Documentos a Google Sheets'}
+        titleId={titleId}
+        size="lg"
+      >
+        {/* Botón "atrás" para volver del visor al listado (ModalSurface ya provee el cierre). */}
+        {viewing && (
+          <div className="pb-2">
+            <Button variant="ghost" size="sm" onClick={closeViewer}
+              leftIcon={<ArrowLeft className="w-4 h-4" />}>
+              Volver a las tablas
+            </Button>
           </div>
-          <button onClick={onClose} aria-label="Cerrar"
-            className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center flex-shrink-0">
-            <X className="w-4 h-4 text-[var(--color-text-2)]" />
-          </button>
-        </div>
+        )}
 
         {/* ── Modo visor: verificar una tabla importada dentro de la app ── */}
         {viewing ? (
-          <div className="overflow-y-auto px-4 py-4 space-y-3">
+          <div className="pb-4 space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <p className="text-xs text-[var(--color-text-3)]">
                 Origen: <span className="font-medium text-[var(--color-text-2)]">{viewing.sourceFileName}</span> · {editing ? editRows.length : viewing.rowCount} fila(s)
@@ -782,10 +780,13 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
             )}
 
             {error && (
-              <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
-                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>{error}</span>
-              </div>
+              <ErrorState
+                message={error}
+                onRetry={() => {
+                  const sheet = sheets.find((s) => s.id === viewing.id)
+                  if (sheet) void handleView(sheet)
+                }}
+              />
             )}
             {success && (
               <div className="flex items-start gap-2 p-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm">
@@ -795,7 +796,10 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
             )}
 
             {viewing.headers.length === 0 ? (
-              <p className="text-xs text-[var(--color-text-3)] py-6 text-center">Esta hoja no tiene datos para mostrar.</p>
+              <EmptyState
+                icon={<Table2 className="w-8 h-8 mx-auto" />}
+                title="Esta hoja no tiene datos para mostrar."
+              />
             ) : editing ? (
               <>
                 {/* ── Modo edición ── */}
@@ -842,30 +846,29 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button onClick={cancelEditing} disabled={savingEdit}
-                    className="px-4 py-2.5 rounded-xl border border-[var(--color-border)] text-sm text-[var(--color-text-2)] hover:bg-gray-50 disabled:opacity-50">
+                  <Button variant="secondary" onClick={cancelEditing} disabled={savingEdit}>
                     Cancelar
-                  </button>
-                  <button onClick={() => void saveEditing()} disabled={savingEdit}
-                    className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-                    {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                  </Button>
+                  <Button variant="success" fullWidth className="flex-1"
+                    onClick={() => void saveEditing()} loading={savingEdit}
+                    leftIcon={<Save className="w-4 h-4" />}>
                     Guardar cambios
-                  </button>
+                  </Button>
                 </div>
               </>
             ) : (
               <>
                 {/* ── Modo lectura ── */}
                 <div className="flex items-center gap-2 flex-wrap">
-                  <button onClick={startEditing}
-                    className="px-4 py-2 rounded-xl border border-emerald-300 text-emerald-700 text-sm font-medium flex items-center justify-center gap-2 hover:bg-emerald-50">
-                    <Pencil className="w-4 h-4" /> Editar datos
-                  </button>
+                  <Button variant="secondary" onClick={startEditing}
+                    leftIcon={<Pencil className="w-4 h-4" />}>
+                    Editar datos
+                  </Button>
                   {viewing.sheetUrl && (
-                    <button onClick={() => void refreshFromSheet()} disabled={loadingView}
-                      className="px-4 py-2 rounded-xl border border-[var(--color-border)] text-[var(--color-text-2)] text-sm font-medium flex items-center justify-center gap-2 hover:bg-gray-50 disabled:opacity-50">
-                      <RefreshCw className={`w-4 h-4 ${loadingView ? 'animate-spin' : ''}`} /> Leer desde Google Sheets
-                    </button>
+                    <Button variant="secondary" onClick={() => void refreshFromSheet()} loading={loadingView}
+                      leftIcon={<RefreshCw className="w-4 h-4" />}>
+                      Leer desde Google Sheets
+                    </Button>
                   )}
                   {viewing.source === 'sheet' && (
                     <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full">En vivo desde Sheets</span>
@@ -892,7 +895,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
           </div>
         ) : (
           /* ── Modo normal: subir + listar ── */
-          <div className="overflow-y-auto px-4 py-4 space-y-4">
+          <div className="pb-4 space-y-4">
             {/* ── Subida ── */}
             <section className="space-y-3">
               <label className="block">
@@ -911,17 +914,10 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                 </div>
               </label>
 
-              {parsing && (
-                <div className="flex items-center justify-center gap-2 py-3 text-sm text-[var(--color-text-2)]">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Leyendo el documento…
-                </div>
-              )}
+              {parsing && <LoadingState label="Leyendo el documento…" />}
 
               {error && (
-                <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
-                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>{error}</span>
-                </div>
+                <ErrorState message={error} onRetry={() => void loadSheets()} />
               )}
 
               {success && (
@@ -949,23 +945,29 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
 
                 <div className="space-y-2">
                   {/* Acción principal: importar y usar los datos dentro de la app */}
-                  <button onClick={() => void handleImport()} disabled={importing || creating || !sheetName.trim()}
-                    className="w-full py-2.5 rounded-xl bg-emerald-600 text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-                    {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                  <Button variant="success" fullWidth
+                    onClick={() => void handleImport()}
+                    loading={importing}
+                    disabled={creating || !sheetName.trim()}
+                    leftIcon={<Database className="w-4 h-4" />}>
                     Importar tabla a la app
-                  </button>
+                  </Button>
 
                   {/* Acción secundaria: además crear la Google Sheet en Drive */}
-                  <button onClick={() => void handleCreate()} disabled={creating || importing || !sheetName.trim()}
-                    className="w-full py-2.5 rounded-xl border border-emerald-300 text-emerald-700 font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 hover:bg-emerald-50 active:scale-[0.98]">
-                    {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
+                  <Button variant="secondary" fullWidth
+                    onClick={() => void handleCreate()}
+                    loading={creating}
+                    disabled={importing || !sheetName.trim()}
+                    leftIcon={<FileSpreadsheet className="w-4 h-4" />}>
                     Importar y crear en Google Sheets
-                  </button>
+                  </Button>
 
-                  <button onClick={resetUpload} disabled={creating || importing}
-                    className="w-full py-2 rounded-xl text-sm text-[var(--color-text-3)] hover:underline disabled:opacity-50">
+                  <Button variant="ghost" size="sm" fullWidth
+                    onClick={resetUpload}
+                    disabled={creating || importing}
+                    className="text-[var(--color-text-3)]">
                     Cancelar
-                  </button>
+                  </Button>
                 </div>
 
                 <p className="text-[11px] text-[var(--color-text-3)] text-center">
@@ -978,18 +980,20 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
             <section className="space-y-2 pt-2 border-t border-[var(--color-border)]">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-semibold text-[var(--color-text-2)] uppercase tracking-wide">Tablas importadas</h4>
-                {(loadingList || loadingView) && <Loader2 className="w-3.5 h-3.5 animate-spin text-[var(--color-text-3)]" />}
+                {(loadingList || loadingView) && <LoadingState inline size="sm" label="Cargando tablas…" />}
               </div>
 
               {!loadingList && sheets.length === 0 && (
-                <p className="text-xs text-[var(--color-text-3)] py-3 text-center">
-                  Aún no hay tablas importadas para esta empresa.
-                </p>
+                <EmptyState
+                  icon={<FileText className="w-8 h-8 mx-auto" />}
+                  title="Aún no hay tablas importadas"
+                  description="Importa un documento para verlo y usarlo aquí."
+                />
               )}
 
               <div className="space-y-2">
                 {sheets.map((s) => (
-                  <div key={s.id} className="flex items-center gap-3 p-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+                  <Card key={s.id} padding="sm" className="flex items-center gap-3">
                     <FileText className="w-5 h-5 text-emerald-600 flex-shrink-0" />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-[var(--color-text)] truncate">{s.sheetName}</p>
@@ -1014,13 +1018,13 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                       aria-label="Eliminar hoja" title="Eliminar">
                       {deletingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                     </button>
-                  </div>
+                  </Card>
                 ))}
               </div>
             </section>
           </div>
         )}
-      </div>
+      </ModalSurface>
 
       {/* ── Modal: destino para traer productos del documento a los registros ── */}
       {bringRows && (
@@ -1041,12 +1045,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                 Se crearán los grupos de producto con la información del documento. Solo tendrás que agregar las fotos.
               </p>
 
-              {error && (
-                <div className="flex items-start gap-2 p-3 rounded-xl bg-red-50 text-red-700 text-sm">
-                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>{error}</span>
-                </div>
-              )}
+              {error && <ErrorState message={error} />}
 
               {/* Opción A: nuevo registro */}
               <section className="space-y-2">
@@ -1070,11 +1069,12 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                     placeholder="EJ: ABC123"
                     className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
                 </div>
-                <button onClick={() => void confirmBring('new')} disabled={bringingBusy}
-                  className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
-                  {bringingBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FilePlus className="w-4 h-4" />}
+                <Button variant="primary" fullWidth
+                  onClick={() => void confirmBring('new')}
+                  loading={bringingBusy}
+                  leftIcon={<FilePlus className="w-4 h-4" />}>
                   Crear registro con {bringRows.length} producto(s)
-                </button>
+                </Button>
               </section>
 
               {/* Opción B: agregar a un registro existente (en proceso) */}
@@ -1102,6 +1102,6 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
           </div>
         </div>
       )}
-    </div>
+    </>
   )
 }

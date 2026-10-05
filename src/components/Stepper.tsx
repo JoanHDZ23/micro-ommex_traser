@@ -20,10 +20,10 @@ export function Stepper({ steps, currentStep, completedSteps, multiPhotoSteps = 
             key={idx}
             className={`h-1.5 flex-1 rounded-full transition-colors ${
               completedSteps.includes(idx)
-                ? 'bg-emerald-500'
+                ? 'bg-[var(--color-success)]'
                 : idx === currentStep
-                  ? 'bg-amber-400'
-                  : 'bg-gray-200'
+                  ? 'bg-[var(--color-primary)]'
+                  : 'bg-[var(--color-border)]'
             }`}
           />
         ))}
@@ -46,20 +46,20 @@ export function Stepper({ steps, currentStep, completedSteps, multiPhotoSteps = 
               type="button"
               disabled={!isClickable}
               onClick={() => isClickable && onStepClick(idx)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border transition-all text-left ${
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-[var(--radius)] border transition-all text-left ${
                 isCurrent
-                  ? 'border-amber-300 bg-amber-50 shadow-sm'
+                  ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)] shadow-sm'
                   : isCompleted
-                    ? 'border-emerald-200 bg-emerald-50'
-                    : 'border-gray-100 bg-white opacity-60'
+                    ? 'border-emerald-200 bg-[var(--color-success-bg)]'
+                    : 'border-[var(--color-border)] bg-[var(--color-surface)] opacity-60'
               } ${isClickable ? 'cursor-pointer hover:shadow-md' : 'cursor-default'}`}
             >
               <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${
                 isCompleted
-                  ? 'bg-emerald-500 text-white'
+                  ? 'bg-[var(--color-success)] text-white'
                   : isCurrent
-                    ? 'bg-amber-400 text-white'
-                    : 'bg-gray-200 text-gray-400'
+                    ? 'bg-[var(--color-primary)] text-white'
+                    : 'bg-[var(--color-border)] text-[var(--color-text-3)]'
               }`}>
                 {isCompleted ? (
                   <Check className="w-4 h-4" />
@@ -70,11 +70,11 @@ export function Stepper({ steps, currentStep, completedSteps, multiPhotoSteps = 
                 )}
               </div>
               <div className="flex-1 min-w-0">
-                <p className={`text-sm font-medium truncate ${
-                  isCurrent ? 'text-gray-900' : isCompleted ? 'text-emerald-700' : 'text-gray-500'
+                <p className={`text-sm font-semibold truncate ${
+                  isCurrent ? 'text-[var(--color-text)]' : isCompleted ? 'text-emerald-700' : 'text-[var(--color-text-2)]'
                 }`}>
                   {idx + 1}. {step}
-                  {isOptional && <span className="text-[10px] text-gray-400 font-normal ml-1">(opcional)</span>}
+                  {isOptional && <span className="text-[10px] text-[var(--color-text-3)] font-normal ml-1">(opcional)</span>}
                 </p>
               </div>
               <div className="flex items-center gap-1.5">
@@ -85,12 +85,12 @@ export function Stepper({ steps, currentStep, completedSteps, multiPhotoSteps = 
                   </span>
                 )}
                 {!isMultiPhoto && photoCount > 0 && (
-                  <span className="text-[10px] font-medium text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full">
+                  <span className="text-[10px] font-medium text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-full">
                     ✓
                   </span>
                 )}
                 {isCurrent && (
-                  <span className="text-xs font-medium text-amber-600 bg-amber-100 px-2 py-0.5 rounded-full">
+                  <span className="text-xs font-medium text-[var(--color-primary)] bg-[var(--color-primary-bg)] px-2 py-0.5 rounded-full">
                     Actual
                   </span>
                 )}

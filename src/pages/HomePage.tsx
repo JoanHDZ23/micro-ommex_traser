@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Database, Package, Settings } from 'lucide-react'
+import { ArrowDown, ArrowRight, ArrowUp, ClipboardList, Database, Inbox, Package, Settings } from 'lucide-react'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
+import { Button, Card, EmptyState, LoadingState, SectionHeader } from '../components/ui'
 import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 
@@ -36,27 +37,39 @@ const HOME_GUIDE: GuideStep[] = [
 export function HomePage() {
   const navigate = useNavigate()
   const [sheetsEnabled, setSheetsEnabled] = useState(false)
+  const [loadingFeatures, setLoadingFeatures] = useState(true)
 
   useEffect(() => {
     const companyId = getCompanyId()
-    if (!companyId) return
+    if (!companyId) {
+      setLoadingFeatures(false)
+      return
+    }
     void apiRequest<{ sheetsEnabled: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`)
       .then((r) => setSheetsEnabled(r.sheetsEnabled ?? false))
       .catch(() => { /* sin conexión: el acceso se muestra igual para poder probar */ })
+      .finally(() => setLoadingFeatures(false))
   }, [])
 
   // El acceso a "Documentos" se muestra siempre para poder probarlo; si la empresa
   // no tiene la función habilitada en el backend, la propia herramienta lo indicará.
   void sheetsEnabled
 
+  // Accesos secundarios (navegación de la app). `isAdmin()` controla el acceso a
+  // "Configuración" exactamente como antes.
+  const secondaryLinks: { icon: React.ComponentType<{ className?: string }>; label: string; to: string }[] = [
+    { icon: ClipboardList, label: 'Ver historial de operaciones', to: '/history' },
+    { icon: Package, label: 'Ver productos registrados', to: '/products' },
+    ...(isAdmin() ? [{ icon: Settings, label: 'Configuración', to: '/settings' }] : []),
+  ]
+
   return (
-    <div className="p-4 space-y-5">
+    <div className="p-4 space-y-6">
       <GuideModal storageKey="home" heading="Guía de uso" steps={HOME_GUIDE} />
-      {/* Quick actions */}
-      <section>
-        <h3 className="text-xs font-semibold text-[var(--color-text-3)] uppercase tracking-wide mb-3">
-          Iniciar operación
-        </h3>
+
+      {/* Quick actions — jerarquía primaria vs. secundaria mediante Card interactive */}
+      <section className="space-y-3">
+        <SectionHeader eyebrow="Iniciar operación" title="¿Qué quieres registrar?" />
         <div className="grid grid-cols-1 gap-3">
           <QuickAction
             icon={ArrowDown}
@@ -75,35 +88,9 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* History link */}
-      <button
-        onClick={() => navigate('/history')}
-        className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-surface)] rounded-[var(--radius)] border border-[var(--color-border)] hover:shadow-sm transition-shadow"
-      >
-        <div className="flex items-center gap-3">
-          <ClipboardList className="w-5 h-5 text-[var(--color-text-3)]" />
-          <span className="text-sm font-medium text-[var(--color-text)]">Ver historial de operaciones</span>
-        </div>
-        <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
-      </button>
-
-      {/* Products catalog link */}
-      <button
-        onClick={() => navigate('/products')}
-        className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-surface)] rounded-[var(--radius)] border border-[var(--color-border)] hover:shadow-sm transition-shadow"
-      >
-        <div className="flex items-center gap-3">
-          <Package className="w-5 h-5 text-[var(--color-text-3)]" />
-          <span className="text-sm font-medium text-[var(--color-text)]">Ver productos registrados</span>
-        </div>
-        <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
-      </button>
-
       {/* Documentos / Tablas importadas — visible siempre para poder probarlo */}
       <section className="space-y-3">
-        <h3 className="text-xs font-semibold text-[var(--color-text-3)] uppercase tracking-wide mb-1">
-          Base de datos
-        </h3>
+        <SectionHeader eyebrow="Base de datos" title="Tablas importadas" />
         <QuickAction
           icon={Database}
           title="Base de datos"
@@ -113,19 +100,35 @@ export function HomePage() {
         />
       </section>
 
-      {/* Settings link — solo para el administrador principal */}
-      {isAdmin() && (
-        <button
-          onClick={() => navigate('/settings')}
-          className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-surface)] rounded-[var(--radius)] border border-[var(--color-border)] hover:shadow-sm transition-shadow"
-        >
-          <div className="flex items-center gap-3">
-            <Settings className="w-5 h-5 text-[var(--color-text-3)]" />
-            <span className="text-sm font-medium text-[var(--color-text)]">Configuración</span>
+      {/* Accesos secundarios con estado de carga mientras se consultan las features */}
+      <section className="space-y-3">
+        <SectionHeader eyebrow="Accesos" title="Más opciones" />
+        {loadingFeatures ? (
+          <LoadingState label="Cargando accesos…" />
+        ) : secondaryLinks.length === 0 ? (
+          <EmptyState
+            icon={<Inbox className="w-10 h-10" />}
+            title="No hay accesos disponibles"
+            description="No tienes accesos adicionales habilitados."
+          />
+        ) : (
+          <div className="space-y-3">
+            {secondaryLinks.map((link) => (
+              <Button
+                key={link.to}
+                variant="secondary"
+                fullWidth
+                leftIcon={<link.icon className="w-5 h-5 text-[var(--color-text-3)]" />}
+                rightIcon={<ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />}
+                className="justify-between"
+                onClick={() => navigate(link.to)}
+              >
+                <span className="flex-1 text-left">{link.label}</span>
+              </Button>
+            ))}
           </div>
-          <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
-        </button>
-      )}
+        )}
+      </section>
     </div>
   )
 }
@@ -144,18 +147,21 @@ function QuickAction({
   onClick: () => void
 }) {
   return (
-    <button
-      onClick={onClick}
-      className="flex items-center gap-4 p-4 bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border)] hover:shadow-md transition-all text-left active:scale-[0.98]"
-    >
-      <div className={`w-11 h-11 rounded-[var(--radius)] flex items-center justify-center ${color}`}>
-        <Icon className="w-5 h-5" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-[var(--color-text)]">{title}</p>
-        <p className="text-xs text-[var(--color-text-2)] truncate">{description}</p>
-      </div>
-      <ArrowRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
-    </button>
+    <Card interactive padding="none" className="active:scale-[0.98]">
+      <button
+        type="button"
+        onClick={onClick}
+        className="w-full flex items-center gap-4 p-4 text-left focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:outline-none rounded-[var(--radius-lg)]"
+      >
+        <div className={`w-11 h-11 rounded-[var(--radius)] flex items-center justify-center ${color}`}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-[var(--color-text)]">{title}</p>
+          <p className="text-xs text-[var(--color-text-2)] truncate">{description}</p>
+        </div>
+        <ArrowRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
+      </button>
+    </Card>
   )
 }

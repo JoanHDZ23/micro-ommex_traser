@@ -5,6 +5,7 @@ import { apiRequest, type LabelData, type Operation, type OperationType, type Up
 import { CameraCapture } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
+import { Button, ErrorState, LoadingState } from '../components/ui'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
@@ -662,11 +663,11 @@ export function WizardPage() {
     void handleAddProduct(productName)
   }
 
-  if (loading) return <div className="flex-1 flex items-center justify-center p-8"><Loader2 className="w-8 h-8 animate-spin text-[var(--color-primary)]" /></div>
+  if (loading) return <div className="flex-1 flex items-center justify-center p-8"><LoadingState label="Cargando registro…" /></div>
   if (error || !operation) return (
     <div className="p-4 space-y-4">
-      <div className="flex items-start gap-2 p-4 bg-red-50 rounded-xl text-sm text-red-700"><AlertCircle className="w-5 h-5" /><p>{error ?? 'No encontrada.'}</p></div>
-      <button onClick={() => navigate('/')} className="text-sm text-[var(--color-primary)]">← Volver</button>
+      <ErrorState message={error ?? 'No encontrada.'} onRetry={() => void loadOperation()} />
+      <Button variant="ghost" size="sm" leftIcon={<ArrowLeft className="w-4 h-4" />} onClick={() => navigate('/')}>Volver</Button>
     </div>
   )
 
@@ -1152,9 +1153,9 @@ export function WizardPage() {
 
       </div>
 
-      {/* Bottom input bar */}
+      {/* Bottom input bar — sticky al fondo para que siga visible en móvil */}
       {!isCompleted && (
-        <div className="relative flex-shrink-0 z-20 bg-white px-2 py-2 border-t border-gray-200 shadow-lg">
+        <div className="relative flex-shrink-0 sticky bottom-0 z-20 bg-[var(--color-surface)] px-2 py-2 border-t border-[var(--color-border)] shadow-lg">
           {/* Plus menu popup */}
           {showPlusMenu && (
             <div className="absolute bottom-full left-2 mb-2 bg-white rounded-xl shadow-lg border border-gray-200 p-1 min-w-[180px]">
@@ -1280,7 +1281,7 @@ export function WizardPage() {
 
               {/* Escanear texto (OCR) → escribe lo que salga en la foto */}
               <label className="w-full py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium flex items-center justify-center gap-2 cursor-pointer">
-                {ocrRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                {ocrRunning ? <LoadingState inline size="sm" label="Leyendo texto…" /> : <Camera className="w-4 h-4" />}
                 {ocrRunning ? 'Leyendo texto...' : 'Escanear texto (foto → nombre)'}
                 <input type="file" accept="image/*" capture="environment" className="hidden" disabled={ocrRunning}
                   onChange={(e) => void handleScanLabelOCR(e, 'code')} />
@@ -1306,7 +1307,7 @@ export function WizardPage() {
               {lbProductCode.trim().length >= 2 && (
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-1.5 text-[10px] font-semibold text-gray-500 uppercase">
-                    {productSearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                    {productSearching ? <LoadingState inline size="sm" label="Buscando productos…" /> : <Search className="w-3 h-3" />}
                     {productSearching ? 'Buscando...' : productMatches.length > 0 ? `Productos existentes (${productMatches.length})` : 'Sin coincidencias'}
                   </div>
                   {productMatches.length > 0 && (
@@ -1334,7 +1335,7 @@ export function WizardPage() {
               <button onClick={() => { setShowAddProductModal(false); void handleAddProduct(lbProductCode) }}
                 disabled={!lbProductCode.trim() || lbAdding || codeDuplicated}
                 className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 flex items-center justify-center gap-2">
-                {lbAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                {lbAdding ? <LoadingState inline size="sm" label="Creando producto…" /> : <Plus className="w-4 h-4" />}
                 {existsInThisOperation ? 'Ya existe en esta operación' : duplicateInOtherOp ? 'Código ya usado en otra operación' : 'Crear producto (sin foto)'}
               </button>
               <p className="text-[10px] text-gray-400 text-center">
@@ -1424,7 +1425,7 @@ export function WizardPage() {
               </button>
               <button onClick={() => void sendCaptureTray()} disabled={traySending || captureTray.length === 0}
                 className="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-                {traySending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                {traySending ? <LoadingState inline size="sm" label="Enviando…" /> : <Send className="w-4 h-4" />}
                 Enviar {captureTray.length > 0 ? `(${captureTray.length})` : ''}
               </button>
             </div>
@@ -1460,8 +1461,8 @@ export function WizardPage() {
 
             {/* Verificación de existencia del código */}
             {scanCheck.loading ? (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 text-gray-500 text-xs">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Verificando si el código ya existe...
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 text-[var(--color-text-2)] text-xs">
+                <LoadingState inline size="sm" label="Verificando código…" /> Verificando si el código ya existe...
               </div>
             ) : scanCheck.match ? (
               <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-red-50 text-red-700 text-xs">
@@ -1492,7 +1493,7 @@ export function WizardPage() {
 
             {/* Escanear el texto de la foto y escribirlo en el nombre */}
             <label className="w-full py-2.5 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-sm font-medium flex items-center justify-center gap-2 cursor-pointer">
-              {ocrRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <QrCode className="w-4 h-4" />}
+              {ocrRunning ? <LoadingState inline size="sm" label="Leyendo texto…" /> : <QrCode className="w-4 h-4" />}
               {ocrRunning ? 'Leyendo texto...' : 'Escanear texto (foto → nombre)'}
               <input type="file" accept="image/*" capture="environment" className="hidden" disabled={ocrRunning}
                 onChange={(e) => void handleScanLabelOCR(e)} />
@@ -1542,9 +1543,7 @@ export function WizardPage() {
 
             {/* Results */}
             {linkSearching ? (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="w-5 h-5 animate-spin text-[var(--color-primary)]" />
-              </div>
+              <LoadingState label="Buscando operaciones…" />
             ) : linkResults.length === 0 ? (
               <p className="text-xs text-center text-[var(--color-text-3)] py-4">
                 No se encontraron operaciones en proceso

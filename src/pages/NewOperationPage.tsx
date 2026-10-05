@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Loader2, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { apiRequest, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
+import { Button, ErrorState, Input, SectionHeader } from '../components/ui'
 
 const NEW_OP_GUIDE: GuideStep[] = [
   {
@@ -43,6 +44,7 @@ export function NewOperationPage() {
   const [showPlate, setShowPlate] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<{ operatorName?: string; vehiclePlate?: string }>({})
   const [savedPlates, setSavedPlates] = useState<string[]>([])
   const companyId = getCompanyId()
 
@@ -56,9 +58,17 @@ export function NewOperationPage() {
 
   const canSubmit = form.operatorName.trim() && (showPlate ? form.vehiclePlate?.trim() : true)
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!canSubmit) return
+  const submitOperation = async () => {
+    // Validación por campo (preserva la regla de `canSubmit`).
+    const nextFieldErrors: { operatorName?: string; vehiclePlate?: string } = {}
+    if (!form.operatorName.trim()) {
+      nextFieldErrors.operatorName = 'El nombre del operador es obligatorio.'
+    }
+    if (showPlate && !form.vehiclePlate?.trim()) {
+      nextFieldErrors.vehiclePlate = 'Ingresa la placa del vehículo.'
+    }
+    setFieldErrors(nextFieldErrors)
+    if (Object.keys(nextFieldErrors).length > 0) return
 
     setLoading(true)
     setError(null)
@@ -84,25 +94,35 @@ export function NewOperationPage() {
     }
   }
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!canSubmit) {
+      // Mostrar mensajes de validación por campo sin enviar.
+      const nextFieldErrors: { operatorName?: string; vehiclePlate?: string } = {}
+      if (!form.operatorName.trim()) {
+        nextFieldErrors.operatorName = 'El nombre del operador es obligatorio.'
+      }
+      if (showPlate && !form.vehiclePlate?.trim()) {
+        nextFieldErrors.vehiclePlate = 'Ingresa la placa del vehículo.'
+      }
+      setFieldErrors(nextFieldErrors)
+      return
+    }
+    void submitOperation()
+  }
+
   return (
     <div className="p-4 space-y-4">
       <GuideModal storageKey="new_op" heading="Crear una operación" steps={NEW_OP_GUIDE} />
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => navigate('/')}
-          className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center"
-        >
-          <ArrowLeft className="w-5 h-5 text-gray-600" />
-        </button>
-        <div>
-          <h2 className="text-lg font-bold text-gray-900">Nueva Operación</h2>
-          <p className="text-xs text-gray-500">Completa los datos para iniciar el registro</p>
-        </div>
-      </div>
+      <SectionHeader
+        title="Nueva Operación"
+        subtitle="Completa los datos para iniciar el registro"
+        onBack={() => navigate('/')}
+      />
 
       {/* Form */}
-      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4">
         {/* Tipo de operación */}
         <fieldset className="space-y-2">
           <label className="text-sm font-medium text-gray-700">Tipo de operación</label>
@@ -125,17 +145,19 @@ export function NewOperationPage() {
         </fieldset>
 
         {/* Nombre del operador */}
-        <fieldset className="space-y-1.5">
-          <label className="text-sm font-medium text-gray-700">Nombre del operador *</label>
-          <input
-            type="text"
-            value={form.operatorName}
-            onChange={(e) => setForm((f) => ({ ...f, operatorName: e.target.value }))}
-            placeholder="Ej: Juan Pérez"
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]"
-            autoComplete="off"
-          />
-        </fieldset>
+        <Input
+          label="Nombre del operador *"
+          type="text"
+          value={form.operatorName}
+          onChange={(e) => {
+            const operatorName = e.target.value
+            setForm((f) => ({ ...f, operatorName }))
+            if (fieldErrors.operatorName) setFieldErrors((fe) => ({ ...fe, operatorName: undefined }))
+          }}
+          placeholder="Ej: Juan Pérez"
+          autoComplete="off"
+          error={fieldErrors.operatorName}
+        />
 
         {/* Toggle placa del vehículo */}
         <fieldset className="space-y-2">
@@ -155,15 +177,21 @@ export function NewOperationPage() {
 
           {showPlate && (
             <div className="space-y-2">
-              <input
+              <Input
                 type="text"
                 list="saved-plates-list"
+                aria-label="Placa del vehículo"
                 value={form.vehiclePlate ?? ''}
-                onChange={(e) => setForm((f) => ({ ...f, vehiclePlate: e.target.value.toUpperCase() }))}
+                onChange={(e) => {
+                  const vehiclePlate = e.target.value.toUpperCase()
+                  setForm((f) => ({ ...f, vehiclePlate }))
+                  if (fieldErrors.vehiclePlate) setFieldErrors((fe) => ({ ...fe, vehiclePlate: undefined }))
+                }}
                 placeholder="EJ: ABC123"
                 maxLength={10}
-                className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]"
+                className="uppercase"
                 autoComplete="off"
+                error={fieldErrors.vehiclePlate}
               />
               {/* Autocompletado: sugiere placas ya ingresadas mientras se escribe */}
               <datalist id="saved-plates-list">
@@ -201,27 +229,23 @@ export function NewOperationPage() {
 
         {/* Error */}
         {error && (
-          <div className="flex items-start gap-2 p-3 bg-red-50 rounded-xl text-sm text-red-700">
-            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-            <p>{error}</p>
-          </div>
+          <ErrorState
+            message={error}
+            onRetry={() => void submitOperation()}
+          />
         )}
 
         {/* Submit */}
-        <button
+        <Button
           type="submit"
-          disabled={!canSubmit || loading}
-          className="w-full py-3.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
+          variant="primary"
+          size="lg"
+          fullWidth
+          loading={loading}
+          disabled={!canSubmit}
         >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Creando...
-            </>
-          ) : (
-            'Iniciar registro'
-          )}
-        </button>
+          {loading ? 'Creando...' : 'Iniciar registro'}
+        </Button>
       </form>
     </div>
   )

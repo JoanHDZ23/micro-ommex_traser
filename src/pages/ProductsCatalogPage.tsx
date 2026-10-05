@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, ArrowRight, Camera, Check, Loader2, Package, Pencil, Plus, QrCode, Search, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowRight, Camera, Check, Loader2, Package, Pencil, Plus, QrCode, Search, Trash2, X } from 'lucide-react'
 import { apiRequest, type Operation } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { BarcodeScanner } from '../components/BarcodeScanner'
 import { compressImageToBase64 } from '../lib/image-compress'
+import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, SectionHeader } from '../components/ui'
 
 interface Assignment {
   trackingCode: string
@@ -31,12 +32,14 @@ export function ProductsCatalogPage() {
   const companyId = getCompanyId()
   const [products, setProducts] = useState<CatalogProduct[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(false)
   const [search, setSearch] = useState('')
   const [showRegister, setShowRegister] = useState(false)
   const [detailProduct, setDetailProduct] = useState<CatalogProduct | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
+    setError(false)
     try {
       const params = new URLSearchParams()
       if (companyId) params.set('companyId', companyId)
@@ -44,6 +47,7 @@ export function ProductsCatalogPage() {
       setProducts(res.products)
     } catch {
       setProducts([])
+      setError(true)
     } finally {
       setLoading(false)
     }
@@ -62,58 +66,69 @@ export function ProductsCatalogPage() {
   return (
     <div className="p-4 space-y-4">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <button onClick={() => navigate('/')} className="w-9 h-9 rounded-lg bg-gray-100 flex items-center justify-center">
-          <ArrowLeft className="w-5 h-5 text-gray-600" />
-        </button>
-        <div className="flex-1">
-          <h2 className="text-lg font-bold text-gray-900">Productos</h2>
-          <p className="text-xs text-gray-500">{products.length} producto(s) registrado(s)</p>
-        </div>
-        <button onClick={() => setShowRegister(true)}
-          className="h-9 px-3 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium flex items-center gap-1.5">
-          <Plus className="w-4 h-4" /> Registrar
-        </button>
-      </div>
+      <SectionHeader
+        title="Productos"
+        subtitle={`${products.length} producto(s) registrado(s)`}
+        onBack={() => navigate('/')}
+        actions={
+          <Button size="sm" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowRegister(true)}>
+            Registrar
+          </Button>
+        }
+      />
 
       {/* Search */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-3)]" />
         <input type="text" value={search} onChange={(e) => setSearch(e.target.value.toUpperCase())}
-          placeholder="BUSCAR POR CÓDIGO O NOMBRE..."
-          className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-gray-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
+          placeholder="BUSCAR POR CÓDIGO O NOMBRE..." aria-label="Buscar producto por código o nombre"
+          className="w-full pl-9 pr-3 py-2.5 rounded-[var(--radius)] border border-[var(--color-border)] text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
       </div>
 
       {/* List */}
       {loading ? (
-        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-primary)]" /></div>
+        <LoadingState label="Cargando productos…" />
+      ) : error ? (
+        <ErrorState message="No se pudo cargar el catálogo de productos." onRetry={() => void load()} />
       ) : filtered.length === 0 ? (
-        <div className="text-center py-12">
-          <Package className="w-10 h-10 mx-auto text-gray-300 mb-2" />
-          <p className="text-sm text-gray-500">No hay productos registrados</p>
-        </div>
+        <EmptyState
+          icon={<Package className="w-10 h-10" aria-hidden="true" />}
+          title="No hay productos registrados"
+          description={search.trim() ? 'Prueba con otro código o nombre.' : undefined}
+        />
       ) : (
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {filtered.map((p) => (
-            <button key={p.productCode} onClick={() => setDetailProduct(p)}
-              className="w-full bg-white rounded-xl border border-gray-100 shadow-sm flex items-center gap-3 p-3 text-left hover:shadow-md transition-shadow">
+            <Card
+              key={p.productCode}
+              as="article"
+              padding="sm"
+              interactive
+              role="button"
+              tabIndex={0}
+              onClick={() => setDetailProduct(p)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailProduct(p) }
+              }}
+              className="flex items-center gap-3 text-left focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:outline-none"
+            >
               <div className="w-10 h-10 rounded-lg bg-[var(--color-primary-bg)] flex items-center justify-center flex-shrink-0">
                 <Package className="w-5 h-5 text-[var(--color-primary)]" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-gray-900 truncate">{p.productCode}</p>
-                {p.descripcion && <p className="text-xs text-gray-500 truncate">{p.descripcion}</p>}
-                <p className="text-[10px] text-gray-400 mt-0.5">
+                <p className="text-sm font-semibold text-[var(--color-text)] truncate">{p.productCode}</p>
+                {p.descripcion && <p className="text-xs text-[var(--color-text-2)] truncate">{p.descripcion}</p>}
+                <p className="text-[10px] text-[var(--color-text-3)] mt-0.5">
                   {p.registrosCount === 0
                     ? 'Solo en catálogo · sin registro'
                     : `${p.registrosCount} registro(s) · ${p.totalPhotos} foto(s)`}
                 </p>
               </div>
               {p.registrosCount === 0 && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 flex-shrink-0">catálogo</span>
+                <Badge tone="neutral">catálogo</Badge>
               )}
-              <ArrowRight className="w-4 h-4 text-gray-300 flex-shrink-0" />
-            </button>
+              <ArrowRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
+            </Card>
           ))}
         </div>
       )}

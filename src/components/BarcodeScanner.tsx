@@ -1,13 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
+import { LoadingState, ErrorState } from './ui'
 
 /**
  * Escáner de código de barras. Usa el BarcodeDetector nativo (Chrome Android)
  * cuando está disponible, y zxing como fallback (iOS y navegadores sin soporte).
  * Permite también ingresar el código manualmente.
+ *
+ * Presentación: conserva el overlay a pantalla completa (`camera-overlay`) para
+ * no alterar el layout del video ni la integración `@zxing`/`BarcodeDetector`.
+ * Se añade semántica accesible (`role="dialog"`, `aria-modal`, `aria-label`),
+ * cierre con `Escape` y `aria-label` en cada control. Mientras el escáner se
+ * inicializa se muestra `LoadingState`; si la cámara falla/deniega, `ErrorState`.
  */
 export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => void; onClose: () => void }) {
   const [error, setError] = useState<string | null>(null)
+  const [initializing, setInitializing] = useState(true)
   const [scanning, setScanning] = useState(true)
   const [torchOn, setTorchOn] = useState(false)
   const [manualInput, setManualInput] = useState(false)
@@ -43,6 +51,7 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return true }
         streamRef.current = stream
         if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play() }
+        if (!cancelled) setInitializing(false)
 
         const scanLoop = async () => {
           if (cancelled || !videoRef.current || videoRef.current.readyState < 2) {
@@ -102,8 +111,12 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
         controlsRef.current = controls
         const s = videoRef.current?.srcObject as MediaStream | null
         if (s) streamRef.current = s
+        if (!cancelled) setInitializing(false)
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'No se pudo acceder a la cámara')
+        if (!cancelled) {
+          setInitializing(false)
+          setError(err instanceof Error ? err.message : 'No se pudo acceder a la cámara')
+        }
       }
     }
 
@@ -124,27 +137,50 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
 
   const handleClose = () => { cancelAnimationFrame(animRef.current); controlsRef.current?.stop(); streamRef.current?.getTracks().forEach((t) => t.stop()); onClose() }
 
+  // Cierre con Escape (semántica de diálogo accesible sin alterar el layout del video).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') handleClose() }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const showManualFallback = () => { setError(null); setManualInput(true) }
+
   return (
-    <div className="camera-overlay">
+    <div className="camera-overlay" role="dialog" aria-modal="true" aria-label="Escáner de código de barras">
       <div className="absolute top-0 left-0 right-0 z-10 p-4 bg-gradient-to-b from-black/60 to-transparent flex items-center justify-between">
         <div className="text-white">
           <p className="text-sm font-semibold">Escanear código de barras</p>
           <p className="text-xs opacity-70">{scanning ? 'Apunta al código' : '✓ Detectado'}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => void toggleTorch()} className={`w-9 h-9 rounded-full flex items-center justify-center ${torchOn ? 'bg-yellow-400 text-black' : 'bg-white/20 text-white'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.4V17H10v-2.6A4 4 0 0 1 12 7Z"/></svg>
+          <button
+            onClick={() => void toggleTorch()}
+            aria-label="Linterna"
+            aria-pressed={torchOn}
+            className={`w-9 h-9 rounded-full flex items-center justify-center ${torchOn ? 'bg-yellow-400 text-black' : 'bg-white/20 text-white'}`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2v1"/><path d="M12 7a4 4 0 0 1 4 4c0 1.5-.8 2.8-2 3.4V17H10v-2.6A4 4 0 0 1 12 7Z"/></svg>
           </button>
-          <button onClick={handleClose} className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center"><X className="w-5 h-5 text-white" /></button>
+          <button onClick={handleClose} aria-label="Cerrar" className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center"><X className="w-5 h-5 text-white" aria-hidden="true" /></button>
         </div>
       </div>
       {error ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-6 text-white text-center text-sm gap-4">
-          <p>{error}</p>
-          <button onClick={() => setManualInput(true)} className="px-4 py-2 bg-white/20 rounded-lg text-sm">Ingresar manualmente</button>
+        <div className="flex-1 flex flex-col items-center justify-center p-6">
+          <div className="w-full max-w-sm">
+            <ErrorState message={error} onRetry={showManualFallback} retryLabel="Ingresar manualmente" />
+          </div>
         </div>
       ) : (
-        <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover flex-1" />
+        <>
+          <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover flex-1" />
+          {initializing && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/70">
+              <LoadingState label="Iniciando escáner…" />
+            </div>
+          )}
+        </>
       )}
       {!manualInput && !error && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -157,15 +193,17 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
         {manualInput ? (
           <div className="flex gap-2">
             <input type="text" value={manualCode} onChange={(e) => setManualCode(e.target.value.toUpperCase())} placeholder="CÓDIGO MANUAL..."
+              aria-label="Código manual"
               className="flex-1 px-3 py-2.5 rounded-lg bg-white text-sm text-black uppercase focus:outline-none"
               autoFocus onKeyDown={(e) => { if (e.key === 'Enter' && manualCode.trim()) { handleClose(); onResult(manualCode.trim()) } }} />
             <button onClick={() => { if (manualCode.trim()) { handleClose(); onResult(manualCode.trim()) } }}
+              aria-label="Confirmar código manual"
               className="px-4 py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium">OK</button>
           </div>
         ) : (
           <>
             <p className="text-white text-xs text-center opacity-80">Coloca el código dentro del recuadro</p>
-            <button onClick={() => setManualInput(true)} className="w-full py-2.5 rounded-lg bg-white/15 text-white text-sm font-medium border border-white/30 backdrop-blur-sm">Ingresar manualmente</button>
+            <button onClick={() => setManualInput(true)} aria-label="Ingresar manualmente" className="w-full py-2.5 rounded-lg bg-white/15 text-white text-sm font-medium border border-white/30 backdrop-blur-sm">Ingresar manualmente</button>
           </>
         )}
       </div>

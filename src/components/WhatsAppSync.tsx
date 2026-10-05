@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  MessageCircle, Loader2, QrCode, CheckCircle2, LogOut, Save, RefreshCw, Link2,
+  MessageCircle, QrCode, CheckCircle2, LogOut, Save, RefreshCw, Link2,
 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId } from '../lib/context'
+import { Card, Button, Badge, LoadingState, ErrorState, waStatusTone } from './ui'
 
 type WaStatus = 'disconnected' | 'connecting' | 'qr' | 'open'
 interface StatusResp { status: WaStatus; hasQr: boolean; error: string | null }
@@ -133,13 +134,15 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
   }
 
   return (
-    <section className="space-y-3 p-4 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)]">
+    <Card as="section" className="space-y-3">
       <div className="flex items-center gap-2">
         <MessageCircle className="w-5 h-5 text-green-600" />
         <h3 className="text-sm font-semibold text-[var(--color-text)]">WhatsApp</h3>
         {status === 'open' && (
-          <span className="ml-auto text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" /> Conectado
+          <span className="ml-auto">
+            <Badge tone={waStatusTone(status)} icon={<CheckCircle2 className="w-3 h-3" />}>
+              Conectado
+            </Badge>
           </span>
         )}
       </div>
@@ -155,16 +158,24 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
           <span>La función de WhatsApp no está habilitada en el servidor. Contacta al administrador.</span>
         </div>
       )}
-      {error && <div className="p-2.5 rounded-lg bg-red-50 text-red-700 text-xs">{error}</div>}
+      {error && <ErrorState message={error} onRetry={() => void refreshStatus()} />}
 
       {/* Sincronización */}
       {!unavailable && status !== 'open' && (
         !qr ? (
-          <button onClick={() => void connect()} disabled={loading}
-            className="w-full py-2.5 rounded-xl bg-green-600 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.98]">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <QrCode className="w-4 h-4" />}
-            Sincronizar WhatsApp
-          </button>
+          loading ? (
+            <LoadingState label="Generando QR…" />
+          ) : (
+            <Button
+              onClick={() => void connect()}
+              disabled={loading}
+              variant="success"
+              fullWidth
+              leftIcon={<QrCode className="w-4 h-4" />}
+            >
+              Sincronizar WhatsApp
+            </Button>
+          )
         ) : (
           <div className="flex flex-col items-center gap-2 p-3 rounded-xl bg-gray-50 border border-[var(--color-border)]">
             <p className="text-xs text-[var(--color-text-2)] text-center">
@@ -198,11 +209,16 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
                 placeholder="https://chat.whatsapp.com/XXXXXXXX"
                 className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
               />
-              <button onClick={() => void resolveGroupLink()} disabled={resolvingGroup || !groupLink.trim()}
-                className="px-3 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium disabled:opacity-50 flex items-center gap-1.5 flex-shrink-0">
-                {resolvingGroup ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />}
+              <Button
+                onClick={() => void resolveGroupLink()}
+                disabled={resolvingGroup || !groupLink.trim()}
+                loading={resolvingGroup}
+                variant="success"
+                className="flex-shrink-0"
+                leftIcon={<Link2 className="w-4 h-4" />}
+              >
                 Traer ID
-              </button>
+              </Button>
             </div>
             <p className="text-[10px] text-[var(--color-text-3)]">
               Pega el enlace de invitación del grupo y pulsa "Traer ID": se completa automáticamente el destino con el ID del grupo.
@@ -237,16 +253,26 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
 
           <div className="flex items-center gap-2">
             {!syncOnly && (
-              <button onClick={() => void saveDestino()} disabled={savingTo}
-                className="flex-1 py-2.5 rounded-xl bg-green-600 text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-                {savingTo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              <Button
+                onClick={() => void saveDestino()}
+                disabled={savingTo}
+                loading={savingTo}
+                variant="success"
+                fullWidth
+                leftIcon={<Save className="w-4 h-4" />}
+              >
                 Guardar destino
-              </button>
+              </Button>
             )}
-            <button onClick={() => void logout()} disabled={loading}
-              className={`${syncOnly ? 'w-full justify-center' : ''} px-3 py-2.5 rounded-xl border border-[var(--color-border)] text-sm text-red-600 hover:bg-red-50 flex items-center gap-1.5`}>
-              <LogOut className="w-4 h-4" /> Desvincular
-            </button>
+            <Button
+              onClick={() => void logout()}
+              disabled={loading}
+              variant="danger"
+              fullWidth={syncOnly}
+              leftIcon={<LogOut className="w-4 h-4" />}
+            >
+              Desvincular
+            </Button>
           </div>
         </>
       )}
@@ -262,10 +288,15 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
               placeholder="573001234567 o xxxx@g.us"
               className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
             />
-            <button onClick={() => void saveDestino()} disabled={savingTo}
-              className="px-3 py-2.5 rounded-lg bg-green-600 text-white text-sm font-medium disabled:opacity-50 flex items-center gap-1.5">
-              {savingTo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Guardar
-            </button>
+            <Button
+              onClick={() => void saveDestino()}
+              disabled={savingTo}
+              loading={savingTo}
+              variant="success"
+              leftIcon={<Save className="w-4 h-4" />}
+            >
+              Guardar
+            </Button>
           </div>
           {savedMsg && (
             <div className={`p-2 rounded-lg text-xs ${savedMsg.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
@@ -274,6 +305,6 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
           )}
         </div>
       )}
-    </section>
+    </Card>
   )
 }
