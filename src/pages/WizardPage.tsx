@@ -292,28 +292,59 @@ export function WizardPage() {
     setTrayMessage('')
   }
 
-  // Envía todas las fotos de la bandeja; el mensaje se adjunta a la primera.
-  // Si son varias, comparten un groupId para mostrarse/enviarse como un álbum.
+  // Envía todas las fotos de la bandeja. Una sola foto → flujo normal.
+  // Varias → UNA sola petición batch con el mismo groupId, para que se guarden
+  // TODAS juntas (sin condición de carrera) y se muestren/envíen como un álbum.
   const sendCaptureTray = async () => {
     if (captureTray.length === 0) { cancelCaptureTray(); return }
+    if (!trackingCode) return
     setTraySending(true)
     const message = trayMessage.trim()
-    const groupId = captureTray.length > 1
-      ? `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      : undefined
+    const photos = [...captureTray]
+
+    // Cerramos el modal de inmediato; la subida sigue en segundo plano.
+    setShowCaptureTray(false)
+    setCaptureTray([])
+    setTrayMessage('')
+
     try {
-      for (let i = 0; i < captureTray.length; i++) {
-        const base64 = captureTray[i].split(',')[1] ?? ''
-        await uploadSinglePhoto(base64, i === 0 ? message : '', false, undefined, groupId)
+      if (photos.length === 1) {
+        const base64 = photos[0].split(',')[1] ?? ''
+        await uploadSinglePhoto(base64, message, false)
+        setFeedback('✓ Foto enviada')
+      } else {
+        const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const clientTimestamp = new Date().toISOString()
+        // Cache local (vista instantánea) de cada foto.
+        const cachedIds: string[] = []
+        for (let i = 0; i < photos.length; i++) {
+          const base64 = photos[i].split(',')[1] ?? ''
+          const cached = await cachePhoto({ trackingCode, base64, comment: i === 0 ? message : '' })
+          setLocalPhotos((prev) => [...prev, cached])
+          cachedIds.push(cached.id)
+        }
+        setFeedback(`⏳ Subiendo ${photos.length} fotos...`)
+        // UNA sola petición con todas las fotos (un solo $push en el backend).
+        await apiRequest<{ count: number }>('/photos/upload-batch', {
+          method: 'POST',
+          body: {
+            trackingCode,
+            groupId,
+            comment: message,
+            clientTimestamp,
+            mimeType: 'image/jpeg',
+            photos: photos.map((p) => ({ base64Image: p.split(',')[1] ?? '' })),
+          },
+        })
+        // Limpiar cache local y recargar desde el servidor.
+        for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
+        await loadOperation()
+        setFeedback(`✓ ${photos.length} fotos enviadas`)
       }
-      setFeedback(captureTray.length > 1 ? `✓ ${captureTray.length} fotos enviadas` : '✓ Foto enviada')
-    } catch {
-      setFeedback('Error al enviar alguna foto')
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
     } finally {
       setTraySending(false)
-      setShowCaptureTray(false)
-      setCaptureTray([])
-      setTrayMessage('')
     }
   }
 
