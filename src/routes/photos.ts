@@ -71,7 +71,7 @@ photosRouter.patch('/:trackingCode/:photoIndex', async (req, res) => {
  * POST /api/photos/upload
  */
 photosRouter.post('/upload', async (req, res) => {
-  const { trackingCode, stepIndex, base64Image, mimeType, productCode, comment, clientTimestamp } = req.body ?? {}
+  const { trackingCode, stepIndex, base64Image, mimeType, productCode, comment, clientTimestamp, groupId } = req.body ?? {}
 
   if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
   if (stepIndex === undefined || stepIndex === null) { res.status(400).json({ message: 'stepIndex es requerido.' }); return }
@@ -137,6 +137,7 @@ photosRouter.post('/upload', async (req, res) => {
       ...(productCode?.trim() ? { productCode: productCode.trim() } : {}),
       ...(isMultiPhotoStep ? { photoIndex } : {}),
       ...(comment?.trim() ? { comment: comment.trim() } : {}),
+      ...(groupId ? { groupId: String(groupId) } : {}),
       photoType: 'proceso',
       timestamp: normalizeClientTimestamp(clientTimestamp),
     }

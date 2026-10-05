@@ -53,6 +53,8 @@ export interface PhotoRecord {
   comment?: string
   photoType?: PhotoType
   timestamp: string
+  /** Agrupa fotos tomadas juntas (una misma tanda) para mostrarlas como un álbum. */
+  groupId?: string
 }
 
 // ── Datos de etiqueta ───────────────────────────────────────────────────

@@ -187,20 +187,48 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
     await delay(PAUSE)
 
     // 2. Fotos generales y NOTAS de texto, en el orden del registro.
-    const generalItems = (op.photos as Photo[]) ?? []
-    for (const item of generalItems) {
-      if (isSendable(item)) {
-        await sendImage(to, item.driveUrl as string, item.comment || item.stepName || '', companyId)
-        sent++
-        await delay(PAUSE)
-      } else if (isNote(item)) {
+    //    Las fotos tomadas juntas (mismo groupId) se envían como UN solo álbum.
+    const generalItems = (op.photos as Array<Photo & { groupId?: string }>) ?? []
+    let i = 0
+    while (i < generalItems.length) {
+      const item = generalItems[i]
+
+      if (isNote(item)) {
         // Mensaje escrito del registro (nota de solo texto).
         const hora = item.timestamp ? fmt(item.timestamp) : ''
         const txt = hora ? `📝 ${item.comment}\n🕒 ${hora}` : `📝 ${item.comment}`
         await sendText(to, txt, companyId)
         sent++
         await delay(PAUSE)
+        i++
+        continue
       }
+
+      if (!isSendable(item)) { i++; continue }
+
+      // Agrupar consecutivos con el mismo groupId (si lo tienen) en un álbum.
+      const gid = item.groupId
+      const group: Array<Photo & { groupId?: string }> = [item]
+      if (gid) {
+        let j = i + 1
+        while (j < generalItems.length && generalItems[j].groupId === gid && isSendable(generalItems[j])) {
+          group.push(generalItems[j]); j++
+        }
+      }
+
+      if (group.length > 1) {
+        // Caption: el comentario de la primera foto del grupo (si hay).
+        const caption = (group[0].comment ?? '').trim() || undefined
+        const urls = group.map((p) => p.driveUrl as string)
+        const r = await sendAlbum(to, urls, caption, companyId)
+        sent += r.count
+        i += group.length
+      } else {
+        await sendImage(to, item.driveUrl as string, item.comment || item.stepName || '', companyId)
+        sent++
+        i++
+      }
+      await delay(PAUSE)
     }
 
     // 3. Por cada producto: enviar sus fotos como un ÁLBUM (galería agrupada)
