@@ -173,16 +173,19 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
     // Una nota es un mensaje de solo texto (sin imagen) con comentario.
     const isNote = (ph: Photo) => !isSendable(ph) && Boolean((ph.comment ?? '').trim())
 
-    // Fecha en hora de Colombia (el servidor corre en UTC). Usa la hora de
-    // finalización si existe; si no, la de creación.
+    // Fechas en hora de Colombia (el servidor corre en UTC).
     const fmt = (iso?: string) =>
       iso ? new Date(iso).toLocaleString('es-CO', { timeZone: 'America/Bogota' }) : ''
-    const fecha = fmt((op.completedAt as string) || (op.createdAt as string))
+    const inicio = fmt(op.createdAt as string)
+    const fin = op.completedAt ? fmt(op.completedAt as string) : ''
 
     let sent = 0
 
-    // 1. Encabezado
-    const header = `📋 *Registro ${op.trackingCode}*\n${op.operationType}${op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}\n👤 ${op.operatorName}\n🕒 ${fecha}`
+    // 1. Encabezado — muestra la hora de inicio y, si está completado, la de finalización.
+    const horaLinea = fin
+      ? `🕒 Inicio: ${inicio}\n✅ Finalizado: ${fin}`
+      : `🕒 ${inicio}`
+    const header = `📋 *Registro ${op.trackingCode}*\n${op.operationType}${op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}\n👤 ${op.operatorName}\n${horaLinea}`
     await sendText(to, header, companyId); sent++
     await delay(PAUSE)
 
