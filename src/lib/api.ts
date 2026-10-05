@@ -42,6 +42,8 @@ export interface PhotoRecord {
   comment?: string
   photoType?: 'proceso' | 'producto'
   timestamp: string
+  /** Agrupa fotos tomadas juntas (una misma tanda) para mostrarlas como un álbum. */
+  groupId?: string
 }
 
 export interface LabelData {

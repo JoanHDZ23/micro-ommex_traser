@@ -96,6 +96,8 @@ export function WizardPage() {
   // Photo editing
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
   const [editComment, setEditComment] = useState('')
+  // Grupo de fotos (álbum) expandido para ver/borrar fotos individuales.
+  const [expandedPhotoGroup, setExpandedPhotoGroup] = useState<string | null>(null)
 
   // Plate editing removed — handled in header
   const [chatMessage, setChatMessage] = useState('')
@@ -196,7 +198,7 @@ export function WizardPage() {
   const lbFileInputRef = useRef<HTMLInputElement>(null)
 
   /** Sube una sola foto: cachea local y sube a Drive en background */
-  const uploadSinglePhoto = async (base64: string, comment: string, isProduct: boolean, productCodeArg?: string) => {
+  const uploadSinglePhoto = async (base64: string, comment: string, isProduct: boolean, productCodeArg?: string, groupId?: string) => {
     if (!base64 || !trackingCode) return
     const productCode = isProduct ? productCodeArg ?? activeLbProduct ?? undefined : undefined
 
@@ -218,7 +220,7 @@ export function WizardPage() {
         } else {
           await apiRequest<UploadPhotoResponse>('/photos/upload', {
             method: 'POST',
-            body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp },
+            body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp, groupId },
           })
         }
         await markAsUploaded(cached.id)
@@ -291,14 +293,18 @@ export function WizardPage() {
   }
 
   // Envía todas las fotos de la bandeja; el mensaje se adjunta a la primera.
+  // Si son varias, comparten un groupId para mostrarse/enviarse como un álbum.
   const sendCaptureTray = async () => {
     if (captureTray.length === 0) { cancelCaptureTray(); return }
     setTraySending(true)
     const message = trayMessage.trim()
+    const groupId = captureTray.length > 1
+      ? `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      : undefined
     try {
       for (let i = 0; i < captureTray.length; i++) {
         const base64 = captureTray[i].split(',')[1] ?? ''
-        await uploadSinglePhoto(base64, i === 0 ? message : '', false)
+        await uploadSinglePhoto(base64, i === 0 ? message : '', false, undefined, groupId)
       }
       setFeedback(captureTray.length > 1 ? `✓ ${captureTray.length} fotos enviadas` : '✓ Foto enviada')
     } catch {
@@ -725,64 +731,141 @@ export function WizardPage() {
               </button>
             </div>
             <div className="space-y-2 rounded-xl p-3">
-              {operation.photos.map((photo, i) => (
-                <div key={i} className="flex justify-end">
-                  <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
-                    {/* Photo thumbnail — solo si es imagen real (no nota ni pendiente) */}
-                    {photoSrc(photo, 300) && (
-                      <img
-                        src={photoSrc(photo, 300)!}
-                        alt={photo.stepName}
-                        className="w-full rounded-md mb-1.5 max-h-48 object-cover"
-                        loading="lazy"
-                        onError={(e) => {
-                          const img = e.target as HTMLImageElement
-                          // Fallback a thumbnail de Drive solo si es una foto de Drive.
-                          const fb = photo.fileId && !photo.fileId.includes('/') && !directUrl(photo)
-                            ? `https://drive.google.com/thumbnail?id=${photo.fileId}&sz=w300` : ''
-                          if (fb && img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
-                        }}
-                      />
-                    )}
-                    {/* Comment/text */}
-                    {editingPhotoIdx === i ? (
-                      <div className="flex items-center gap-1">
-                        <input type="text" value={editComment} onChange={(e) => setEditComment(e.target.value)}
-                          className="flex-1 text-xs px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none"
-                          autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void handleEditComment(i); if (e.key === 'Escape') setEditingPhotoIdx(null) }} />
-                        <button onClick={() => void handleEditComment(i)} className="text-emerald-600"><CheckCircle2 className="w-3.5 h-3.5" /></button>
+              {(() => {
+                // Agrupa fotos consecutivas con el mismo groupId (una misma tanda).
+                // Cada entrada guarda el índice real en operation.photos para editar/borrar.
+                type Item = { photo: typeof operation.photos[number]; idx: number }
+                const groups: Item[][] = []
+                operation.photos.forEach((photo, idx) => {
+                  const prev = groups[groups.length - 1]
+                  const gid = photo.groupId
+                  if (gid && prev && prev[0].photo.groupId === gid) {
+                    prev.push({ photo, idx })
+                  } else {
+                    groups.push([{ photo, idx }])
+                  }
+                })
+
+                return groups.map((group, gi) => {
+                  // Grupo de una sola foto → tarjeta individual (comportamiento previo).
+                  if (group.length === 1) {
+                    const { photo, idx: i } = group[0]
+                    return (
+                      <div key={`s-${i}`} className="flex justify-end">
+                        <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
+                          {photoSrc(photo, 300) && (
+                            <img
+                              src={photoSrc(photo, 300)!}
+                              alt={photo.stepName}
+                              className="w-full rounded-md mb-1.5 max-h-48 object-cover"
+                              loading="lazy"
+                              onError={(e) => {
+                                const img = e.target as HTMLImageElement
+                                const fb = photo.fileId && !photo.fileId.includes('/') && !directUrl(photo)
+                                  ? `https://drive.google.com/thumbnail?id=${photo.fileId}&sz=w300` : ''
+                                if (fb && img.src !== fb) { img.src = fb } else { img.style.display = 'none' }
+                              }}
+                            />
+                          )}
+                          {editingPhotoIdx === i ? (
+                            <div className="flex items-center gap-1">
+                              <input type="text" value={editComment} onChange={(e) => setEditComment(e.target.value)}
+                                className="flex-1 text-xs px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none"
+                                autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void handleEditComment(i); if (e.key === 'Escape') setEditingPhotoIdx(null) }} />
+                              <button onClick={() => void handleEditComment(i)} className="text-emerald-600"><CheckCircle2 className="w-3.5 h-3.5" /></button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-800">{photo.comment || photo.stepName}</span>
+                          )}
+                          {photo.productCode && <span className="text-[9px] text-gray-400 block">📦 {photo.productCode}</span>}
+                          <div className="flex items-center justify-end gap-1 mt-0.5">
+                            <span className="text-[9px] text-gray-500">
+                              {new Date(photo.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                            {photo.fileId === 'pending' ? (
+                              <span className="text-[9px] text-gray-400">🕐</span>
+                            ) : (
+                              <CheckCircle2 className="w-2.5 h-2.5 text-[var(--color-primary)]" />
+                            )}
+                          </div>
+                          {!isCompleted && editingPhotoIdx !== i && (
+                            <div className="absolute -top-1 -right-1 flex gap-0.5">
+                              <button onClick={() => { setEditingPhotoIdx(i); setEditComment(photo.comment ?? '') }}
+                                className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center">
+                                <Pencil className="w-2.5 h-2.5 text-gray-500" />
+                              </button>
+                              <button onClick={() => void handleDeletePhoto(i)}
+                                className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center">
+                                <Trash2 className="w-2.5 h-2.5 text-red-400" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    ) : (
-                      <span className="text-xs text-gray-800">{photo.comment || photo.stepName}</span>
-                    )}
-                    {photo.productCode && <span className="text-[9px] text-gray-400 block">📦 {photo.productCode}</span>}
-                    {/* Time + actions */}
-                    <div className="flex items-center justify-end gap-1 mt-0.5">
-                      <span className="text-[9px] text-gray-500">
-                        {new Date(photo.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                      {photo.fileId === 'pending' ? (
-                        <span className="text-[9px] text-gray-400">🕐</span>
-                      ) : (
-                        <CheckCircle2 className="w-2.5 h-2.5 text-[var(--color-primary)]" />
-                      )}
+                    )
+                  }
+
+                  // Grupo de varias fotos → álbum: muestra SOLO la primera + "+N".
+                  const gid = group[0].photo.groupId as string
+                  const first = group[0].photo
+                  const extra = group.length - 1
+                  const isExpanded = expandedPhotoGroup === gid
+                  const groupComment = group.map((g) => (g.photo.comment ?? '').trim()).find(Boolean) ?? ''
+                  return (
+                    <div key={`g-${gi}`} className="flex justify-end">
+                      <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
+                        {!isExpanded ? (
+                          <button type="button" onClick={() => setExpandedPhotoGroup(gid)}
+                            className="relative block w-full">
+                            {photoSrc(first, 400) && (
+                              <img src={photoSrc(first, 400)!} alt=""
+                                className="w-full rounded-md mb-1.5 max-h-56 object-cover"
+                                loading="lazy"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                            )}
+                            <span className="absolute top-1.5 left-1.5 text-[10px] bg-black/60 text-white px-1.5 py-0.5 rounded-full">
+                              🖼 {group.length} fotos
+                            </span>
+                            <span className="absolute inset-x-0 bottom-2 flex items-center justify-center">
+                              <span className="text-xs bg-black/55 text-white px-2 py-1 rounded-full">+{extra} más · ver todas</span>
+                            </span>
+                          </button>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-1 mb-1.5">
+                            {group.map(({ photo, idx }) => (
+                              <div key={idx} className="relative aspect-square rounded overflow-hidden bg-gray-200">
+                                {photoSrc(photo, 200) ? (
+                                  <img src={photoSrc(photo, 200)!} className="w-full h-full object-cover" loading="lazy"
+                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-gray-400 text-[9px]">🕐</div>
+                                )}
+                                {!isCompleted && (
+                                  <button onClick={() => void handleDeletePhoto(idx)}
+                                    className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
+                                    <X className="w-3 h-3 text-white" />
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {groupComment && <span className="text-xs text-gray-800 block">{groupComment}</span>}
+                        <div className="flex items-center justify-between gap-1 mt-0.5">
+                          <button onClick={() => setExpandedPhotoGroup(isExpanded ? null : gid)}
+                            className="text-[10px] font-medium text-[var(--color-primary)]">
+                            {isExpanded ? 'Ocultar' : `Ver ${group.length} fotos`}
+                          </button>
+                          <span className="text-[9px] text-gray-500">
+                            {new Date(first.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    {/* Context actions on tap */}
-                    {!isCompleted && editingPhotoIdx !== i && (
-                      <div className="absolute -top-1 -right-1 flex gap-0.5">
-                        <button onClick={() => { setEditingPhotoIdx(i); setEditComment(photo.comment ?? '') }}
-                          className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center">
-                          <Pencil className="w-2.5 h-2.5 text-gray-500" />
-                        </button>
-                        <button onClick={() => void handleDeletePhoto(i)}
-                          className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center">
-                          <Trash2 className="w-2.5 h-2.5 text-red-400" />
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+                  )
+                })
+              })()}
             </div>
           </section>
         )}
@@ -1092,18 +1175,6 @@ export function WizardPage() {
           </section>
         )}
 
-        {/* Sync button — siempre visible */}
-        {operation && (
-          <button onClick={async () => {
-            try {
-              const r = await apiRequest<{ updated: number }>(`/photos/sync/${trackingCode}`, { method: 'POST' })
-              setFeedback(`✓ ${r.updated} foto(s) sincronizada(s)`)
-              await loadOperation()
-            } catch (err) { setFeedback(err instanceof Error ? err.message : 'Error al sincronizar') }
-          }} className="w-full py-2 rounded-lg border border-gray-200 text-[var(--color-primary)] font-medium text-xs flex items-center justify-center gap-2">
-            🔄 Sincronizar con Drive
-          </button>
-        )}
       </div>
 
       {/* Bottom input bar */}
