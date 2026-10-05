@@ -160,6 +160,95 @@ photosRouter.post('/upload', async (req, res) => {
 })
 
 /**
+ * POST /api/photos/upload-batch
+ * Sube VARIAS fotos de una misma tanda (groupId) y las guarda con UN solo $push
+ * ($each), evitando la condición de carrera que perdía fotos al subirlas en
+ * paralelo. Body: { trackingCode, groupId?, comment?, clientTimestamp?, mimeType?,
+ * photos: [{ base64Image, comment?, clientTimestamp? }] }
+ */
+photosRouter.post('/upload-batch', async (req, res) => {
+  const { trackingCode, groupId, comment, clientTimestamp, mimeType, photos } = req.body ?? {}
+
+  if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
+  if (!Array.isArray(photos) || photos.length === 0) { res.status(400).json({ message: 'photos (arreglo) es requerido.' }); return }
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const opType = operation.operationType as OperationType
+    const steps = getStepsForType(opType)
+    const idx = 0
+    const stepName = steps[idx]!
+    const cleanStepName = stepName.replace(/[^a-zA-Z0-9]/g, '_')
+
+    const subfolderName = operation.vehiclePlate
+      ? `${operation.operationType}_${operation.vehiclePlate}`
+      : `${operation.operationType}_${trackingCode}`
+
+    const existingPhotos = (operation.photos as PhotoRecord[]) ?? []
+    let photoIndex = existingPhotos.filter((p) => p.stepIndex === idx).length
+
+    const records: PhotoRecord[] = []
+    const errors: string[] = []
+
+    // Subir en SECUENCIA y acumular; un solo $push al final.
+    for (let i = 0; i < photos.length; i++) {
+      const item = photos[i] ?? {}
+      const base64Image = item.base64Image
+      if (!base64Image) { errors.push(`Foto ${i + 1}: sin imagen`); continue }
+
+      const fileName = `${trackingCode}_paso${idx + 1}_${cleanStepName}_${photoIndex + 1}.jpg`
+      const driveResult = await uploadToDrive({
+        base64Image,
+        fileName,
+        mimeType: mimeType || 'image/jpeg',
+        subfolderName,
+        companyId: operation.companyId as string | undefined,
+      })
+
+      if (driveResult.status === 'error' && (driveResult.message ?? '').includes('no configurado')) {
+        res.status(502).json({ message: 'Almacenamiento no configurado en el servidor (R2 o GitHub).' }); return
+      }
+
+      const fileId = driveResult.fileId || 'pending'
+      const driveUrl = driveResult.driveUrl || 'pending-verification'
+      // El comentario del grupo va en la primera foto (o el de la foto si viene).
+      const photoComment = (item.comment ?? (i === 0 ? comment : '') ?? '').trim()
+
+      records.push({
+        stepIndex: idx,
+        stepName,
+        driveUrl,
+        fileId,
+        photoIndex,
+        ...(photoComment ? { comment: photoComment } : {}),
+        ...(groupId ? { groupId: String(groupId) } : {}),
+        photoType: 'proceso',
+        timestamp: normalizeClientTimestamp(item.clientTimestamp ?? clientTimestamp),
+      })
+      photoIndex++
+    }
+
+    if (records.length === 0) {
+      res.status(422).json({ message: 'No se pudo procesar ninguna foto.', errors }); return
+    }
+
+    // UN SOLO push con todas las fotos del grupo (evita carrera).
+    await col.updateOne(
+      { trackingCode },
+      { $push: { photos: { $each: records } }, $set: { updatedAt: new Date().toISOString() } } as unknown as Record<string, unknown>,
+    )
+
+    res.json({ message: `${records.length} foto(s) registrada(s).`, count: records.length, errors })
+  } catch (err) {
+    console.error('[photos] Error en upload-batch:', err)
+    res.status(500).json({ message: 'Error interno al procesar las fotos.' })
+  }
+})
+
+/**
  * POST /api/photos/note
  * Agrega un comentario/nota sin imagen al registro (mensaje de solo texto).
  */
