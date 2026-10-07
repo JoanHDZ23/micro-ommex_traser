@@ -58,13 +58,20 @@ export function NewOperationPage() {
 
   const canSubmit = form.operatorName.trim() && (showPlate ? form.vehiclePlate?.trim() : true)
 
-  const typeGradient = useMemo(
-    () =>
-      form.operationType === 'PRODUCTOS_ENTRANTES'
-        ? 'from-blue-500 to-sky-600'
-        : 'from-emerald-500 to-teal-600',
-    [form.operationType],
-  )
+  // Color del banner según tipo (entrega/salida) y tokens temáticos para modo claro/oscuro
+  const heroStyle = useMemo(() => {
+    const isEntrante = form.operationType === 'PRODUCTOS_ENTRANTES'
+    return {
+      // Modo claro: azul-esmeralda suave (mismo estilo Klock). Modo oscuro: gradiente azul/verde fuerte
+      backgroundImage: isEntrante
+        ? 'linear-gradient(135deg, var(--hero-from) 0%, #bfdbfe 55%, var(--hero-to) 100%)'
+        : 'linear-gradient(135deg, var(--hero-from) 0%, #a7f3d0 55%, var(--hero-to) 100%)',
+      accent: isEntrante ? 'var(--color-primary)' : '#10b981',
+      iconFrom: isEntrante ? 'from-blue-500' : 'from-emerald-500',
+      iconTo: isEntrante ? 'to-sky-600' : 'to-teal-600',
+      chipBg: isEntrante ? 'bg-blue-500' : 'bg-emerald-500',
+    }
+  }, [form.operationType])
 
   const submitOperation = async () => {
     // Validación por campo (preserva la regla de `canSubmit`).
@@ -130,11 +137,20 @@ export function NewOperationPage() {
       />
 
       {/* ── Banner con el tipo seleccionado ─────────────────────── */}
-      <section className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${typeGradient} text-white p-5 sm:p-6 shadow-lg`}>
-        <div className="absolute top-0 right-0 w-40 h-40 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" aria-hidden="true" />
-        <div className="absolute bottom-0 left-0 w-32 h-32 bg-white/5 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" aria-hidden="true" />
+      <section
+        className="relative overflow-hidden rounded-2xl p-5 sm:p-6 shadow-sm border border-[color:var(--color-border)]"
+        style={{
+          backgroundImage: heroStyle.backgroundImage,
+          color: 'var(--hero-text)',
+        }}
+      >
+        <div className="absolute top-0 right-0 w-40 h-40 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
+        <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
         <div className="relative flex items-center gap-4">
-          <div className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-white/15 backdrop-blur flex items-center justify-center border border-white/20`}>
+          <div
+            className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center border"
+            style={{ backgroundColor: 'var(--hero-icon-bg)', color: 'var(--hero-icon-text)', borderColor: 'var(--hero-accent-ring)' }}
+          >
             {form.operationType === 'PRODUCTOS_ENTRANTES' ? (
               <ArrowDown className="w-7 h-7 sm:w-8 sm:h-8" />
             ) : (
@@ -142,17 +158,22 @@ export function NewOperationPage() {
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <span className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Tipo seleccionado</span>
-            <h2 className="text-xl sm:text-2xl font-bold mt-0.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
+              Tipo seleccionado
+            </span>
+            <h2 className="text-xl sm:text-2xl font-bold mt-0.5" style={{ color: 'var(--hero-text)' }}>
               {OPERATION_LABELS[form.operationType]}
             </h2>
-            <p className="text-sm opacity-85 mt-0.5 max-w-md">
+            <p className="text-sm mt-0.5 max-w-md" style={{ color: 'var(--hero-text-2)' }}>
               {form.operationType === 'PRODUCTOS_ENTRANTES'
                 ? 'Registro fotográfico de productos que ingresan al almacén o local.'
                 : 'Registro fotográfico de productos que salen para despacho o entrega.'}
             </p>
           </div>
-          <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-xs font-semibold border border-white/20">
+          <div
+            className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border"
+            style={{ backgroundColor: 'var(--hero-chip-bg)', color: 'var(--hero-chip-text)', borderColor: 'var(--hero-accent-ring)' }}
+          >
             <CheckCircle2 className="w-3.5 h-3.5" />
             Listo para empezar
           </div>
@@ -170,8 +191,8 @@ export function NewOperationPage() {
           <div className="grid grid-cols-2 gap-2.5">
             {(['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES'] as OperationType[]).map((type) => {
               const selected = form.operationType === type
-              const gradient = type === 'PRODUCTOS_ENTRANTES' ? 'from-blue-500 to-sky-600' : 'from-emerald-500 to-teal-600'
-              const Icon = type === 'PRODUCTOS_ENTRANTES' ? ArrowDown : ArrowUp
+              const isEntrante = type === 'PRODUCTOS_ENTRANTES'
+              const Icon = isEntrante ? ArrowDown : ArrowUp
               return (
                 <button
                   key={type}
@@ -180,18 +201,15 @@ export function NewOperationPage() {
                   className={`relative overflow-hidden p-3.5 sm:p-4 rounded-xl border text-left transition-all ${
                     selected
                       ? 'border-transparent shadow-md'
-                      : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-primary)]/30 hover:shadow-sm'
+                      : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:shadow-sm'
                   }`}
+                  style={selected ? { backgroundImage: `linear-gradient(135deg, ${isEntrante ? '#2563eb' : '#059669'} 0%, ${isEntrante ? '#0284c7' : '#047857'} 100%)` } : undefined}
                 >
-                  {selected && (
-                    <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-100`} aria-hidden="true" />
-                  )}
                   <div className="relative flex flex-col gap-2.5 items-start">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
-                      selected
-                        ? 'bg-white/20 text-white'
-                        : 'bg-[var(--color-bg)] text-[var(--color-text-2)]'
-                    }`}>
+                    <div
+                      className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${selected ? 'text-white' : ''}`}
+                      style={!selected ? { backgroundColor: 'var(--color-bg)', color: 'var(--color-text-2)' } : { backgroundColor: 'rgba(255,255,255,0.2)' }}
+                    >
                       <Icon className="w-5 h-5" />
                     </div>
                     <div className="min-w-0">
@@ -204,7 +222,7 @@ export function NewOperationPage() {
                     </div>
                     {selected && (
                       <div className="absolute top-2 right-2">
-                        <div className="w-5 h-5 rounded-full bg-white text-emerald-600 flex items-center justify-center shadow-sm">
+                        <div className="w-5 h-5 rounded-full bg-white flex items-center justify-center shadow-sm" style={{ color: isEntrante ? '#2563eb' : '#059669' }}>
                           <CheckCircle2 className="w-4 h-4" />
                         </div>
                       </div>
@@ -252,7 +270,10 @@ export function NewOperationPage() {
                   onChange={(e) => setShowPlate(e.target.checked)}
                   className="sr-only"
                 />
-                <div className={`w-12 h-6 rounded-full transition-colors shadow-inner ${showPlate ? `bg-gradient-to-r ${typeGradient}` : 'bg-gray-300'}`} />
+                <div
+                  className="w-12 h-6 rounded-full transition-colors shadow-inner"
+                  style={{ backgroundColor: showPlate ? 'var(--color-primary)' : '#9ca3af' }}
+                />
                 <div className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-md transition-transform ${showPlate ? 'translate-x-6' : 'translate-x-0'}`} />
               </div>
               <span className={`text-xs font-semibold ${showPlate ? 'text-[var(--color-text)]' : 'text-[var(--color-text-3)]'}`}>
@@ -297,12 +318,14 @@ export function NewOperationPage() {
                       const active = form.vehiclePlate === plate
                       return (
                         <div key={plate} className="flex items-center gap-1">
-                          <button type="button" onClick={() => setForm((f) => ({ ...f, vehiclePlate: plate }))}
+                          <button
+                            type="button"
+                            onClick={() => setForm((f) => ({ ...f, vehiclePlate: plate }))}
                             className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm ${
-                              active
-                                ? `bg-gradient-to-r ${typeGradient} text-white shadow-md`
-                                : `bg-[var(--color-bg)] text-[var(--color-text-2)] hover:bg-[var(--color-primary-bg)] hover:text-[var(--color-primary)] border border-[var(--color-border)]`
-                            }`}>
+                              active ? 'text-white shadow-md' : 'text-[var(--color-text-2)] hover:text-[var(--color-primary)] border border-[var(--color-border)]'
+                            }`}
+                            style={active ? { backgroundImage: `linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%)` } : { backgroundColor: 'var(--color-bg)' }}
+                          >
                             {plate}
                           </button>
                           <button type="button" onClick={() => {
@@ -340,7 +363,11 @@ export function NewOperationPage() {
             fullWidth
             loading={loading}
             disabled={!canSubmit}
-            className={`!bg-gradient-to-r !from-[var(--color-primary)] !via-purple-600 !to-indigo-600 !border-transparent !shadow-lg !shadow-[var(--color-primary)]/20 active:!shadow-md`}
+            style={{
+              backgroundImage: 'linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%)',
+              border: '1px solid transparent',
+              boxShadow: '0 10px 20px -10px color-mix(in srgb, var(--color-primary) 45%, transparent)',
+            }}
           >
             {loading ? 'Creando...' : '🚀 Iniciar registro fotográfico'}
           </Button>

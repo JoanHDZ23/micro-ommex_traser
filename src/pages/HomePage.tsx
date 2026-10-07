@@ -81,39 +81,58 @@ export function HomePage() {
       <GuideModal storageKey="home" heading="Guía de uso" steps={HOME_GUIDE} />
 
       {/* ── Banner de bienvenida con stats ─────────────────────── */}
-      <section className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[var(--color-primary)] via-purple-600 to-indigo-600 text-white p-5 sm:p-6 shadow-lg">
-        <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" aria-hidden="true" />
-        <div className="absolute bottom-0 left-0 w-40 h-40 bg-white/5 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" aria-hidden="true" />
+      <section
+        className="relative overflow-hidden rounded-2xl p-5 sm:p-6 shadow-sm border border-[color:var(--color-border)]"
+        style={{
+          backgroundImage: 'linear-gradient(135deg, var(--hero-from) 0%, var(--hero-via) 55%, var(--hero-to) 100%)',
+          color: 'var(--hero-text)',
+        }}
+      >
+        <div className="absolute top-0 right-0 w-48 h-48 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
+        <div className="absolute bottom-0 left-0 w-40 h-40 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
         <div className="relative">
           <div className="flex items-center gap-2 mb-2">
-            <Boxes className="w-5 h-5 opacity-90" />
-            <span className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Panel de control</span>
+            <Boxes className="w-5 h-5" style={{ color: 'var(--hero-chip-text)' }} />
+            <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
+              Panel de control
+            </span>
           </div>
           <h1 className="text-xl sm:text-2xl font-bold mb-1">Operaciones de trazabilidad</h1>
-          <p className="text-sm opacity-85 max-w-md">Registro fotográfico de entradas y salidas. Haz clic en una acción para empezar.</p>
+          <p className="text-sm max-w-md" style={{ color: 'var(--hero-text-2)' }}>
+            Registro fotográfico de entradas y salidas. Haz clic en una acción para empezar.
+          </p>
 
           {!loadingStats && (stats.entrantes + stats.salientes > 0 || stats.productos > 0) && (
-            <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-white/20">
+            <div
+              className="grid grid-cols-3 gap-3 mt-4 pt-4"
+              style={{ borderTop: '1px solid var(--hero-accent-ring)' }}
+            >
               <div className="text-center sm:text-left">
-                <div className="flex items-center gap-1.5 justify-center sm:justify-start opacity-90">
+                <div className="flex items-center gap-1.5 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
                   <TrendingDown className="w-3.5 h-3.5" />
                   <span className="text-[10px] uppercase font-semibold tracking-wide">Entrantes</span>
                 </div>
-                <div className="text-2xl sm:text-3xl font-bold mt-1 tabular-nums">{stats.entrantes}</div>
+                <div className="text-2xl sm:text-3xl font-bold mt-1 tabular-nums" style={{ color: 'var(--hero-text)' }}>
+                  {stats.entrantes}
+                </div>
               </div>
               <div className="text-center sm:text-left">
-                <div className="flex items-center gap-1.5 justify-center sm:justify-start opacity-90">
+                <div className="flex items-center gap-1.5 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
                   <TrendingUp className="w-3.5 h-3.5" />
                   <span className="text-[10px] uppercase font-semibold tracking-wide">Salientes</span>
                 </div>
-                <div className="text-2xl sm:text-3xl font-bold mt-1 tabular-nums">{stats.salientes}</div>
+                <div className="text-2xl sm:text-3xl font-bold mt-1 tabular-nums" style={{ color: 'var(--hero-text)' }}>
+                  {stats.salientes}
+                </div>
               </div>
               <div className="text-center sm:text-left">
-                <div className="flex items-center gap-1.5 justify-center sm:justify-start opacity-90">
+                <div className="flex items-center gap-1.5 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
                   <Package className="w-3.5 h-3.5" />
                   <span className="text-[10px] uppercase font-semibold tracking-wide">Productos</span>
                 </div>
-                <div className="text-2xl sm:text-3xl font-bold mt-1 tabular-nums">{stats.productos}</div>
+                <div className="text-2xl sm:text-3xl font-bold mt-1 tabular-nums" style={{ color: 'var(--hero-text)' }}>
+                  {stats.productos}
+                </div>
               </div>
             </div>
           )}
@@ -128,16 +147,18 @@ export function HomePage() {
             icon={ArrowDown}
             title="Operación Entrante"
             description="Registro de productos que ingresan al almacén o local"
-            gradient="from-blue-500 to-sky-600"
-            accentBg="bg-blue-50 text-blue-600"
+            gradientFrom="from-blue-500"
+            gradientTo="to-sky-600"
+            accentBgClass="bg-[color:var(--color-primary-bg)] text-[color:var(--color-primary)]"
             onClick={() => navigate('/new?type=PRODUCTOS_ENTRANTES')}
           />
           <QuickAction
             icon={ArrowUp}
             title="Operación Saliente"
             description="Registro de productos que salen para despacho o entrega"
-            gradient="from-emerald-500 to-teal-600"
-            accentBg="bg-emerald-50 text-emerald-600"
+            gradientFrom="from-emerald-500"
+            gradientTo="to-teal-600"
+            accentBgClass="bg-emerald-50 text-emerald-600"
             onClick={() => navigate('/new?type=PRODUCTOS_SALIENTES')}
           />
         </div>
@@ -217,15 +238,17 @@ function QuickAction({
   icon: Icon,
   title,
   description,
-  gradient,
-  accentBg,
+  gradientFrom,
+  gradientTo,
+  accentBgClass,
   onClick,
 }: {
   icon: React.ComponentType<{ className?: string }>
   title: string
   description: string
-  gradient: string
-  accentBg: string
+  gradientFrom: string
+  gradientTo: string
+  accentBgClass: string
   onClick: () => void
 }) {
   return (
@@ -235,14 +258,14 @@ function QuickAction({
         onClick={onClick}
         className="w-full flex items-center gap-4 p-4 sm:p-5 text-left focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:outline-none rounded-[var(--radius-lg)] relative"
       >
-        <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br ${gradient} flex items-center justify-center text-white shadow-md group-hover:shadow-lg group-hover:-translate-y-0.5 transition-all`}>
+        <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br ${gradientFrom} ${gradientTo} flex items-center justify-center text-white shadow-md group-hover:shadow-lg group-hover:-translate-y-0.5 transition-all`}>
           <Icon className="w-6 h-6 sm:w-7 sm:h-7" />
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-bold text-[var(--color-text)] text-base sm:text-lg">{title}</p>
           <p className="text-sm text-[var(--color-text-2)] mt-0.5 leading-snug">{description}</p>
         </div>
-        <div className={`flex-shrink-0 w-10 h-10 rounded-full ${accentBg} flex items-center justify-center group-hover:scale-110 transition-transform`}>
+        <div className={`flex-shrink-0 w-10 h-10 rounded-full ${accentBgClass} flex items-center justify-center group-hover:scale-110 transition-transform`}>
           <ArrowRight className="w-5 h-5" />
         </div>
       </button>

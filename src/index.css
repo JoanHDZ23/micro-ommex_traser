@@ -62,22 +62,70 @@
 }
 
 :root {
-  --color-primary: #6d28d9;
-  --color-primary-light: #7c3aed;
-  --color-primary-bg: #ede9fe;
-  --color-accent: #f59e0b;
+  --color-primary: #2563eb;        /* Azul Klock */
+  --color-primary-light: #3b82f6;  /* Azul claro */
+  --color-primary-dark: #1d4ed8;   /* Azul oscuro */
+  --color-primary-bg: #eff6ff;     /* Azul 50 - fondo acento */
+  --color-accent: #10b981;
   --color-success: #16a34a;
   --color-success-bg: #dcfce7;
   --color-danger: #dc2626;
   --color-danger-bg: #fee2e2;
+  --color-warning: #f59e0b;
+  --color-warning-bg: #fef3c7;
   --color-surface: #ffffff;
   --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
   --color-text: #0f172a;
   --color-text-2: #475569;
   --color-text-3: #94a3b8;
   --color-bg: #f4f6fb;
   --radius: 10px;
   --radius-lg: 14px;
+  /* Hero banners modo claro - fondo SUAVE tipo Klock con texto OSCURO legible */
+  --hero-from: #dbeafe;  /* blue-100 */
+  --hero-via: #eff6ff;   /* blue-50 */
+  --hero-to: #d1fae5;    /* emerald-100 */
+  --hero-text: #0f172a;  /* slate-900 */
+  --hero-text-2: #334155; /* slate-700 */
+  --hero-chip-bg: rgba(37, 99, 235, 0.12);
+  --hero-chip-text: #1d4ed8;
+  --hero-icon-bg: rgba(37, 99, 235, 0.12);
+  --hero-icon-text: #1d4ed8;
+  --hero-accent-ring: rgba(37, 99, 235, 0.18);
+}
+
+/* ── MODO OSCURO tokens completos ──────────────────── */
+:root[data-theme="dark"] {
+  --color-primary: #3b82f6;
+  --color-primary-light: #60a5fa;
+  --color-primary-dark: #2563eb;
+  --color-primary-bg: rgba(59, 130, 246, 0.15);
+  --color-accent: #10b981;
+  --color-success: #22c55e;
+  --color-success-bg: rgba(34, 197, 94, 0.15);
+  --color-danger: #f87171;
+  --color-danger-bg: rgba(248, 113, 113, 0.15);
+  --color-warning: #fbbf24;
+  --color-warning-bg: rgba(251, 191, 36, 0.15);
+  --color-surface: #1f2937;
+  --color-border: #374151;
+  --color-border-strong: #4b5563;
+  --color-text: #f8fafc;
+  --color-text-2: #cbd5e1;
+  --color-text-3: #64748b;
+  --color-bg: #0f172a;
+  /* Hero banners modo oscuro - fondo OSCURO con gradiente y texto BLANCO */
+  --hero-from: #1d4ed8;  /* blue-700 */
+  --hero-via: #2563eb;   /* blue-600 */
+  --hero-to: #047857;    /* emerald-700 */
+  --hero-text: #ffffff;
+  --hero-text-2: rgba(255, 255, 255, 0.85);
+  --hero-chip-bg: rgba(255, 255, 255, 0.18);
+  --hero-chip-text: #ffffff;
+  --hero-icon-bg: rgba(255, 255, 255, 0.18);
+  --hero-icon-text: #ffffff;
+  --hero-accent-ring: rgba(255, 255, 255, 0.22);
 }
 
 body {

@@ -8,7 +8,7 @@ import {
 import { apiRequest, fileToBase64, type CompanySheet, type Operation, type OperationType, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
-import { Button, Card, EmptyState, ErrorState, LoadingState, ModalSurface } from './ui'
+import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
 import {
   parseFileLocally, parsePdfLocally, isPdf, saveLocalTable, listLocalTables,
   getLocalTable, updateLocalTableRows, deleteLocalTable,
@@ -144,7 +144,7 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
         <select
           value={filterCol}
           onChange={(e) => setFilterCol(Number(e.target.value))}
-          className="px-3 py-2.5 rounded-xl border border-[var(--color-border)] text-sm bg-[var(--color-surface)] text-[var(--color-text)] min-w-[150px] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
+          className="min-w-[150px] rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
         >
           <option value={-1}>Todas las columnas</option>
           {headers.map((h, i) => (
@@ -157,21 +157,20 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
             placeholder="Filtrar filas…"
-            className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50 placeholder:text-[var(--color-text-3)]"
+            className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 pl-9 pr-9 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-3)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
           />
           {filterText && (
             <button onClick={() => setFilterText('')} aria-label="Limpiar filtro"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors">
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors">
               <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
         {/* Filtrar al escanear un código (igual que al agregar producto en registros) */}
-        <button onClick={() => setScanning(true)} title="Filtrar escaneando un código"
-          className="px-3.5 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center gap-1.5 flex-shrink-0 hover:bg-amber-100 transition-colors text-sm font-medium">
-          <QrCode className="w-4 h-4" />
+        <Button variant="secondary" size="md" onClick={() => setScanning(true)} title="Filtrar escaneando un código"
+          leftIcon={<QrCode className="w-4 h-4" />} className="flex-shrink-0">
           <span className="hidden sm:inline">Escanear</span>
-        </button>
+        </Button>
       </div>
 
       {/* Escáner: al detectar un código, lo coloca en el filtro de texto */}
@@ -184,7 +183,7 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
 
       {/* Mapeo de columnas → producto (solo en modo registros) */}
       {actions && (
-        <div className="space-y-3 p-4 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)]">
+        <div className="space-y-3 p-4 rounded-[var(--radius-lg)] bg-[var(--color-bg)] border border-[var(--color-border)]">
           <div className="flex items-center gap-2">
             <Database className="w-4 h-4 text-[var(--color-primary)]" />
             <span className="text-[11px] font-bold text-[var(--color-text-2)] uppercase tracking-wide">
@@ -195,14 +194,14 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
             <label className="space-y-1.5 block">
               <span className="text-xs font-semibold text-[var(--color-text-2)]">Código / Nombre del producto</span>
               <select value={actions.codeCol} onChange={(e) => actions.onCodeColChange(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-xl border border-[var(--color-border)] text-sm bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30">
+                className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30">
                 {headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
               </select>
             </label>
             <label className="space-y-1.5 block">
               <span className="text-xs font-semibold text-[var(--color-text-2)]">Descripción</span>
               <select value={actions.descCol} onChange={(e) => actions.onDescColChange(Number(e.target.value))}
-                className="w-full px-3 py-2 rounded-xl border border-[var(--color-border)] text-sm bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30">
+                className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30">
                 <option value={-1}>— ninguna —</option>
                 {headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
               </select>
@@ -232,7 +231,7 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
 
       {/* Barra de selección múltiple (traer varias filas a un registro) */}
       {actions && selectedRows.length > 0 && (
-        <div className="flex items-center justify-between gap-2 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200">
+        <div className="flex items-center justify-between gap-2 p-3.5 rounded-[var(--radius-lg)] bg-emerald-50 border border-emerald-200">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center flex-shrink-0">
               <CheckCircle2 className="w-4 h-4" />
@@ -242,17 +241,16 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
           <div className="flex items-center gap-2">
             <button onClick={() => setSelected(new Set())}
               className="text-xs font-medium text-emerald-800 hover:underline px-2 py-1 rounded-md hover:bg-emerald-100">Limpiar</button>
-            <button onClick={() => actions.onBringToRecord(selectedRows)} disabled={actions.busy}
-              className="px-3.5 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50 hover:bg-emerald-700 transition-colors shadow-sm">
-              {actions.busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackagePlus className="w-3.5 h-3.5" />}
+            <Button variant="success" size="sm" onClick={() => actions.onBringToRecord(selectedRows)} loading={actions.busy}
+              leftIcon={<PackagePlus className="w-3.5 h-3.5" />}>
               Traer a un registro
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {/* Tabla */}
-      <div className="border border-[var(--color-border)] rounded-2xl overflow-hidden bg-[var(--color-surface)] shadow-sm">
+      <div className="border border-[var(--color-border)] rounded-[var(--radius-lg)] overflow-hidden bg-[var(--color-surface)] shadow-sm">
         <div className="flex items-center justify-between px-4 py-3 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-[var(--color-primary-bg)] text-[var(--color-primary)] flex items-center justify-center">
@@ -829,23 +827,44 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
 
         {/* ── Modo visor: verificar una tabla importada dentro de la app ── */}
         {viewing ? (
-          <div className="pb-4 space-y-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <p className="text-xs text-[var(--color-text-3)]">
-                Origen: <span className="font-medium text-[var(--color-text-2)]">{viewing.sourceFileName}</span> · {editing ? editRows.length : viewing.rowCount} fila(s)
-              </p>
-              {viewing.sheetUrl ? (
-                <a href={viewing.sheetUrl} target="_blank" rel="noopener noreferrer"
-                  className="text-xs text-emerald-600 font-medium flex items-center gap-1 hover:underline">
-                  <ExternalLink className="w-3.5 h-3.5" /> Abrir en Google Sheets
-                </a>
-              ) : (
-                <span className="text-[10px] text-[var(--color-text-3)] bg-gray-100 px-2 py-1 rounded-full">Solo en la app</span>
-              )}
-            </div>
+          <div className="pb-4 space-y-4">
+            {/* Banner hero del visor */}
+            <section
+              className="relative overflow-hidden rounded-2xl p-4 sm:p-5 shadow-sm border border-[color:var(--color-border)]"
+              style={{
+                backgroundImage: 'linear-gradient(135deg, var(--hero-from) 0%, var(--hero-via) 55%, var(--hero-to) 100%)',
+                color: 'var(--hero-text)',
+              }}
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
+              <div className="absolute bottom-0 left-0 w-28 h-28 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
+              <div className="relative">
+                <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <Table2 className="w-5 h-5" style={{ color: 'var(--hero-chip-text)' }} />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
+                      Visor de tabla
+                    </span>
+                  </div>
+                  {viewing.sheetUrl ? (
+                    <a href={viewing.sheetUrl} target="_blank" rel="noopener noreferrer"
+                      className="text-[11px] font-semibold flex items-center gap-1 hover:underline"
+                      style={{ color: 'var(--hero-chip-text)' }}>
+                      <ExternalLink className="w-3.5 h-3.5" /> Abrir en Google Sheets
+                    </a>
+                  ) : (
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border" style={{ backgroundColor: 'var(--hero-chip-bg)', color: 'var(--hero-chip-text)', borderColor: 'var(--hero-accent-ring)' }}>Solo en la app</span>
+                  )}
+                </div>
+                <h2 className="text-lg sm:text-xl font-bold">{viewing.sheetName}</h2>
+                <p className="text-xs sm:text-sm mt-0.5" style={{ color: 'var(--hero-text-2)' }}>
+                  Origen: <span className="font-semibold">{viewing.sourceFileName}</span> · {editing ? editRows.length : viewing.rowCount} fila(s) · {viewing.headers.length} columna(s)
+                </p>
+              </div>
+            </section>
 
             {viewing.rowsTruncated && (
-              <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+              <div className="flex items-start gap-2 p-3 rounded-[var(--radius-lg)] bg-amber-50 border border-amber-200 text-xs text-amber-800">
                 <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
                 <span>Esta tabla es muy grande; en la app se muestran las primeras {viewing.rows.length} filas. La hoja completa en Google Sheets tiene {viewing.rowCount} filas.</span>
               </div>
@@ -861,7 +880,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
               />
             )}
             {success && (
-              <div className="flex items-start gap-2 p-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm">
+              <div className="flex items-start gap-2 p-3 rounded-[var(--radius-lg)] bg-emerald-50 text-emerald-700 text-sm border border-emerald-100">
                 <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
                 <span>{success}</span>
               </div>
@@ -875,13 +894,13 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
             ) : editing ? (
               <>
                 {/* ── Modo edición ── */}
-                <div className="border border-[var(--color-border)] rounded-xl overflow-hidden">
+                <div className="border border-[var(--color-border)] rounded-[var(--radius-lg)] overflow-hidden">
                   <div className="overflow-auto max-h-[46vh]">
                     <table className="w-full text-xs border-collapse">
-                      <thead className="sticky top-0 bg-slate-800 text-white">
+                      <thead className="sticky top-0 z-10 bg-[var(--color-primary)] text-white">
                         <tr>
                           {viewing.headers.map((h, i) => (
-                            <th key={i} className="text-left font-semibold px-2.5 py-2 whitespace-nowrap border-r border-slate-700">
+                            <th key={i} className="text-left font-semibold px-2.5 py-2 whitespace-nowrap border-r border-white/15 last:border-r-0">
                               {h || `Columna ${i + 1}`}
                             </th>
                           ))}
@@ -890,19 +909,19 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                       </thead>
                       <tbody>
                         {editRows.map((row, ri) => (
-                          <tr key={ri} className="even:bg-gray-50">
+                          <tr key={ri} className={ri % 2 === 0 ? 'bg-[var(--color-surface)]' : 'bg-[var(--color-bg)]/40'}>
                             {viewing.headers.map((_, ci) => (
                               <td key={ci} className="border-r border-[var(--color-border)] p-0">
                                 <input
                                   value={row[ci] ?? ''}
                                   onChange={(e) => setCell(ri, ci, e.target.value)}
-                                  className="w-full min-w-[90px] px-2 py-1.5 text-xs bg-transparent focus:outline-none focus:bg-emerald-50"
+                                  className="w-full min-w-[90px] px-2 py-1.5 text-xs bg-transparent focus:outline-none focus:bg-[var(--color-success-bg)]"
                                 />
                               </td>
                             ))}
                             <td className="px-1 text-center">
                               <button onClick={() => removeRow(ri)} aria-label="Eliminar fila"
-                                className="w-6 h-6 rounded flex items-center justify-center text-red-500 hover:bg-red-50">
+                                className="w-6 h-6 rounded flex items-center justify-center text-[var(--color-danger)] hover:bg-[var(--color-danger-bg)]">
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </td>
@@ -912,7 +931,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                     </table>
                   </div>
                   <button onClick={addRow}
-                    className="w-full flex items-center justify-center gap-1.5 py-2 bg-gray-50 border-t border-[var(--color-border)] text-xs font-medium text-[var(--color-text-2)] hover:bg-gray-100">
+                    className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-[var(--color-bg)] border-t border-[var(--color-border)] text-xs font-medium text-[var(--color-text-2)] hover:bg-[var(--color-border)]/50 transition-colors">
                     <Plus className="w-3.5 h-3.5" /> Agregar fila
                   </button>
                 </div>
@@ -967,16 +986,43 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
           </div>
         ) : (
           /* ── Modo normal: subir + listar ── */
-          <div className="pb-4 space-y-4">
+          <div className="pb-4 space-y-5">
+            {/* Banner hero principal */}
+            <section
+              className="relative overflow-hidden rounded-2xl p-4 sm:p-5 shadow-sm border border-[color:var(--color-border)]"
+              style={{
+                backgroundImage: 'linear-gradient(135deg, var(--hero-from) 0%, var(--hero-via) 55%, var(--hero-to) 100%)',
+                color: 'var(--hero-text)',
+              }}
+            >
+              <div className="absolute top-0 right-0 w-36 h-36 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
+              <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
+              <div className="relative">
+                <div className="flex items-center gap-2 mb-2">
+                  <FileSpreadsheet className="w-5 h-5" style={{ color: 'var(--hero-chip-text)' }} />
+                  <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
+                    Base de datos
+                  </span>
+                </div>
+                <h2 className="text-lg sm:text-xl font-bold">Documentos a Tablas</h2>
+                <p className="text-xs sm:text-sm mt-0.5 max-w-md" style={{ color: 'var(--hero-text-2)' }}>
+                  Importa CSV, Excel o PDF para consultar, editar y usar los datos en tus registros de trazabilidad.
+                </p>
+              </div>
+            </section>
+
             {/* ── Subida ── */}
             <section className="space-y-3">
+              <SectionHeader eyebrow="Paso 1" title="Subir documento" />
               <label className="block">
-                <div className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-[var(--color-border)] rounded-xl p-6 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/40 transition-colors">
-                  <Upload className="w-7 h-7 text-emerald-600" />
-                  <p className="text-sm font-medium text-[var(--color-text)]">
-                    {file ? file.name : 'Selecciona un archivo'}
+                <div className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-[var(--color-border)] rounded-[var(--radius-lg)] p-6 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/40 transition-colors bg-[var(--color-surface)]">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center text-white shadow-sm">
+                    <Upload className="w-6 h-6" />
+                  </div>
+                  <p className="text-sm font-semibold text-[var(--color-text)]">
+                    {file ? file.name : 'Selecciona un archivo o toca aquí'}
                   </p>
-                  <p className="text-[11px] text-[var(--color-text-3)]">CSV, Excel (.xlsx) o PDF con tablas</p>
+                  <p className="text-[11px] text-[var(--color-text-3)]">Formatos admitidos: CSV, Excel (.xlsx) o PDF con tablas</p>
                   <input
                     type="file"
                     accept={ACCEPTED}
@@ -993,7 +1039,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
               )}
 
               {success && (
-                <div className="flex items-start gap-2 p-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm">
+                <div className="flex items-start gap-2 p-3 rounded-[var(--radius-lg)] bg-emerald-50 text-emerald-700 text-sm border border-emerald-100">
                   <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
                   <span>{success}</span>
                 </div>
@@ -1003,15 +1049,13 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
             {/* ── Vista previa + filtro ── */}
             {preview && preview.headers.length > 0 && (
               <section className="space-y-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-[var(--color-text-2)]">Nombre de la hoja</label>
-                  <input
-                    value={sheetName}
-                    onChange={(e) => setSheetName(e.target.value)}
-                    placeholder="Nombre de la hoja en Google Sheets"
-                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                  />
-                </div>
+                <SectionHeader eyebrow="Paso 2" title="Confirmar datos" />
+                <Input
+                  label="Nombre de la tabla"
+                  value={sheetName}
+                  onChange={(e) => setSheetName(e.target.value)}
+                  placeholder="Ej: Inventario octubre 2024"
+                />
 
                 <DataTable headers={preview.headers} rows={preview.rows} />
 
@@ -1049,19 +1093,13 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
             )}
 
             {/* ── Hojas existentes ── */}
-            <section className="space-y-3 pt-3 border-t border-[var(--color-border)]">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-[var(--color-primary-bg)] text-[var(--color-primary)] flex items-center justify-center">
-                    <Database className="w-3.5 h-3.5" />
-                  </div>
-                  <h4 className="text-sm font-bold text-[var(--color-text)]">Tus tablas importadas</h4>
-                  <span className="text-[11px] text-[var(--color-text-3)] px-2 py-0.5 rounded-full bg-[var(--color-bg)] border border-[var(--color-border)] font-medium">
-                    {sheets.length}
-                  </span>
-                </div>
-                {(loadingList || loadingView) && <LoadingState inline size="sm" label="Cargando tablas…" />}
-              </div>
+            <section className="space-y-3 pt-1">
+              <SectionHeader
+                eyebrow="Tus tablas"
+                title="Tablas importadas"
+                subtitle={sheets.length > 0 ? `${sheets.length} tabla(s) guardada(s)` : undefined}
+                actions={(loadingList || loadingView) ? <LoadingState inline size="sm" label="" /> : undefined}
+              />
 
               {!loadingList && sheets.length === 0 && (
                 <EmptyState
@@ -1130,46 +1168,56 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
       {/* ── Modal: destino para traer productos del documento a los registros ── */}
       {bringRows && (
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-4">
-          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[88vh] flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
-              <h3 className="text-sm font-bold text-[var(--color-text)]">
-                Traer {bringRows.length} producto(s) a un registro
-              </h3>
+          <div
+            className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[88vh] flex flex-col"
+            style={{ backgroundColor: 'var(--color-surface)' }}
+          >
+            <div className="flex items-start gap-3 p-4 border-b border-[var(--color-border)]">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold text-[var(--color-text-3)] uppercase tracking-wide">
+                  Destino de productos
+                </p>
+                <h3 className="text-base font-bold text-[var(--color-text)] mt-0.5">
+                  Traer {bringRows.length} producto(s)
+                </h3>
+              </div>
               <button onClick={() => setBringRows(null)} aria-label="Cerrar"
-                className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center">
-                <X className="w-4 h-4 text-[var(--color-text-2)]" />
+                className="flex-shrink-0 inline-flex items-center justify-center w-11 h-11 rounded-lg text-[var(--color-text)] hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:outline-none transition-colors">
+                <X size={20} aria-hidden="true" />
               </button>
             </div>
 
             <div className="overflow-y-auto px-4 py-4 space-y-4">
-              <p className="text-xs text-[var(--color-text-3)]">
-                Se crearán los grupos de producto con la información del documento. Solo tendrás que agregar las fotos.
-              </p>
+              <div className="flex items-start gap-2 p-3 rounded-[var(--radius-lg)] bg-[var(--color-primary-bg)] text-[var(--color-primary-dark)] text-xs border border-[var(--color-primary-bg)]">
+                <PackagePlus className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span>Se crearán los grupos de producto con la información del documento. Solo tendrás que agregar las fotos.</span>
+              </div>
 
               {error && <ErrorState message={error} />}
 
               {/* Opción A: nuevo registro */}
-              <section className="space-y-2">
-                <h4 className="text-[10px] font-semibold text-[var(--color-text-3)] uppercase">Crear un registro nuevo</h4>
+              <section className="space-y-2.5">
+                <h4 className="text-[10px] font-semibold text-[var(--color-text-3)] uppercase tracking-wide">Crear un registro nuevo</h4>
                 <div className="grid grid-cols-2 gap-2">
                   {(['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES'] as OperationType[]).map((t) => (
                     <button key={t} type="button" onClick={() => setBringType(t)}
-                      className={`px-3 py-2 rounded-xl border text-xs font-medium ${
+                      className={`px-3 py-2.5 rounded-[var(--radius)] border text-xs font-semibold transition-colors ${
                         bringType === t
-                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)] text-[var(--color-primary)]'
-                          : 'border-[var(--color-border)] text-[var(--color-text-2)] hover:border-gray-300'
+                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)] text-[var(--color-primary)] shadow-sm'
+                          : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-2)] hover:border-[var(--color-primary)]/40 hover:text-[var(--color-primary)]'
                       }`}>
                       {t === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'}
                     </button>
                   ))}
                 </div>
                 {/* Placa opcional del vehículo */}
-                <div className="space-y-1">
-                  <label className="text-[10px] font-medium text-[var(--color-text-3)]">Placa del vehículo (opcional)</label>
-                  <input value={bringPlate} onChange={(e) => setBringPlate(e.target.value.toUpperCase())}
-                    placeholder="EJ: ABC123"
-                    className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
-                </div>
+                <Input
+                  label="Placa del vehículo (opcional)"
+                  value={bringPlate}
+                  onChange={(e) => setBringPlate(e.target.value.toUpperCase())}
+                  placeholder="EJ: ABC123"
+                  className="uppercase"
+                />
                 <Button variant="primary" fullWidth
                   onClick={() => void confirmBring('new')}
                   loading={bringingBusy}
@@ -1180,12 +1228,12 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
 
               {/* Opción B: agregar a un registro existente (en proceso) */}
               {existingOps.length > 0 && (
-                <section className="space-y-2 pt-2 border-t border-[var(--color-border)]">
-                  <h4 className="text-[10px] font-semibold text-[var(--color-text-3)] uppercase">O agregar a un registro en proceso</h4>
-                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                <section className="space-y-2.5 pt-3 border-t border-[var(--color-border)]">
+                  <h4 className="text-[10px] font-semibold text-[var(--color-text-3)] uppercase tracking-wide">O agregar a un registro en proceso</h4>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
                     {existingOps.map((op) => (
                       <button key={op.trackingCode} onClick={() => void confirmBring(op.trackingCode)} disabled={bringingBusy}
-                        className="w-full flex items-center gap-2 p-2.5 rounded-xl border border-[var(--color-border)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] text-left disabled:opacity-50">
+                        className="w-full flex items-center gap-2.5 p-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] hover:border-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] text-left disabled:opacity-50 transition-colors">
                         <PackagePlus className="w-4 h-4 text-[var(--color-primary)] flex-shrink-0" />
                         <div className="min-w-0 flex-1">
                           <p className="text-xs font-semibold text-[var(--color-text)] truncate">{op.trackingCode}</p>
