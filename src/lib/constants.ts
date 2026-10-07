@@ -1,8 +1,8 @@
 import type { OperationType } from './api'
 
 export const OPERATION_LABELS: Record<OperationType, string> = {
-  PRODUCTOS_ENTRANTES: 'Productos Entrantes',
-  PRODUCTOS_SALIENTES: 'Productos Salientes',
+  PRODUCTOS_ENTRANTES: 'Operación Entrante',
+  PRODUCTOS_SALIENTES: 'Operación Saliente',
 }
 
 export const LINEA_BLANCA_STEPS = ['Registro fotográfico']

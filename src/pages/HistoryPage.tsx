@@ -122,8 +122,8 @@ export function HistoryPage() {
               className="px-3 py-2 rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text)] bg-[var(--color-surface)]"
             >
               <option value="">Todos los tipos</option>
-              <option value="PRODUCTOS_ENTRANTES">Productos Entrantes</option>
-              <option value="PRODUCTOS_SALIENTES">Productos Salientes</option>
+              <option value="PRODUCTOS_ENTRANTES">{OPERATION_LABELS.PRODUCTOS_ENTRANTES}</option>
+              <option value="PRODUCTOS_SALIENTES">{OPERATION_LABELS.PRODUCTOS_SALIENTES}</option>
             </select>
             <div className="relative">
               <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-3)]" />
