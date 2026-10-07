@@ -31,7 +31,7 @@ const seenKey = (storageKey: string, version: number) => `guide_seen_${storageKe
  * (`role="dialog"`, `aria-modal`), la gestión de foco, el cuerpo desplazable y
  * el cierre con botón y `Escape`.
  */
-export function GuideModal({ storageKey, heading, steps, version = 1, fabPosition = 'top-16 right-3' }: GuideModalProps) {
+export function GuideModal({ storageKey, heading, steps, version = 1, fabPosition = 'bottom-6 right-6' }: GuideModalProps) {
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState(0)
   const titleId = useId()

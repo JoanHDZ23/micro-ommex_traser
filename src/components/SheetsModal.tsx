@@ -71,6 +71,28 @@ function loadMarked(key?: string): Set<number> {
   return new Set()
 }
 
+interface SavedColumnSelection {
+  codeCol: number
+  descCol: number
+  extraCols: number[]
+}
+
+/** Lee la última selección de columnas guardada para una empresa. */
+function loadColumnSelection(companyId: string): SavedColumnSelection | null {
+  try {
+    const raw = localStorage.getItem(`ommex_colsel_${companyId}`)
+    if (raw) return JSON.parse(raw) as SavedColumnSelection
+  } catch { /* ignore */ }
+  return null
+}
+
+/** Guarda la selección de columnas actual para una empresa. */
+function saveColumnSelection(companyId: string, sel: SavedColumnSelection) {
+  try {
+    localStorage.setItem(`ommex_colsel_${companyId}`, JSON.stringify(sel))
+  } catch { /* ignore */ }
+}
+
 function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
   const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas
   const [filterText, setFilterText] = useState('')
@@ -372,16 +394,37 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
     setExtraCols((prev) => prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col])
   }
 
-  // Al abrir el visor, intenta adivinar la columna de código y la de descripción
-  // por el nombre del encabezado (SKU/código, descripción/ítem).
+  // Al abrir el visor: primero intenta cargar la selección guardada; si no existe
+  // o los índices no son válidos para esta tabla, adivina por nombre de encabezado.
   useEffect(() => {
     if (!viewing) return
+    const saved = companyId ? loadColumnSelection(companyId) : null
+    const numCols = viewing.headers.length
+    if (
+      saved &&
+      saved.codeCol >= 0 && saved.codeCol < numCols &&
+      saved.descCol >= -1 && saved.descCol < numCols &&
+      Array.isArray(saved.extraCols) &&
+      saved.extraCols.every((c) => c >= 0 && c < numCols && c !== saved.codeCol && c !== saved.descCol)
+    ) {
+      setCodeCol(saved.codeCol)
+      setDescCol(saved.descCol)
+      setExtraCols(saved.extraCols)
+      return
+    }
     const hs = viewing.headers.map((h) => (h || '').toLowerCase())
     const guessCode = hs.findIndex((h) => /sku|c[oó]digo|code|ref|producto/.test(h))
     const guessDesc = hs.findIndex((h) => /descrip|[ií]tem|detalle|nombre|art[ií]culo/.test(h))
     setCodeCol(guessCode >= 0 ? guessCode : 0)
     setDescCol(guessDesc >= 0 ? guessDesc : -1)
-  }, [viewing])
+    setExtraCols([])
+  }, [viewing, companyId])
+
+  // Persistir la selección de columnas en localStorage cuando cambie (solo si hay viewing activo).
+  useEffect(() => {
+    if (!viewing || !companyId) return
+    saveColumnSelection(companyId, { codeCol, descCol, extraCols })
+  }, [codeCol, descCol, extraCols, viewing, companyId])
 
   /**
    * Construye {productCode, descripcion} desde una fila usando el mapeo actual.
