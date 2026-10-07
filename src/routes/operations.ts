@@ -614,8 +614,6 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
       return
     }
 
-    // Unicidad GLOBAL por empresa: el código no puede existir en NINGUNA otra operación
-    // de la misma empresa (comparación insensible a mayúsculas/minúsculas).
     const companyId = operation.companyId as string | undefined
     const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const dupFilter: Record<string, unknown> = {
@@ -624,10 +622,52 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
     }
     if (companyId) dupFilter.companyId = companyId
     const duplicate = await col.findOne(dupFilter)
+
+    // Si el producto ya existe en OTRA operación, lo VINCULAMOS en vez de rechazar
     if (duplicate) {
-      res.status(409).json({
-        message: `El código "${code}" ya existe en la operación ${duplicate.trackingCode}. Usa un código diferente.`,
-        existingTrackingCode: duplicate.trackingCode,
+      const sourceTrackingCode = duplicate.trackingCode as string
+      const sourceProducts = (duplicate.lineaBlanca as LineaBlancaProduct[]) ?? []
+      const sourceIdx = sourceProducts.findIndex((p) => p.productCode.toLowerCase() === code.toLowerCase())
+
+      if (sourceIdx === -1) {
+        res.status(500).json({ message: 'Error al ubicar el producto en la operación origen.' })
+        return
+      }
+
+      const sourceProduct = sourceProducts[sourceIdx]
+      const sourceLinkedTo = sourceProduct.linkedTo ?? []
+      const newSourceLinkedTo = [...new Set([...sourceLinkedTo, trackingCode])]
+
+      const linkedProduct: LineaBlancaProduct = {
+        productCode: sourceProduct.productCode,
+        labelData: labelData ? { ...(sourceProduct.labelData ?? {}), ...labelData } : sourceProduct.labelData,
+        isLineaBlanca: Boolean(isLineaBlanca) || sourceProduct.isLineaBlanca,
+        linkedTo: [sourceTrackingCode],
+        photos: [...sourceProduct.photos],
+        status: 'EN_PROCESO',
+        createdAt: new Date().toISOString(),
+      }
+
+      await col.updateOne(
+        { trackingCode },
+        {
+          $push: { lineaBlanca: linkedProduct },
+          $set: { updatedAt: new Date().toISOString() },
+        } as unknown as Record<string, unknown>,
+      )
+
+      await col.updateOne(
+        { trackingCode: sourceTrackingCode, 'lineaBlanca.productCode': sourceProduct.productCode },
+        { $set: { [`lineaBlanca.${sourceIdx}.linkedTo`]: newSourceLinkedTo, updatedAt: new Date().toISOString() } },
+      )
+
+      await upsertCatalogProduct(companyId, code, (labelData as { descripcion?: string } | undefined)?.descripcion ?? sourceProduct.labelData?.descripcion, 'registro')
+
+      res.status(201).json({
+        message: `Producto "${code}" vinculado desde la operación ${sourceTrackingCode}. Las fotos se sincronizarán automáticamente.`,
+        product: linkedProduct,
+        steps: [...LINEA_BLANCA_STEPS],
+        linkedFrom: sourceTrackingCode,
       })
       return
     }
@@ -649,7 +689,6 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
       } as unknown as Record<string, unknown>,
     )
 
-    // Registra en el catálogo maestro con origen 'registro'
     await upsertCatalogProduct(companyId, code, (labelData as { descripcion?: string } | undefined)?.descripcion, 'registro')
 
     res.status(201).json({
