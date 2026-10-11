@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, CheckCircle2, FileSpreadsheet, Save, Trash2 } from 'lucide-react'
+import { Activity, ArrowRight, CheckCircle2, FileSpreadsheet, Save, Trash2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
@@ -46,17 +46,28 @@ export function SettingsPage() {
   const [savingSheets, setSavingSheets] = useState(false)
   const [feedbackSheets, setFeedbackSheets] = useState<string | null>(null)
 
+  // Trazabilidad: registro de actividades y envío por correo
+  const [activityLog, setActivityLog] = useState(false)
+  const [sendEmail, setSendEmail] = useState(false)
+  const [emailTo, setEmailTo] = useState('')
+  const [savingTracer, setSavingTracer] = useState(false)
+  const [feedbackTracer, setFeedbackTracer] = useState<string | null>(null)
+
   useEffect(() => {
     if (!companyId) { setLoading(false); return }
     const load = async () => {
       try {
-        const [cleanupData, featuresData] = await Promise.all([
+        const [cleanupData, featuresData, emailData] = await Promise.all([
           apiRequest<{ cleanupEnabled: boolean; cleanupDays: number }>(`/settings/cleanup?companyId=${encodeURIComponent(companyId)}`),
-          apiRequest<{ sheetsEnabled: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
+          apiRequest<{ sheetsEnabled: boolean; activityLog: boolean; sendEmail: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
+          apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`),
         ])
         setCleanupEnabled(cleanupData.cleanupEnabled ?? false)
         setCleanupDays(cleanupData.cleanupDays ?? 20)
         setSheetsEnabled(featuresData.sheetsEnabled ?? false)
+        setActivityLog(featuresData.activityLog ?? false)
+        setSendEmail(featuresData.sendEmail ?? false)
+        setEmailTo(emailData.emailTo ?? '')
       } catch { /* no settings yet */ }
       finally { setLoading(false) }
     }
@@ -85,6 +96,23 @@ export function SettingsPage() {
       setSheetsEnabled(!next) // revertir en caso de error
       setFeedbackSheets(err instanceof Error ? err.message : 'Error al guardar')
     } finally { setSavingSheets(false) }
+  }
+
+  const handleSaveTracer = async () => {
+    if (!companyId) { setFeedbackTracer('No se encontró el ID de empresa.'); return }
+    setSavingTracer(true); setFeedbackTracer(null)
+    try {
+      await apiRequest('/settings/features', { method: 'PUT', body: { companyId, activityLog, sendEmail } })
+      if (sendEmail) {
+        await apiRequest('/settings/email', { method: 'PUT', body: { companyId, emailTo: emailTo.trim() } })
+      }
+      const parts: string[] = []
+      parts.push(`Registro de actividades ${activityLog ? 'habilitado' : 'deshabilitado'}`)
+      parts.push(`Envío por correo ${sendEmail ? 'habilitado' : 'deshabilitado'}`)
+      setFeedbackTracer(`✓ ${parts.join(' · ')}.`)
+    } catch (err) {
+      setFeedbackTracer(err instanceof Error ? err.message : 'Error al guardar')
+    } finally { setSavingTracer(false) }
   }
 
   // No-admin: no renderizar nada (el useEffect ya redirige al inicio).
@@ -126,8 +154,8 @@ export function SettingsPage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Limpieza automática de registros</h3>
         </div>
         <p className="text-xs text-[var(--color-text-2)]">
-          Cuando está activa, los registros más antiguos del tiempo configurado se envían a la papelera de Drive
-          y se eliminan del historial. Puedes recuperarlos desde <strong>Recuperar registros</strong> dentro de 30 días.
+          Cuando está activa, los registros más antiguos del tiempo configurado se eliminan del almacenamiento
+          (R2 y GitHub) y del historial. Puedes recuperarlos desde <strong>Recuperar registros</strong> dentro de 30 días.
         </p>
 
         {/* Toggle habilitar */}
@@ -156,7 +184,7 @@ export function SettingsPage() {
             ))}
           </div>
           <p className="text-[10px] text-[var(--color-text-3)]">
-            Los registros que superen <strong>{cleanupDays} días</strong> desde su creación se enviarán a la papelera de Drive. El sistema revisa diariamente.
+            Los registros que superen <strong>{cleanupDays} días</strong> desde su creación se eliminarán del almacenamiento (R2/GitHub). El sistema revisa diariamente.
           </p>
         </div>
 
@@ -164,7 +192,7 @@ export function SettingsPage() {
         {cleanupEnabled && (
           <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
             <span className="text-base leading-none">⚠️</span>
-            <span>Los registros irán a la <strong>papelera de Drive</strong> (no se borran permanentemente). Tienes 30 días para recuperarlos.</span>
+            <span>Los registros se <strong>eliminarán del almacenamiento</strong> (R2/GitHub). Tienes 30 días para recuperarlos desde "Recuperar registros".</span>
           </div>
         )}
       </Card>
@@ -232,6 +260,75 @@ export function SettingsPage() {
 
       {/* ── WhatsApp (sincronización por QR + envío) ── */}
       <WhatsAppSync />
+
+      {/* ── Subconfiguración de Trazabilidad ── */}
+      <Card as="section" className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Activity className="w-5 h-5 text-indigo-600" />
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">Opciones de Trazabilidad</h3>
+        </div>
+        <p className="text-xs text-[var(--color-text-2)]">
+          Habilita funciones adicionales dentro del módulo de trazabilidad para esta empresa.
+        </p>
+
+        {/* Registro de actividades */}
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-sm font-medium text-[var(--color-text)]">Registro de actividades</span>
+          <div className="relative flex-shrink-0" onClick={() => setActivityLog((v) => !v)}>
+            <div className={`w-11 h-6 rounded-full transition-colors ${activityLog ? 'bg-indigo-600' : 'bg-gray-300'}`} />
+            <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${activityLog ? 'translate-x-5' : 'translate-x-0'}`} />
+          </div>
+        </label>
+        <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
+          Muestra un historial de acciones (creación, finalización, envíos) en la pantalla principal.
+        </p>
+
+        {/* Enviar por correo */}
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-sm font-medium text-[var(--color-text)]">Enviar por correo</span>
+          <div className="relative flex-shrink-0" onClick={() => setSendEmail((v) => !v)}>
+            <div className={`w-11 h-6 rounded-full transition-colors ${sendEmail ? 'bg-indigo-600' : 'bg-gray-300'}`} />
+            <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${sendEmail ? 'translate-x-5' : 'translate-x-0'}`} />
+          </div>
+        </label>
+        <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
+          Envía automáticamente cada registro completado por correo electrónico.
+        </p>
+
+        {/* Campo de correo destinatario */}
+        <div className={`space-y-2 transition-opacity ${sendEmail ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+          <label className="text-xs font-medium text-[var(--color-text-2)]">Correo(s) destinatario(s)</label>
+          <input
+            type="email"
+            value={emailTo}
+            onChange={(e) => setEmailTo(e.target.value)}
+            placeholder="correo@empresa.com (o varios separados por coma)"
+            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <p className="text-[10px] text-[var(--color-text-3)]">
+            Los registros completados se enviarán a este correo. Para varios destinatarios, sepáralos con coma.
+          </p>
+        </div>
+      </Card>
+
+      <Button
+        onClick={() => void handleSaveTracer()}
+        loading={savingTracer}
+        fullWidth
+        leftIcon={<Save className="w-4 h-4" />}
+      >
+        Guardar opciones de trazabilidad
+      </Button>
+
+      {feedbackTracer?.startsWith('✓') && (
+        <div className="flex items-start gap-2 p-3 rounded-xl text-sm bg-emerald-50 text-emerald-700">
+          <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <span>{feedbackTracer}</span>
+        </div>
+      )}
+      {feedbackTracer && !feedbackTracer.startsWith('✓') && (
+        <ErrorState message={feedbackTracer} onRetry={() => void handleSaveTracer()} />
+      )}
 
       {/* ── Herramientas ── */}
       <div className="pt-2 border-t border-[var(--color-border)]">

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Database, Edit3, Link2, Loader2, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Database, Edit3, Link2, Loader2, Mail, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, Trash2, X } from 'lucide-react'
 import { apiRequest, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
@@ -637,6 +637,20 @@ export function WizardPage() {
     }
   }
 
+  // Envía el registro completo por correo electrónico.
+  const handleShareEmail = async () => {
+    if (!trackingCode) return
+    setFeedback('⏳ Enviando registro por correo…')
+    try {
+      const r = await apiRequest<{ message: string }>(`/operations/${trackingCode}/send-email`, {
+        method: 'POST',
+      })
+      setFeedback(`✓ ${r.message}`)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar por correo.')
+    }
+  }
+
   // ── Delete photo ──
   const handleDeletePhoto = async (photoIndex: number) => {
     if (!trackingCode) return
@@ -807,7 +821,10 @@ export function WizardPage() {
                 <Edit3 className="w-3.5 h-3.5" /> Editar
               </button>
               <button onClick={() => void handleShareOperation()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-[#128c7e] text-white text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
-                <Send className="w-3.5 h-3.5" /> Compartir
+                <Send className="w-3.5 h-3.5" /> WhatsApp
+              </button>
+              <button onClick={() => void handleShareEmail()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
+                <Mail className="w-3.5 h-3.5" /> Correo
               </button>
             </div>
           </div>
