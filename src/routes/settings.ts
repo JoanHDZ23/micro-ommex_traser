@@ -214,6 +214,8 @@ settingsRouter.get('/features', async (req, res) => {
     const doc = await db.collection(COLLECTION).findOne({ companyId })
     res.json({
       sheetsEnabled: doc?.sheetsEnabled === true,
+      activityLog: doc?.activityLog === true,
+      sendEmail: doc?.sendEmail === true,
     })
   } catch (err) {
     console.error('[settings] Error al leer features:', err)
@@ -224,28 +226,66 @@ settingsRouter.get('/features', async (req, res) => {
 /**
  * PUT /api/settings/features
  * Habilita/deshabilita funciones para la empresa.
- * Body: { companyId, sheetsEnabled }
+ * Body: { companyId, sheetsEnabled?, activityLog?, sendEmail? }
  */
 settingsRouter.put('/features', async (req, res) => {
-  const { companyId, sheetsEnabled } = req.body ?? {}
+  const { companyId, sheetsEnabled, activityLog, sendEmail } = req.body ?? {}
   if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
   try {
     const db = getDb()
+    const $set: Record<string, unknown> = {
+      companyId: companyId.trim(),
+      updatedAt: new Date().toISOString(),
+    }
+    if (typeof sheetsEnabled === 'boolean') $set.sheetsEnabled = sheetsEnabled
+    if (typeof activityLog === 'boolean') $set.activityLog = activityLog
+    if (typeof sendEmail === 'boolean') $set.sendEmail = sendEmail
+
     await db.collection(COLLECTION).updateOne(
       { companyId: companyId.trim() },
-      {
-        $set: {
-          companyId: companyId.trim(),
-          sheetsEnabled: Boolean(sheetsEnabled),
-          updatedAt: new Date().toISOString(),
-        },
-      },
+      { $set },
       { upsert: true },
     )
-    res.json({ message: 'Funciones actualizadas.', sheetsEnabled: Boolean(sheetsEnabled) })
+    res.json({ message: 'Funciones actualizadas.', ...$set })
   } catch (err) {
     console.error('[settings] Error al guardar features:', err)
     res.status(500).json({ message: 'Error al guardar funciones.' })
+  }
+})
+
+/**
+ * GET /api/settings/email?companyId=xxx
+ * Devuelve el correo destinatario al que se envían los registros.
+ */
+settingsRouter.get('/email', async (req, res) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const doc = await getDb().collection(COLLECTION).findOne({ companyId })
+    res.json({ emailTo: (doc?.emailTo as string) ?? '' })
+  } catch (err) {
+    console.error('[settings] Error al leer email:', err)
+    res.status(500).json({ message: 'Error al leer el correo destinatario.' })
+  }
+})
+
+/**
+ * PUT /api/settings/email
+ * Body: { companyId, emailTo }  — correo(s) destinatario(s) separados por coma
+ */
+settingsRouter.put('/email', async (req, res) => {
+  const { companyId, emailTo } = req.body ?? {}
+  if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    await getDb().collection(COLLECTION).updateOne(
+      { companyId: companyId.trim() },
+      { $set: { companyId: companyId.trim(), emailTo: (emailTo ?? '').trim(), updatedAt: new Date().toISOString() } },
+      { upsert: true },
+    )
+    res.json({ message: 'Correo destinatario guardado.', emailTo: (emailTo ?? '').trim() })
+  } catch (err) {
+    console.error('[settings] Error al guardar email:', err)
+    res.status(500).json({ message: 'Error al guardar el correo destinatario.' })
   }
 })
 

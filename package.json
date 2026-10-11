@@ -17,6 +17,7 @@
     "express": "5.1.0",
     "mongodb": "6.16.0",
     "nanoid": "5.1.5",
+    "nodemailer": "^10.1.0",
     "pdfjs-dist": "^6.4.299",
     "qrcode": "^1.5.4",
     "twilio": "^6.1.2",
@@ -26,6 +27,7 @@
     "@types/cors": "2.8.19",
     "@types/express": "5.0.6",
     "@types/node": "22.15.0",
+    "@types/nodemailer": "^8.0.2",
     "tsx": "4.19.4",
     "typescript": "5.8.3"
   }

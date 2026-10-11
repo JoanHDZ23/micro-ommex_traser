@@ -1,10 +1,32 @@
 import { Router } from 'express'
-import { getOperationsCollection, getProductsCatalogCollection } from '../lib/mongodb.js'
+import { getOperationsCollection, getProductsCatalogCollection, getDb } from '../lib/mongodb.js'
 import { generateTrackingCode } from '../lib/tracking-code.js'
 import { uploadToDrive, deletePhotoStorage } from '../lib/drive-upload.js'
+import { sendOperationEmail } from '../lib/email.js'
 import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, normalizeClientTimestamp, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
 
 export const operationsRouter = Router()
+
+/** Registra una entrada en el log de actividad de la empresa. */
+async function logActivity(
+  companyId: string | undefined,
+  action: string,
+  detail: string,
+  meta?: Record<string, unknown>,
+) {
+  if (!companyId) return
+  try {
+    await getDb().collection('activity_log').insertOne({
+      companyId,
+      action,
+      detail,
+      meta: meta ?? {},
+      createdAt: new Date().toISOString(),
+    })
+  } catch (err) {
+    console.error('[activity] Error al registrar:', err)
+  }
+}
 
 /** Borra todas las fotos (R2+GitHub) de una lista de registros de foto. */
 async function deleteAllPhotosStorage(photos: Array<{ fileId?: string; driveUrl?: string }>): Promise<void> {
@@ -99,6 +121,13 @@ operationsRouter.post('/', async (req, res) => {
 
     const col = getOperationsCollection()
     await col.insertOne(operation)
+
+    void logActivity(
+      operation.companyId,
+      'operacion_creada',
+      `Operación ${trackingCode} creada por ${operation.operatorName}`,
+      { trackingCode, operationType, operatorName: operation.operatorName },
+    )
 
     res.status(201).json({
       ...operation,
@@ -935,6 +964,39 @@ operationsRouter.patch('/:trackingCode/complete', async (req, res) => {
       { $set: { status: 'COMPLETADO', completedAt, updatedAt: new Date().toISOString() } },
     )
 
+    void logActivity(
+      operation.companyId as string | undefined,
+      'operacion_completada',
+      `Operación ${trackingCode} completada por ${operation.operatorName}`,
+      { trackingCode, operationType: operation.operationType, operatorName: operation.operatorName },
+    )
+
+    // Envío automático por correo si está habilitado para la empresa.
+    try {
+      const settings = operation.companyId
+        ? await getDb().collection('company_settings').findOne({ companyId: operation.companyId })
+        : null
+      if (settings?.sendEmail === true && settings?.emailTo) {
+        const opForEmail = {
+          trackingCode: operation.trackingCode,
+          operationType: operation.operationType,
+          vehiclePlate: operation.vehiclePlate,
+          operatorName: operation.operatorName,
+          createdAt: operation.createdAt,
+          completedAt,
+          photos: operation.photos as Array<{ driveUrl?: string; comment?: string; stepName?: string }>,
+          products: (operation.lineaBlanca ?? []) as Array<{
+            productCode: string
+            labelData?: { descripcion?: string }
+            photos: Array<{ driveUrl?: string; comment?: string }>
+          }>,
+        }
+        void sendOperationEmail(settings.emailTo as string, opForEmail)
+      }
+    } catch (err) {
+      console.error('[operations] Error al enviar correo de completado:', err)
+    }
+
     res.json({ message: 'Operación marcada como completada.', trackingCode, completedAt })
   } catch (err) {
     console.error('[operations] Error al completar:', err)
@@ -1389,5 +1451,83 @@ operationsRouter.patch('/:trackingCode/linea-blanca/:productCode/label', async (
   } catch (err) {
     console.error('[operations] Error al editar etiqueta:', err)
     res.status(500).json({ message: 'Error al editar datos de etiqueta.' })
+  }
+})
+
+/**
+ * POST /api/operations/:trackingCode/send-email
+ * Envía un registro completo por correo electrónico al destinatario configurado
+ * (o al "to" del body). Requiere que sendEmail esté habilitado o que se envíe "to".
+ * Body: { to? }
+ */
+operationsRouter.post('/:trackingCode/send-email', async (req, res) => {
+  const { trackingCode } = req.params
+  const { to: toOverride } = req.body ?? {}
+
+  try {
+    const col = getOperationsCollection()
+    const op = await col.findOne({ trackingCode })
+    if (!op) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const companyId = op.companyId as string | undefined
+    let to = (toOverride ?? '').trim()
+
+    if (!to && companyId) {
+      const settings = await getDb().collection('company_settings').findOne({ companyId })
+      to = (settings?.emailTo as string) ?? ''
+    }
+    if (!to) {
+      res.status(400).json({ message: 'No hay correo destinatario configurado para esta empresa.' })
+      return
+    }
+
+    const opForEmail = {
+      trackingCode: op.trackingCode,
+      operationType: op.operationType,
+      vehiclePlate: op.vehiclePlate,
+      operatorName: op.operatorName,
+      createdAt: op.createdAt,
+      completedAt: op.completedAt,
+      photos: (op.photos ?? []) as Array<{ driveUrl?: string; comment?: string; stepName?: string }>,
+      products: (op.lineaBlanca ?? []) as Array<{
+        productCode: string
+        labelData?: { descripcion?: string }
+        photos: Array<{ driveUrl?: string; comment?: string }>
+      }>,
+    }
+
+    const sent = await sendOperationEmail(to, opForEmail)
+    if (!sent) {
+      res.status(503).json({ message: 'Servidor de correo (SMTP) no configurado. Define SMTP_HOST, SMTP_USER, SMTP_PASS en las variables de entorno.' })
+      return
+    }
+
+    void logActivity(companyId, 'correo_enviado', `Registro ${trackingCode} enviado por correo a ${to}`, { trackingCode, to })
+    res.json({ message: `Registro enviado por correo a ${to}.`, to })
+  } catch (err) {
+    console.error('[operations] Error al enviar correo:', err)
+    res.status(500).json({ message: err instanceof Error ? err.message : 'No se pudo enviar el correo.' })
+  }
+})
+
+/**
+ * GET /api/activity?companyId=xxx&limit=50
+ * Devuelve el log de actividad de la empresa (más recientes primero).
+ */
+operationsRouter.get('/activity', async (req, res) => {
+  const { companyId, limit } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const lim = Math.min(Number(limit) || 50, 200)
+    const entries = await getDb()
+      .collection('activity_log')
+      .find({ companyId })
+      .sort({ createdAt: -1 })
+      .limit(lim)
+      .toArray()
+    res.json({ entries })
+  } catch (err) {
+    console.error('[activity] Error al leer:', err)
+    res.status(500).json({ message: 'Error al leer el log de actividad.' })
   }
 })

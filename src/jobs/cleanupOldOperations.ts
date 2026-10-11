@@ -2,19 +2,40 @@
  * Job de limpieza automática configurable:
  * - Solo corre si la empresa tiene cleanupEnabled = true en su configuración.
  * - Respeta cleanupDays (días antes de eliminar, default 20).
- * - Elimina las imágenes de la operación en R2 (borrado real por prefijo).
+ * - Elimina las imágenes de la operación en R2 (por prefijo) y en GitHub
+ *   (una por una, usando la referencia guardada). deletePhotoStorage ya borra
+ *   de ambos almacenamientos según corresponda.
  * - Se puede activar/desactivar y configurar desde la app en Configuración.
  */
 import { getOperationsCollection, getDb } from '../lib/mongodb.js'
+import { deletePhotoStorage } from '../lib/drive-upload.js'
 
 const DEFAULT_MAX_AGE_DAYS = 20
+
+type PhotoRef = { driveUrl?: string; fileId?: string }
+
+function collectPhotos(op: Record<string, unknown>): PhotoRef[] {
+  const refs: PhotoRef[] = []
+  const push = (ph: PhotoRef) => {
+    if (ph && (ph.driveUrl || ph.fileId)) refs.push(ph)
+  }
+
+  const general = (op.photos as PhotoRef[]) ?? []
+  for (const ph of general) push(ph)
+
+  const products = (op.lineaBlanca as Array<{ photos?: PhotoRef[] }>) ?? []
+  for (const prod of products) {
+    for (const ph of prod.photos ?? []) push(ph)
+  }
+
+  return refs
+}
 
 export async function runCleanupOldOperations(): Promise<{ deleted: number; skipped: string }> {
   try {
     const col = getOperationsCollection()
     const db = getDb()
 
-    // Lee todas las empresas con configuración de limpieza habilitada
     const settingsCursor = db.collection('company_settings').find({ cleanupEnabled: true })
     const allSettings = await settingsCursor.toArray()
 
@@ -38,20 +59,29 @@ export async function runCleanupOldOperations(): Promise<{ deleted: number; skip
       for (const op of oldOps) {
         const trackingCode = op.trackingCode as string
 
-        // Eliminar las imágenes de la operación en R2 (borrado real por prefijo).
+        // 1) Borrar cada foto de su almacenamiento (R2 y/o GitHub).
+        //    deletePhotoStorage detecta por fileId/driveUrl de dónde viene.
+        const photos = collectPhotos(op as Record<string, unknown>)
+        for (const ph of photos) {
+          try {
+            await deletePhotoStorage(ph)
+          } catch (storageErr) {
+            console.warn(`[cleanup] No se pudo eliminar foto de ${trackingCode}:`, storageErr instanceof Error ? storageErr.message : storageErr)
+          }
+        }
+
+        // 2) Best-effort: borrar por prefijo en R2 por si quedaran huérfanos.
         try {
           const { deleteByPrefix } = await import('../lib/storage.js')
           await deleteByPrefix(`operations/${trackingCode}/`)
-        } catch (storageErr) {
-          console.warn(`[cleanup] No se pudieron eliminar imágenes de ${trackingCode} en R2:`, storageErr instanceof Error ? storageErr.message : storageErr)
-        }
+        } catch { /* R2 puede no estar configurado */ }
 
-        // Eliminar de MongoDB
+        // 3) Eliminar de MongoDB
         await col.deleteOne({ trackingCode })
         totalDeleted++
       }
 
-      console.log(`[cleanup] Empresa ${companyId}: ${oldOps.length} operación(es) con más de ${days} días enviadas a papelera.`)
+      console.log(`[cleanup] Empresa ${companyId}: ${oldOps.length} operación(es) con más de ${days} días eliminadas (R2 + GitHub).`)
     }
 
     return { deleted: totalDeleted, skipped: '' }
