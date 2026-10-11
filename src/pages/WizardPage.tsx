@@ -64,6 +64,15 @@ export function WizardPage() {
   const { trackingCode } = useParams<{ trackingCode: string }>()
   const navigate = useNavigate()
 
+  // Retroceso: si hay historial, vuelve atrás; si no, al inicio.
+  const goBack = () => {
+    if (window.history.length > 1) {
+      navigate(-1)
+    } else {
+      navigate('/')
+    }
+  }
+
   const [operation, setOperation] = useState<Operation | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -104,6 +113,12 @@ export function WizardPage() {
   const [showDbModal, setShowDbModal] = useState(false)
   // Modal para sincronizar/conectar el WhatsApp de la empresa desde el registro.
   const [showWaSync, setShowWaSync] = useState(false)
+
+  // Modal para seleccionar qué elementos (productos/fotos) enviar a WhatsApp
+  // después de guardar un registro que ya estaba completado.
+  const [showSendSelector, setShowSendSelector] = useState(false)
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const [sendingSelected, setSendingSelected] = useState(false)
 
   // Búsqueda de productos existentes (para saber si ya existe)
   interface ProductMatch { productCode: string; descripcion?: string; photosCount: number; trackingCode: string; operationType: string }
@@ -348,6 +363,8 @@ export function WizardPage() {
   }
 
   const isCompleted = operation?.status === 'COMPLETADO'
+  // Reabierto desde completado: status = EN_PROCESO pero conserva completedAt.
+  const wasCompleted = !isCompleted && Boolean(operation?.completedAt)
   const lbProducts = operation?.lineaBlanca ?? []
   const activeLbData = lbProducts.find((p) => p.productCode === activeLbProduct)
 
@@ -513,6 +530,39 @@ export function WizardPage() {
     }
   }
 
+  // Envía por WhatsApp SOLO los productos seleccionados en el selector.
+  const handleSendSelected = async () => {
+    if (!trackingCode) return
+    const codes = Array.from(selectedItems).filter((c) => lbProducts.some((p) => p.productCode === c))
+    if (codes.length === 0) {
+      setFeedback('Selecciona al menos un elemento para enviar.')
+      return
+    }
+    setSendingSelected(true)
+    let ok = 0
+    let fail = 0
+    for (const code of codes) {
+      try {
+        await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode, productCode: code } })
+        ok++
+      } catch {
+        fail++
+      }
+    }
+    setSendingSelected(false)
+    setShowSendSelector(false)
+    setFeedback(fail === 0 ? `✓ Enviados ${ok} producto(s) por WhatsApp.` : `✓ ${ok} enviado(s), ${fail} fallido(s).`)
+  }
+
+  const toggleSelectedItem = (code: string) => {
+    setSelectedItems((prev) => {
+      const next = new Set(prev)
+      if (next.has(code)) next.delete(code)
+      else next.add(code)
+      return next
+    })
+  }
+
   const handleLbCapture = async (base64: string, comment: string) => {
     if (!trackingCode || !activeLbProduct) return
     const productCode = activeLbProduct
@@ -527,11 +577,31 @@ export function WizardPage() {
   // ── Finalize / Reopen ──
   const handleFinalize = async () => {
     if (!trackingCode) return
+    // Si la operación ya tenía completedAt, es un re-guardado (venía de completado).
+    const isResave = Boolean(operation?.completedAt)
     setUploading(true)
     try {
       await apiRequest(`/operations/${trackingCode}/complete`, { method: 'PATCH', body: { clientTimestamp: new Date().toISOString() } })
       await loadOperation()
-      setFeedback('✓ Registro completado')
+      setFeedback(isResave ? '✓ Cambios guardados' : '✓ Registro completado')
+
+      if (isResave) {
+        // Re-guardado: mostrar selector de elementos a enviar por WhatsApp.
+        // Por defecto, todos los productos vienen seleccionados.
+        setSelectedItems(new Set(lbProducts.map((p) => p.productCode)))
+        setShowSendSelector(true)
+      } else {
+        // Primer completado: enviar el registro completo a WhatsApp automáticamente.
+        setFeedback('✓ Registro completado · enviando a WhatsApp…')
+        try {
+          const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', {
+            method: 'POST', body: { trackingCode },
+          })
+          setFeedback(`✓ ${r.message}`)
+        } catch (err) {
+          setFeedback(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
+        }
+      }
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error.')
     } finally {
@@ -550,6 +620,20 @@ export function WizardPage() {
       setFeedback(err instanceof Error ? err.message : 'Error.')
     } finally {
       setUploading(false)
+    }
+  }
+
+  // Envía el registro completo por WhatsApp (manual, para registros ya completados).
+  const handleShareOperation = async () => {
+    if (!trackingCode) return
+    setFeedback('⏳ Enviando registro a WhatsApp…')
+    try {
+      const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', {
+        method: 'POST', body: { trackingCode },
+      })
+      setFeedback(`✓ ${r.message}`)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
     }
   }
 
@@ -667,7 +751,7 @@ export function WizardPage() {
   if (error || !operation) return (
     <div className="p-4 space-y-4">
       <ErrorState message={error ?? 'No encontrada.'} onRetry={() => void loadOperation()} />
-      <Button variant="ghost" size="sm" leftIcon={<ArrowLeft className="w-4 h-4" />} onClick={() => navigate('/')}>Volver</Button>
+      <Button variant="ghost" size="sm" leftIcon={<ArrowLeft className="w-4 h-4" />} onClick={goBack}>Volver</Button>
     </div>
   )
 
@@ -676,7 +760,7 @@ export function WizardPage() {
       <GuideModal storageKey="wizard" heading="Cómo registrar" steps={WIZARD_GUIDE} />
       {/* WhatsApp-style dark header */}
       <div className="flex-shrink-0 z-20 bg-white px-3 py-2.5 flex items-center gap-3 shadow-md">
-        <button onClick={() => navigate('/')} className="w-8 h-8 flex items-center justify-center">
+        <button onClick={goBack} className="w-8 h-8 flex items-center justify-center">
           <ArrowLeft className="w-5 h-5 text-gray-600" />
         </button>
         <div className="flex-1 min-w-0">
@@ -721,6 +805,9 @@ export function WizardPage() {
             <div className="flex gap-2">
               <button onClick={() => void handleReopen()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-white text-gray-600 text-xs font-medium flex items-center justify-center gap-1.5 border border-gray-200">
                 <Edit3 className="w-3.5 h-3.5" /> Editar
+              </button>
+              <button onClick={() => void handleShareOperation()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-[#128c7e] text-white text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
+                <Send className="w-3.5 h-3.5" /> Compartir
               </button>
             </div>
           </div>
@@ -1242,7 +1329,7 @@ export function WizardPage() {
             <div className="flex items-center justify-end mt-2 gap-2">
               <button onClick={() => void handleFinalize()} disabled={uploading}
                 className="px-4 py-1.5 rounded-full bg-[var(--color-primary)] text-white text-[11px] font-medium flex items-center gap-1.5 disabled:opacity-50">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Completar ({operation.photos.length + lbProducts.reduce((s, p) => s + p.photos.length, 0)} fotos)
+                <CheckCircle2 className="w-3.5 h-3.5" /> {wasCompleted ? 'Guardar' : 'Completar'} ({operation.photos.length + lbProducts.reduce((s, p) => s + p.photos.length, 0)} fotos)
               </button>
             </div>
           )}
@@ -1370,6 +1457,90 @@ export function WizardPage() {
             </div>
             <div className="overflow-y-auto p-4">
               <WhatsAppSync syncOnly />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Selector de elementos a enviar por WhatsApp (después de guardar un registro completado) */}
+      {showSendSelector && (
+        <div className="fixed inset-0 z-[95] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <Send className="w-4 h-4 text-[#128c7e]" /> Enviar por WhatsApp
+              </h3>
+              <button onClick={() => setShowSendSelector(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4 space-y-3">
+              <p className="text-xs text-gray-500">
+                Selecciona los productos que quieres enviar. Cada uno se envía como un álbum de fotos con su información.
+              </p>
+              {lbProducts.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">No hay productos para enviar.</p>
+              ) : (
+                <div className="space-y-2">
+                  {lbProducts.map((p) => {
+                    const checked = selectedItems.has(p.productCode)
+                    return (
+                      <label
+                        key={p.productCode}
+                        className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                          checked ? 'border-[#128c7e] bg-[#128c7e]/5' : 'border-gray-200 hover:bg-gray-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleSelectedItem(p.productCode)}
+                          className="w-4 h-4 accent-[#128c7e]"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-800 truncate">{p.productCode}</p>
+                          <p className="text-[11px] text-gray-500">{p.photos.length} foto(s){p.labelData?.descripcion ? ` · ${p.labelData.descripcion}` : ''}</p>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedItems(new Set(lbProducts.map((p) => p.productCode)))}
+                  className="text-[11px] text-[var(--color-primary)] font-medium"
+                >
+                  Seleccionar todo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedItems(new Set())}
+                  className="text-[11px] text-gray-500 font-medium"
+                >
+                  Limpiar
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200">
+              <button
+                onClick={() => setShowSendSelector(false)}
+                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => void handleSendSelected()}
+                disabled={sendingSelected || selectedItems.size === 0}
+                className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {sendingSelected ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Enviando…</>
+                ) : (
+                  <><Send className="w-4 h-4" /> Enviar ({selectedItems.size})</>
+                )}
+              </button>
             </div>
           </div>
         </div>

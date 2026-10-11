@@ -56,13 +56,25 @@ export function HomePage() {
       .catch(() => { /* sin conexión: el acceso se muestra igual para poder probar */ })
       .finally(() => setLoadingFeatures(false))
 
-    void apiRequest<{ operations: Array<{ operationType: string }>; products: Array<{ id: string }> }>(
+    void apiRequest<{
+      operations: Array<{ operationType: string }>
+      stats?: { entrantes: number; salientes: number; productos: number }
+    }>(
       `/operations/search-for-link?companyId=${encodeURIComponent(companyId)}`
     )
       .then((r) => {
+        if (r.stats) {
+          setStats({
+            entrantes: r.stats.entrantes,
+            salientes: r.stats.salientes,
+            productos: r.stats.productos,
+          })
+          return
+        }
+        // Fallback: calcular desde las operaciones retornadas.
         const entrantes = (r.operations ?? []).filter((o) => o.operationType === 'PRODUCTOS_ENTRANTES').length
         const salientes = (r.operations ?? []).filter((o) => o.operationType === 'PRODUCTOS_SALIENTES').length
-        setStats({ entrantes, salientes, productos: r.products?.length ?? 0 })
+        setStats({ entrantes, salientes, productos: 0 })
       })
       .catch(() => {})
       .finally(() => setLoadingStats(false))
