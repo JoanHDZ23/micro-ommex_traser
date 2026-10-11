@@ -185,7 +185,43 @@ operationsRouter.get('/search-for-link', async (req, res) => {
 
     const operations = await col.find(filter).sort({ createdAt: -1 }).limit(10).toArray()
 
-    res.json({ operations })
+    // Stats globales de la empresa: conteos reales de operaciones y productos.
+    const statsFilter: Record<string, unknown> = {}
+    if (companyId) statsFilter.companyId = companyId
+
+    const statsPipeline = [
+      { $match: statsFilter },
+      {
+        $facet: {
+          byType: [
+            { $group: { _id: '$operationType', count: { $sum: 1 } } },
+          ],
+          uniqueProducts: [
+            { $unwind: { path: '$lineaBlanca', preserveNullAndEmptyArrays: false } },
+            { $group: { _id: { $toLower: '$lineaBlanca.productCode' } } },
+            { $count: 'count' },
+          ],
+        },
+      },
+    ]
+
+    const [faceted] = await col.aggregate(statsPipeline).toArray() as Array<{
+      byType: Array<{ _id: string; count: number }>
+      uniqueProducts: Array<{ count: number }>
+    }>
+
+    // Productos del catálogo maestro (origin: 'catalog') que no provienen de
+    // operaciones y por tanto no están en el conteo uniqueProducts.
+    const catalog = getProductsCatalogCollection()
+    const catalogCount = await catalog.countDocuments({ ...statsFilter, origin: 'catalog' })
+
+    const stats = {
+      entrantes: faceted?.byType?.find((b) => b._id === 'PRODUCTOS_ENTRANTES')?.count ?? 0,
+      salientes: faceted?.byType?.find((b) => b._id === 'PRODUCTOS_SALIENTES')?.count ?? 0,
+      productos: (faceted?.uniqueProducts?.[0]?.count ?? 0) + catalogCount,
+    }
+
+    res.json({ operations, stats })
   } catch (err) {
     console.error('[operations] Error al buscar para vincular:', err)
     res.status(500).json({ message: 'Error al buscar operaciones.' })
