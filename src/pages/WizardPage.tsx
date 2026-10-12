@@ -529,20 +529,21 @@ export function WizardPage() {
   }
 
   // ── Adjuntos: audio y documento (subir + enviar por WhatsApp) ──
-  const sendAttachmentByWhatsApp = async (
+  // Adjunta un audio o documento AL REGISTRO (no lo envía por WhatsApp aquí).
+  // El envío por WhatsApp ocurre al completar/guardar el registro, junto con las fotos.
+  const attachToRecord = async (
     kind: 'audio' | 'document',
     file: File,
   ) => {
     if (!trackingCode) return
-    // Límite de tamaño: el archivo viaja como base64 (~+33%). 40MB de archivo
-    // ≈ 53MB de base64, por debajo del límite del servidor (60MB).
+    // El archivo viaja como base64 (~+33%). 40MB ≈ 53MB base64 (< 60MB del servidor).
     const MAX_BYTES = 40 * 1024 * 1024
     if (file.size > MAX_BYTES) {
       setFeedback(`El ${kind === 'audio' ? 'audio' : 'documento'} es muy grande (${(file.size / 1024 / 1024).toFixed(1)} MB). El máximo es 40 MB.`)
       return
     }
     setSendingAttachment(true)
-    setFeedback(`⏳ Subiendo ${kind === 'audio' ? 'el audio' : 'el documento'}…`)
+    setFeedback(`⏳ Adjuntando ${kind === 'audio' ? 'el audio' : 'el documento'}…`)
     try {
       const base64 = await fileToBase64(file)
       const upload = await apiRequest<{ url: string }>('/uploads/file', {
@@ -554,41 +555,15 @@ export function WizardPage() {
           companyId: operation?.companyId,
         },
       })
-      // 1. Guardar el adjunto en el registro (persiste aunque el WhatsApp falle).
-      try {
-        await apiRequest(`/operations/${trackingCode}/attachment`, {
-          method: 'POST',
-          body: { url: upload.url, mediaType: kind, fileName: file.name, mimeType: file.type || undefined },
-        })
-        await loadOperation()
-      } catch { /* si falla el guardado, igual se intenta enviar */ }
-
-      // 2. Enviar por WhatsApp (si falla, el adjunto ya quedó en el registro).
-      setFeedback(`⏳ Enviando por WhatsApp…`)
-      try {
-        if (kind === 'audio') {
-          await apiRequest('/whatsapp-web/send-audio', {
-            method: 'POST',
-            body: { trackingCode, audioUrl: upload.url, mimetype: file.type || undefined },
-          })
-          setFeedback('✓ Audio agregado al registro y enviado por WhatsApp')
-        } else {
-          await apiRequest('/whatsapp-web/send-document', {
-            method: 'POST',
-            body: {
-              trackingCode,
-              documentUrl: upload.url,
-              fileName: file.name,
-              mimetype: file.type || undefined,
-            },
-          })
-          setFeedback('✓ Documento agregado al registro y enviado por WhatsApp')
-        }
-      } catch (waErr) {
-        setFeedback(`✓ ${kind === 'audio' ? 'Audio' : 'Documento'} agregado al registro. No se pudo enviar por WhatsApp: ${waErr instanceof Error ? waErr.message : 'error'}`)
-      }
+      // Guardar el adjunto en el registro. Se enviará por WhatsApp al completar.
+      await apiRequest(`/operations/${trackingCode}/attachment`, {
+        method: 'POST',
+        body: { url: upload.url, mediaType: kind, fileName: file.name, mimeType: file.type || undefined },
+      })
+      await loadOperation()
+      setFeedback(`✓ ${kind === 'audio' ? 'Audio' : 'Documento'} agregado al registro. Se enviará por WhatsApp al completar.`)
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : `Error al subir ${kind === 'audio' ? 'el audio' : 'el documento'}`)
+      setFeedback(err instanceof Error ? err.message : `Error al adjuntar ${kind === 'audio' ? 'el audio' : 'el documento'}`)
     } finally {
       setSendingAttachment(false)
     }
@@ -1064,10 +1039,29 @@ export function WizardPage() {
                   // Grupo de una sola foto → tarjeta individual (comportamiento previo).
                   if (group.length === 1) {
                     const { photo, idx: i } = group[0]
+                    const attUrl = directUrl(photo) || (photo.driveUrl && /^https?:\/\//.test(photo.driveUrl) ? photo.driveUrl : null)
                     return (
                       <div key={`s-${i}`} className="flex justify-end">
                         <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
-                          {photoSrc(photo, 300) && (
+                          {/* Audio: reproductor */}
+                          {photo.mediaType === 'audio' ? (
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <Mic className="w-4 h-4 text-rose-500 flex-shrink-0" />
+                              {attUrl ? <audio src={attUrl} controls className="w-full h-8" /> : <span className="text-xs text-gray-500">Audio</span>}
+                            </div>
+                          ) : photo.mediaType === 'document' ? (
+                            /* Documento: tarjeta de archivo */
+                            <a href={attUrl ?? '#'} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-2 mb-1.5 p-2 rounded-md bg-white border border-gray-200 hover:bg-gray-50">
+                              <div className="w-9 h-9 rounded bg-blue-50 flex items-center justify-center flex-shrink-0">
+                                <FileText className="w-4 h-4 text-blue-500" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-gray-800 truncate">{photo.fileName || photo.comment || 'Documento'}</p>
+                                <p className="text-[9px] text-gray-400">Abrir documento</p>
+                              </div>
+                            </a>
+                          ) : photoSrc(photo, 300) && (
                             <img
                               src={photoSrc(photo, 300)!}
                               alt={photo.stepName}
@@ -1519,7 +1513,7 @@ export function WizardPage() {
                       setShowPlusMenu(false)
                       const f = e.target.files?.[0]
                       e.target.value = ''
-                      if (f) void sendAttachmentByWhatsApp('document', f)
+                      if (f) void attachToRecord('document', f)
                     }} />
                 </label>
               )}
@@ -1614,7 +1608,7 @@ export function WizardPage() {
         sending={sendingAttachment}
         onSend={(file) => {
           setShowAudioRecorder(false)
-          void sendAttachmentByWhatsApp('audio', file)
+          void attachToRecord('audio', file)
         }}
       />
 

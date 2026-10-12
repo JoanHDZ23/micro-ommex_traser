@@ -166,7 +166,7 @@ export function AudioRecorder({ open, onClose, onSend, sending }: AudioRecorderP
                 <button onClick={handleSend} disabled={sending}
                   className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white text-sm font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
                   {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                  {sending ? 'Enviando…' : 'Enviar'}
+                  {sending ? 'Adjuntando…' : 'Adjuntar al registro'}
                 </button>
               </div>
             </>
