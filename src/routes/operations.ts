@@ -33,7 +33,7 @@ async function deleteAllPhotosStorage(photos: Array<{ fileId?: string; driveUrl?
   for (const ph of photos) await deletePhotoStorage(ph)
 }
 
-const VALID_TYPES: OperationType[] = ['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES']
+const VALID_TYPES: OperationType[] = ['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES', 'ACTIVIDAD']
 
 /**
  * Registra (upsert) un producto en el catálogo maestro.
@@ -93,7 +93,7 @@ operationsRouter.post('/', async (req, res) => {
   const { operationType, operatorName, vehiclePlate, companyId } = req.body ?? {}
 
   if (!operationType || !VALID_TYPES.includes(operationType)) {
-    res.status(400).json({ message: 'operationType es requerido (PRODUCTOS_ENTRANTES o PRODUCTOS_SALIENTES).' })
+    res.status(400).json({ message: 'operationType es requerido (PRODUCTOS_ENTRANTES, PRODUCTOS_SALIENTES o ACTIVIDAD).' })
     return
   }
 

@@ -1,6 +1,6 @@
 // ── Tipos de operación ──────────────────────────────────────────────────
 
-export type OperationType = 'PRODUCTOS_ENTRANTES' | 'PRODUCTOS_SALIENTES'
+export type OperationType = 'PRODUCTOS_ENTRANTES' | 'PRODUCTOS_SALIENTES' | 'ACTIVIDAD'
 export type OperationStatus = 'EN_PROCESO' | 'COMPLETADO'
 
 // ── Configuración por tipo ──────────────────────────────────────────────
@@ -8,26 +8,31 @@ export type OperationStatus = 'EN_PROCESO' | 'COMPLETADO'
 export const MULTI_PHOTO_STEPS: Record<OperationType, number[]> = {
   PRODUCTOS_ENTRANTES: [0],
   PRODUCTOS_SALIENTES: [0],
+  ACTIVIDAD: [0],
 }
 
 export const PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
   PRODUCTOS_ENTRANTES: [],
   PRODUCTOS_SALIENTES: [],
+  ACTIVIDAD: [],
 }
 
 export const OPTIONAL_PRODUCT_CODE_STEPS: Record<OperationType, number[]> = {
   PRODUCTOS_ENTRANTES: [],
   PRODUCTOS_SALIENTES: [],
+  ACTIVIDAD: [],
 }
 
 export const OPTIONAL_STEPS: Record<OperationType, number[]> = {
   PRODUCTOS_ENTRANTES: [0],
   PRODUCTOS_SALIENTES: [0],
+  ACTIVIDAD: [0],
 }
 
 export const FREE_STEPS: Record<OperationType, number[]> = {
   PRODUCTOS_ENTRANTES: [0],
   PRODUCTOS_SALIENTES: [0],
+  ACTIVIDAD: [0],
 }
 
 /** Pasos para revisión de Línea Blanca — ya no se usa como secuencia fija */
