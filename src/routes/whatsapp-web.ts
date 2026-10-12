@@ -304,13 +304,15 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
     const delay = (ms: number) => new Promise((r) => setTimeout(r, ms))
     const PAUSE = 1500 // pausa entre mensajes (anti-spam)
 
-    type Photo = { driveUrl?: string; fileId?: string; comment?: string; stepName?: string; timestamp?: string }
-    const isSendable = (ph: Photo) => {
+    type Photo = { driveUrl?: string; fileId?: string; comment?: string; stepName?: string; timestamp?: string; mediaType?: 'image' | 'audio' | 'document'; fileName?: string; mimeType?: string }
+    const hasUrl = (ph: Photo) => {
       const u = ph.driveUrl
       return Boolean(u && u !== 'pending-verification' && /^https?:\/\//.test(u))
     }
+    // Sólo las imágenes van por el flujo de foto/álbum.
+    const isSendable = (ph: Photo) => hasUrl(ph) && (!ph.mediaType || ph.mediaType === 'image')
     // Una nota es un mensaje de solo texto (sin imagen) con comentario.
-    const isNote = (ph: Photo) => !isSendable(ph) && Boolean((ph.comment ?? '').trim())
+    const isNote = (ph: Photo) => !hasUrl(ph) && Boolean((ph.comment ?? '').trim())
 
     // Fechas en hora de Colombia (el servidor corre en UTC).
     const fmt = (iso?: string) =>
@@ -341,6 +343,25 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
         const txt = hora ? `📝 ${item.comment}\n🕒 ${hora}` : `📝 ${item.comment}`
         await uSendText(to, txt, companyId)
         sent++
+        await delay(PAUSE)
+        i++
+        continue
+      }
+
+      // Audio: enviar como nota de voz, no como imagen.
+      if (item.mediaType === 'audio' && hasUrl(item)) {
+        try { await uSendAudio(to, item.driveUrl as string, companyId, item.mimeType) ; sent++ } catch { /* continúa */ }
+        await delay(PAUSE)
+        i++
+        continue
+      }
+
+      // Documento: enviar como archivo, no como imagen.
+      if (item.mediaType === 'document' && hasUrl(item)) {
+        try {
+          await uSendDocument(to, item.driveUrl as string, { fileName: item.fileName, caption: item.comment, mimetype: item.mimeType }, companyId)
+          sent++
+        } catch { /* continúa */ }
         await delay(PAUSE)
         i++
         continue
