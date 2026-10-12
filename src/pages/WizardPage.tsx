@@ -137,19 +137,20 @@ export function WizardPage() {
   // Editor de imagen (marcador): intercepta una foto general antes de guardarla.
   const [imgEditor, setImgEditor] = useState<{ src: string; comment: string } | null>(null)
 
-  // Selección de destino de WhatsApp (varios chats/grupos configurados).
+  // Selección de destino(s) de WhatsApp (varios chats/grupos configurados).
   type WaDest = { id: string; label: string; to: string }
-  const [destModal, setDestModal] = useState<{ open: boolean; options: WaDest[]; resolve: ((to: string | null) => void) | null }>(
+  const [destModal, setDestModal] = useState<{ open: boolean; options: WaDest[]; resolve: ((tos: string[] | null) => void) | null }>(
     { open: false, options: [], resolve: null },
   )
+  const [destSelected, setDestSelected] = useState<Set<string>>(new Set())
 
   /**
-   * Resuelve a qué destino enviar. Carga los destinos configurados:
-   *  - 0 → null (el backend usará el legacy o avisará).
+   * Resuelve a qué destino(s) enviar. Carga los destinos configurados:
+   *  - 0 → [] (el backend usará el legacy o avisará).
    *  - 1 → ese destino directo.
-   *  - >1 → abre un modal y espera la elección del usuario (null si cancela).
+   *  - >1 → abre un modal de selección múltiple (null si cancela).
    */
-  const pickDestination = async (): Promise<string | null | undefined> => {
+  const pickDestinations = async (): Promise<string[] | null | undefined> => {
     const companyId = getCompanyId()
     if (!companyId) return undefined
     try {
@@ -157,16 +158,24 @@ export function WizardPage() {
         `/settings/whatsapp?companyId=${encodeURIComponent(companyId)}`,
       )
       const opts = (r.destinations ?? []).filter((d) => d?.to)
-      if (opts.length <= 1) return opts[0]?.to ?? r.whatsappTo ?? undefined
-      return await new Promise<string | null>((resolve) => setDestModal({ open: true, options: opts, resolve }))
+      if (opts.length <= 1) return opts.length === 1 ? [opts[0].to] : (r.whatsappTo ? [r.whatsappTo] : [])
+      setDestSelected(new Set(opts.map((d) => d.to)))
+      return await new Promise<string[] | null>((resolve) => setDestModal({ open: true, options: opts, resolve }))
     } catch {
       return undefined
     }
   }
 
-  const chooseDestination = (to: string | null) => {
-    destModal.resolve?.(to)
+  const confirmDestinations = () => {
+    destModal.resolve?.([...destSelected])
     setDestModal({ open: false, options: [], resolve: null })
+  }
+  const cancelDestinations = () => {
+    destModal.resolve?.(null)
+    setDestModal({ open: false, options: [], resolve: null })
+  }
+  const toggleDest = (to: string) => {
+    setDestSelected((prev) => { const n = new Set(prev); n.has(to) ? n.delete(to) : n.add(to); return n })
   }
 
   // Registro manual de actividad
@@ -709,22 +718,25 @@ export function WizardPage() {
       setFeedback('Selecciona al menos un elemento para enviar.')
       return
     }
-    const to = await pickDestination()
-    if (to === null) return // canceló
+    const tos = await pickDestinations()
+    if (tos === null) return // canceló
+    const targets = (tos && tos.length) ? tos : [undefined] // undefined → default del backend
     setSendingSelected(true)
     let ok = 0
     let fail = 0
-    for (const code of codes) {
-      try {
-        await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode, productCode: code, ...(to ? { to } : {}) } })
-        ok++
-      } catch {
-        fail++
+    for (const to of targets) {
+      for (const code of codes) {
+        try {
+          await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode, productCode: code, ...(to ? { to } : {}) } })
+          ok++
+        } catch {
+          fail++
+        }
       }
     }
     setSendingSelected(false)
     setShowSendSelector(false)
-    setFeedback(fail === 0 ? `✓ Enviados ${ok} producto(s) por WhatsApp.` : `✓ ${ok} enviado(s), ${fail} fallido(s).`)
+    setFeedback(fail === 0 ? `✓ Enviados ${ok} envío(s) por WhatsApp.` : `✓ ${ok} enviado(s), ${fail} fallido(s).`)
   }
 
   const toggleSelectedItem = (code: string) => {
@@ -758,23 +770,12 @@ export function WizardPage() {
       await loadOperation()
       setFeedback(isResave ? '✓ Cambios guardados' : '✓ Registro completado')
 
-      if (isResave) {
-        // Re-guardado: mostrar selector de elementos a enviar por WhatsApp.
-        // Por defecto, todos los productos vienen seleccionados.
-        setSelectedItems(new Set(lbProducts.map((p) => p.productCode)))
-        setShowSendSelector(true)
-      } else {
-        // Primer completado: enviar el registro completo a WhatsApp automáticamente.
-        setFeedback('✓ Registro completado · enviando a WhatsApp…')
-        try {
-          const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', {
-            method: 'POST', body: { trackingCode },
-          })
-          setFeedback(`✓ ${r.message}`)
-        } catch (err) {
-          setFeedback(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
-        }
-      }
+      // Ya NO se envía automáticamente al completar: el usuario elige el canal
+      // (WhatsApp/correo) y, si hay varios chats, a cuáles enviar, usando los
+      // botones de compartir del registro.
+      setFeedback(isResave
+        ? '✓ Cambios guardados. Usa "WhatsApp" o "Correo" para compartir.'
+        : '✓ Registro completado. Usa "WhatsApp" o "Correo" para compartir.')
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error.')
     } finally {
@@ -799,14 +800,20 @@ export function WizardPage() {
   // Envía el registro completo por WhatsApp (manual, para registros ya completados).
   const handleShareOperation = async () => {
     if (!trackingCode) return
-    const to = await pickDestination()
-    if (to === null) return // el usuario canceló el selector
+    const tos = await pickDestinations()
+    if (tos === null) return // el usuario canceló el selector
     setFeedback('⏳ Enviando registro a WhatsApp…')
     try {
-      const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', {
-        method: 'POST', body: { trackingCode, ...(to ? { to } : {}) },
-      })
-      setFeedback(`✓ ${r.message}`)
+      if (!tos || tos.length === 0) {
+        const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode } })
+        setFeedback(`✓ ${r.message}`)
+      } else {
+        let ok = 0
+        for (const to of tos) {
+          try { await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to } }); ok++ } catch { /* sigue */ }
+        }
+        setFeedback(ok === tos.length ? `✓ Registro enviado a ${ok} chat(s).` : `✓ Enviado a ${ok} de ${tos.length} chat(s).`)
+      }
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
     }
@@ -1789,36 +1796,43 @@ export function WizardPage() {
         </div>
       )}
 
-      {/* Selector de destino de WhatsApp (cuando hay varios chats/grupos configurados) */}
+      {/* Selector de destino(s) de WhatsApp — selección múltiple de chats/grupos */}
       {destModal.open && (
         <div className="fixed inset-0 z-[96] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
               <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                <Send className="w-4 h-4 text-[#128c7e]" /> ¿A qué chat/grupo enviar?
+                <Send className="w-4 h-4 text-[#128c7e]" /> ¿A qué chats enviar?
               </h3>
-              <button onClick={() => chooseDestination(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+              <button onClick={cancelDestinations} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
                 <X className="w-4 h-4 text-gray-500" />
               </button>
             </div>
             <div className="overflow-y-auto p-4 space-y-2">
-              {destModal.options.map((d) => (
-                <button
-                  key={d.id}
-                  onClick={() => chooseDestination(d.to)}
-                  className="w-full text-left p-3 rounded-xl border border-gray-200 hover:border-[#128c7e] hover:bg-emerald-50 transition-colors"
-                >
-                  <p className="text-sm font-medium text-gray-800">{d.label}</p>
-                  <p className="text-[11px] text-gray-400 truncate">{d.to}</p>
-                </button>
-              ))}
+              {destModal.options.map((d) => {
+                const on = destSelected.has(d.to)
+                return (
+                  <button
+                    key={d.id}
+                    onClick={() => toggleDest(d.to)}
+                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-colors text-left ${on ? 'border-[#128c7e] bg-emerald-50' : 'border-gray-200 hover:bg-gray-50'}`}
+                  >
+                    <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${on ? 'bg-[#128c7e] border-[#128c7e]' : 'border-gray-300'}`}>
+                      {on && <CheckCircle2 className="w-4 h-4 text-white" />}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{d.label}</p>
+                      <p className="text-[11px] text-gray-400 truncate">{d.to}</p>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
-            <div className="px-4 py-3 border-t border-gray-200">
-              <button
-                onClick={() => chooseDestination(null)}
-                className="w-full py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600"
-              >
-                Cancelar
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200">
+              <button onClick={cancelDestinations} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600">Cancelar</button>
+              <button onClick={confirmDestinations} disabled={destSelected.size === 0}
+                className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                <Send className="w-4 h-4" /> Enviar ({destSelected.size})
               </button>
             </div>
           </div>

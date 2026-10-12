@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Calendar, Camera, Clock, Edit3, ExternalLink, FileText, MapPin, MessageCircle, MessageSquare, Mic, Package, Share2, Trash2, User, X } from 'lucide-react'
+import { ArrowLeft, Calendar, Camera, CheckCircle2, Clock, Edit3, ExternalLink, FileText, Loader2, Mail, MapPin, MessageCircle, MessageSquare, Mic, Package, Send, Share2, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId } from '../lib/context'
@@ -196,8 +196,8 @@ export function OperationDetailPage() {
         Sincronizar WhatsApp
       </Button>
 
-      {/* Enviar al WhatsApp configurado (foto + mensaje por producto, en orden) */}
-      <SendWhatsAppButton trackingCode={operation.trackingCode} />
+      {/* Compartir: WhatsApp (con selección de chats si hay varios) o correo */}
+      <ShareButton trackingCode={operation.trackingCode} companyId={operation.companyId} />
 
       {/* Modal: sincronización de WhatsApp (solo QR, sin ID de grupo) */}
       {showWaSync && (
@@ -421,37 +421,158 @@ function PhotoCard({ photo, onClick, useCommentAsTitle }: { photo: PhotoRecord; 
   )
 }
 
-/** Envía el registro completo (info + fotos en orden) al WhatsApp configurado. */
-function SendWhatsAppButton({ trackingCode }: { trackingCode: string }) {
+/**
+ * Compartir el registro: abre un modal para elegir WhatsApp o Correo.
+ * - WhatsApp: si hay más de un chat/grupo configurado, el usuario selecciona a
+ *   cuáles enviar (se envía una vez por cada destino). Si hay uno, va directo.
+ * - Correo: envía al/los correo(s) configurados en Ajustes.
+ */
+type WaDest = { id: string; label: string; to: string }
+function ShareButton({ trackingCode, companyId }: { trackingCode: string; companyId?: string }) {
+  const [open, setOpen] = useState(false)
+  const [step, setStep] = useState<'channel' | 'whatsapp'>('channel')
   const [sending, setSending] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [dests, setDests] = useState<WaDest[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
 
-  const send = async () => {
+  const openModal = async () => {
+    setOpen(true); setStep('channel'); setMsg(null); setSelected(new Set())
+    if (companyId) {
+      try {
+        const r = await apiRequest<{ destinations?: WaDest[]; whatsappTo?: string }>(
+          `/settings/whatsapp?companyId=${encodeURIComponent(companyId)}`,
+        )
+        const list = (r.destinations ?? []).filter((d) => d?.to)
+        setDests(list)
+      } catch { setDests([]) }
+    }
+  }
+
+  // Envía a WhatsApp. `tos`: lista de destinos; si está vacía, usa el default del backend.
+  const sendWhatsApp = async (tos: string[]) => {
     setSending(true); setMsg(null)
     try {
-      const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', {
-        method: 'POST', body: { trackingCode },
-      })
-      setMsg(`✓ ${r.message}`)
+      if (tos.length === 0) {
+        const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode } })
+        setMsg(`✓ ${r.message}`)
+      } else {
+        let ok = 0
+        for (const to of tos) {
+          try { await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to } }); ok++ } catch { /* sigue */ }
+        }
+        setMsg(ok === tos.length ? `✓ Registro enviado a ${ok} chat(s).` : `✓ Enviado a ${ok} de ${tos.length} chat(s).`)
+      }
+      setOpen(false)
     } catch (err) {
       setMsg(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
     } finally { setSending(false) }
   }
 
+  const onPickWhatsApp = () => {
+    // 0 o 1 destino → enviar directo; 2+ → pedir selección.
+    if (dests.length <= 1) void sendWhatsApp(dests.length === 1 ? [dests[0].to] : [])
+    else { setStep('whatsapp'); setSelected(new Set(dests.map((d) => d.to))) }
+  }
+
+  const sendEmail = async () => {
+    setSending(true); setMsg(null)
+    try {
+      const r = await apiRequest<{ message: string }>(`/operations/${trackingCode}/send-email`, { method: 'POST' })
+      setMsg(`✓ ${r.message}`)
+      setOpen(false)
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'No se pudo enviar por correo.')
+    } finally { setSending(false) }
+  }
+
+  const toggle = (to: string) => {
+    setSelected((prev) => { const n = new Set(prev); n.has(to) ? n.delete(to) : n.add(to); return n })
+  }
+
   return (
     <div className="space-y-2">
       <Button
-        onClick={() => void send()}
-        loading={sending}
+        onClick={() => void openModal()}
         fullWidth
         leftIcon={<Share2 className="w-4 h-4" />}
         className="bg-[#128c7e] hover:bg-[#128c7e] text-white active:scale-[0.98]"
       >
-        Enviar por WhatsApp
+        Enviar / Compartir
       </Button>
       {msg && (
         <div className={`p-2.5 rounded-lg text-xs text-center ${msg.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
           {msg}
+        </div>
+      )}
+
+      {open && (
+        <div className="fixed inset-0 z-[95] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <Share2 className="w-4 h-4 text-[#128c7e]" /> {step === 'channel' ? 'Enviar registro' : 'Elige los chats'}
+              </h3>
+              <button onClick={() => setOpen(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            {step === 'channel' ? (
+              <div className="p-4 space-y-2">
+                <p className="text-xs text-gray-500 mb-1">¿Por dónde quieres enviar el registro?</p>
+                <button onClick={() => onPickWhatsApp()} disabled={sending}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-[#128c7e] hover:bg-emerald-50 transition-colors disabled:opacity-50">
+                  <div className="w-10 h-10 rounded-full bg-[#128c7e]/10 flex items-center justify-center flex-shrink-0">
+                    <MessageCircle className="w-5 h-5 text-[#128c7e]" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-sm font-semibold text-gray-800">WhatsApp</p>
+                    <p className="text-[11px] text-gray-400">{dests.length > 1 ? `${dests.length} chats configurados — elige a cuáles` : 'Enviar al chat configurado'}</p>
+                  </div>
+                </button>
+                <button onClick={() => void sendEmail()} disabled={sending}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-indigo-400 hover:bg-indigo-50 transition-colors disabled:opacity-50">
+                  <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0">
+                    <Mail className="w-5 h-5 text-indigo-500" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-sm font-semibold text-gray-800">Correo electrónico</p>
+                    <p className="text-[11px] text-gray-400">Enviar al correo configurado en Ajustes</p>
+                  </div>
+                </button>
+                {sending && <p className="text-xs text-gray-500 text-center pt-1">Enviando…</p>}
+              </div>
+            ) : (
+              <>
+                <div className="overflow-y-auto p-4 space-y-2">
+                  {dests.map((d) => {
+                    const on = selected.has(d.to)
+                    return (
+                      <button key={d.id} onClick={() => toggle(d.to)}
+                        className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-colors text-left ${on ? 'border-[#128c7e] bg-emerald-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                        <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${on ? 'bg-[#128c7e] border-[#128c7e]' : 'border-gray-300'}`}>
+                          {on && <CheckCircle2 className="w-4 h-4 text-white" />}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{d.label}</p>
+                          <p className="text-[10px] text-gray-400 truncate">{d.to}</p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200">
+                  <button onClick={() => setStep('channel')} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600">Atrás</button>
+                  <button onClick={() => void sendWhatsApp([...selected])} disabled={sending || selected.size === 0}
+                    className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                    {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    Enviar ({selected.size})
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
