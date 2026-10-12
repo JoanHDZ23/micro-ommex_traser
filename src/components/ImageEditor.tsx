@@ -136,7 +136,7 @@ export function ImageEditor({ imageSrc, onConfirm, onCancel }: ImageEditorProps)
   const cursorClass = tool === 'eraser' ? 'cursor-cell' : 'cursor-crosshair'
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-black">
+    <div className="fixed inset-0 z-[120] flex flex-col bg-black">
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-2 px-4 py-3 bg-black/80 backdrop-blur">
         <button

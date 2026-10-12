@@ -1916,7 +1916,7 @@ export function WizardPage() {
       )}
 
       {/* Bandeja de revisión de fotos tomadas con la cámara del dispositivo */}
-      {showCaptureTray && (
+      {showCaptureTray && trayEditIdx === null && (
         <div className="fixed inset-0 z-[95] bg-black/60 flex items-end sm:items-center justify-center">
           <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
