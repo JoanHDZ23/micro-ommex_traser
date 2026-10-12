@@ -92,9 +92,24 @@ async function cleanupCatalogIfOrphan(companyId: string | undefined, productCode
 operationsRouter.post('/', async (req, res) => {
   const { operationType, operatorName, vehiclePlate, companyId } = req.body ?? {}
 
-  if (!operationType || !VALID_TYPES.includes(operationType)) {
-    res.status(400).json({ message: 'operationType es requerido (PRODUCTOS_ENTRANTES, PRODUCTOS_SALIENTES o ACTIVIDAD).' })
+  if (!operationType || typeof operationType !== 'string' || !operationType.trim()) {
+    res.status(400).json({ message: 'operationType es requerido.' })
     return
+  }
+
+  // Acepta los tipos por defecto o cualquier tipo personalizado configurado por
+  // la empresa en company_settings.operationTypes.
+  if (!VALID_TYPES.includes(operationType as OperationType)) {
+    let allowed = false
+    if (companyId) {
+      const settings = await getDb().collection('company_settings').findOne({ companyId })
+      const custom = Array.isArray(settings?.operationTypes) ? (settings!.operationTypes as Array<{ id?: string }>) : []
+      allowed = custom.some((t) => t?.id === operationType)
+    }
+    if (!allowed) {
+      res.status(400).json({ message: 'operationType no es válido. Configúralo en Configuración → Tipos de operación.' })
+      return
+    }
   }
 
   if (!operatorName?.trim()) {
@@ -131,8 +146,8 @@ operationsRouter.post('/', async (req, res) => {
 
     res.status(201).json({
       ...operation,
-      steps: getStepsForType(operationType),
-      totalSteps: getStepsForType(operationType).length,
+      steps: getStepsForType(operationType as OperationType),
+      totalSteps: getStepsForType(operationType as OperationType).length,
       lineaBlancaSteps: [...LINEA_BLANCA_STEPS],
     })
   } catch (err) {

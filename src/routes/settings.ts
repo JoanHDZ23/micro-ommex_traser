@@ -381,3 +381,84 @@ settingsRouter.put('/whatsapp', async (req, res) => {
     res.status(500).json({ message: 'Error al guardar el destino de WhatsApp.' })
   }
 })
+
+/** Tipo de operación configurable por la empresa. */
+type OperationTypeDef = { id: string; label: string; descripcion?: string }
+
+/** Tipos de operación por defecto (siempre disponibles). */
+const DEFAULT_OPERATION_TYPES: OperationTypeDef[] = [
+  { id: 'PRODUCTOS_ENTRANTES', label: 'Operación Entrante', descripcion: 'Registro de productos que ingresan al almacén o local.' },
+  { id: 'PRODUCTOS_SALIENTES', label: 'Operación Saliente', descripcion: 'Registro de productos que salen para despacho o entrega.' },
+  { id: 'ACTIVIDAD', label: 'Registro de actividad', descripcion: 'Registro fotográfico de una actividad.' },
+]
+
+/** Convierte una etiqueta libre en un id en MAYÚSCULAS_CON_GUIONES. */
+function slugifyTypeId(label: string): string {
+  return label
+    .trim()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quita acentos
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40) || `TIPO_${Date.now()}`
+}
+
+function readCustomTypes(doc: Record<string, unknown> | null): OperationTypeDef[] {
+  const list = Array.isArray(doc?.operationTypes) ? (doc!.operationTypes as OperationTypeDef[]) : []
+  return list
+    .filter((t) => t && typeof t.id === 'string' && t.id.trim() && typeof t.label === 'string' && t.label.trim())
+    .map((t) => ({ id: t.id.trim(), label: t.label.trim(), descripcion: (t.descripcion ?? '').trim() || undefined }))
+}
+
+/**
+ * GET /api/settings/operation-types?companyId=xxx
+ * Devuelve los tipos de operación: los por defecto + los personalizados de la empresa.
+ */
+settingsRouter.get('/operation-types', async (req, res) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const doc = await getDb().collection(COLLECTION).findOne({ companyId }) as Record<string, unknown> | null
+    const custom = readCustomTypes(doc)
+    res.json({ defaults: DEFAULT_OPERATION_TYPES, custom, all: [...DEFAULT_OPERATION_TYPES, ...custom] })
+  } catch (err) {
+    console.error('[settings] Error al leer tipos de operación:', err)
+    res.status(500).json({ message: 'Error al leer los tipos de operación.' })
+  }
+})
+
+/**
+ * PUT /api/settings/operation-types
+ * Body: { companyId, types: Array<{ id?, label, descripcion? }> }
+ * Guarda SOLO los tipos personalizados (los por defecto no se tocan).
+ * Rechaza colisiones con los ids por defecto.
+ */
+settingsRouter.put('/operation-types', async (req, res) => {
+  const { companyId, types } = req.body ?? {}
+  if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  if (!Array.isArray(types)) { res.status(400).json({ message: 'types debe ser un arreglo.' }); return }
+
+  const defaultIds = new Set(DEFAULT_OPERATION_TYPES.map((t) => t.id))
+  const seen = new Set<string>()
+  const clean: OperationTypeDef[] = []
+  for (const t of types as Array<Partial<OperationTypeDef>>) {
+    const label = String(t.label ?? '').trim()
+    if (!label) continue
+    const id = (t.id && String(t.id).trim()) ? String(t.id).trim() : slugifyTypeId(label)
+    if (defaultIds.has(id) || seen.has(id)) continue // no duplicar defaults ni repetidos
+    seen.add(id)
+    clean.push({ id, label, descripcion: String(t.descripcion ?? '').trim() || undefined })
+  }
+
+  try {
+    await getDb().collection(COLLECTION).updateOne(
+      { companyId: companyId.trim() },
+      { $set: { companyId: companyId.trim(), operationTypes: clean, updatedAt: new Date().toISOString() } },
+      { upsert: true },
+    )
+    res.json({ message: 'Tipos de operación guardados.', custom: clean, all: [...DEFAULT_OPERATION_TYPES, ...clean] })
+  } catch (err) {
+    console.error('[settings] Error al guardar tipos de operación:', err)
+    res.status(500).json({ message: 'Error al guardar los tipos de operación.' })
+  }
+})
