@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Camera, CheckCircle2, Database, Edit3, Link2, Loader2, Mail, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, Trash2, X } from 'lucide-react'
-import { apiRequest, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
+import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, Trash2, X } from 'lucide-react'
+import { apiRequest, fileToBase64, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
+import { AudioRecorder } from '../components/AudioRecorder'
+import { CatalogPicker } from '../components/CatalogPicker'
 import { Button, ErrorState, LoadingState } from '../components/ui'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
@@ -12,6 +14,7 @@ import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { compressImageToBase64 } from '../lib/image-compress'
 import { BarcodeScanner } from '../components/BarcodeScanner'
 import type { PhotoRecord } from '../lib/api'
+import { useTracerFeatures } from '../lib/tracer-features'
 
 /** URL directa de R2: driveUrl http(s) que no es de Google. */
 function directUrl(photo: Pick<PhotoRecord, 'driveUrl'>): string | null {
@@ -81,6 +84,8 @@ export function WizardPage() {
   const [showCamera, setShowCamera] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
 
+  const features = useTracerFeatures()
+
   // ── Captura con la app de cámara del dispositivo (estilo WhatsApp) ──
   // Las fotos tomadas se acumulan aquí y se revisan antes de enviar.
   const [captureTray, setCaptureTray] = useState<string[]>([]) // dataURLs de las fotos tomadas
@@ -114,11 +119,21 @@ export function WizardPage() {
   // Modal para sincronizar/conectar el WhatsApp de la empresa desde el registro.
   const [showWaSync, setShowWaSync] = useState(false)
 
+  // ── Adjuntos: audio, catálogo, documento (estilo WhatsApp) ──
+  const [showAudioRecorder, setShowAudioRecorder] = useState(false)
+  const [showCatalogPicker, setShowCatalogPicker] = useState(false)
+  const [sendingAttachment, setSendingAttachment] = useState(false)
+
   // Modal para seleccionar qué elementos (productos/fotos) enviar a WhatsApp
   // después de guardar un registro que ya estaba completado.
   const [showSendSelector, setShowSendSelector] = useState(false)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [sendingSelected, setSendingSelected] = useState(false)
+
+  // Registro manual de actividad
+  const [showActivityModal, setShowActivityModal] = useState(false)
+  const [activityText, setActivityText] = useState('')
+  const [activitySaving, setActivitySaving] = useState(false)
 
   // Búsqueda de productos existentes (para saber si ya existe)
   interface ProductMatch { productCode: string; descripcion?: string; photosCount: number; trackingCode: string; operationType: string }
@@ -444,6 +459,76 @@ export function WizardPage() {
     }
   }
 
+  // ── Adjuntos: audio y documento (subir + enviar por WhatsApp) ──
+  const sendAttachmentByWhatsApp = async (
+    kind: 'audio' | 'document',
+    file: File,
+  ) => {
+    if (!trackingCode) return
+    setSendingAttachment(true)
+    setFeedback(`⏳ Subiendo ${kind === 'audio' ? 'el audio' : 'el documento'}…`)
+    try {
+      const base64 = await fileToBase64(file)
+      const upload = await apiRequest<{ url: string }>('/uploads/file', {
+        method: 'POST',
+        body: {
+          base64,
+          mimeType: file.type || (kind === 'audio' ? 'audio/webm' : 'application/octet-stream'),
+          fileName: file.name,
+          companyId: operation?.companyId,
+        },
+      })
+      setFeedback(`⏳ Enviando por WhatsApp…`)
+      if (kind === 'audio') {
+        await apiRequest('/whatsapp-web/send-audio', {
+          method: 'POST',
+          body: { trackingCode, audioUrl: upload.url },
+        })
+        setFeedback('✓ Audio enviado por WhatsApp')
+      } else {
+        await apiRequest('/whatsapp-web/send-document', {
+          method: 'POST',
+          body: {
+            trackingCode,
+            documentUrl: upload.url,
+            fileName: file.name,
+            mimetype: file.type || undefined,
+          },
+        })
+        setFeedback('✓ Documento enviado por WhatsApp')
+      }
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : `Error al enviar ${kind === 'audio' ? 'el audio' : 'el documento'}`)
+    } finally {
+      setSendingAttachment(false)
+    }
+  }
+
+  // ── Registrar actividad manual ──
+  const handleRegisterActivity = async () => {
+    const detail = activityText.trim()
+    if (!trackingCode || !operation?.companyId || !detail) return
+    setActivitySaving(true)
+    try {
+      await apiRequest('/operations/activity', {
+        method: 'POST',
+        body: {
+          companyId: operation.companyId,
+          action: 'actividad_manual',
+          detail,
+          meta: { trackingCode, operatorName: operation.operatorName },
+        },
+      })
+      setFeedback('✓ Actividad registrada')
+      setActivityText('')
+      setShowActivityModal(false)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al registrar actividad')
+    } finally {
+      setActivitySaving(false)
+    }
+  }
+
   // ── Buscar productos existentes por código o nombre ──
   const searchProducts = async (query: string) => {
     const q = query.trim()
@@ -509,6 +594,27 @@ export function WizardPage() {
       setProductMatches([])
       await loadOperation()
       setFeedback(`✓ Producto ${code.trim()} agregado. Ya puedes añadir fotos.`)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error.')
+    } finally {
+      setLbAdding(false)
+    }
+  }
+
+  // Agrega un producto desde el catálogo maestro a ESTA operación.
+  const handleAddFromCatalog = async (code: string, descripcion?: string) => {
+    if (!trackingCode || !code.trim()) return
+    setLbAdding(true)
+    setFeedback(null)
+    try {
+      const labelData = descripcion ? { descripcion } : undefined
+      await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
+        method: 'POST',
+        body: { productCode: code.trim(), labelData, isLineaBlanca: false },
+      })
+      setActiveLbProduct(code.trim())
+      await loadOperation()
+      setFeedback(`✓ Producto ${code.trim()} agregado desde el catálogo.`)
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error.')
     } finally {
@@ -1004,12 +1110,22 @@ export function WizardPage() {
           </div>
         )}
 
-        {/* ── Productos ── */}
+        {/* ── Productos (agrupados por catálogo: Línea Blanca vs. otros) ── */}
         {!isCompleted && lbProducts.length > 0 && (
           <section className="space-y-3">
-
-            {/* Product list — WhatsApp style */}
-            {lbProducts.map((product) => {
+            {(() => {
+              const lbGroup = lbProducts.filter((p) => p.isLineaBlanca)
+              const otherGroup = lbProducts.filter((p) => !p.isLineaBlanca)
+              const groups: Array<{ title: string; products: typeof lbProducts }> = []
+              if (lbGroup.length) groups.push({ title: 'Línea Blanca', products: lbGroup })
+              if (otherGroup.length) groups.push({ title: 'Productos', products: otherGroup })
+              return groups.map((group) => (
+                <div key={group.title} className="space-y-2">
+                  <h4 className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide px-1">
+                    {group.title} ({group.products.length})
+                  </h4>
+                  {/* Product list — WhatsApp style */}
+                  {group.products.map((product) => {
               const isActive = activeLbProduct === product.productCode
               // Fotos de ESTE producto que están en el cache local y aún no suben.
               const pendingLocal = localPhotos.filter((p) => !p.uploaded && p.productCode === product.productCode)
@@ -1179,16 +1295,27 @@ export function WizardPage() {
                   </div>
                 </div>
               )
-            })}
+                  })}
+                </div>
+              ))
+            })()}
           </section>
         )}
 
-        {/* Completed products section */}
+        {/* Completed products section — agrupados por catálogo */}
         {isCompleted && lbProducts.length > 0 && (
-          <section className="space-y-2">
-            <h4 className="text-xs font-semibold text-[var(--color-text-3)] uppercase">Productos ({lbProducts.length})</h4>
-            {lbProducts.map((p) => {
-              return (
+          <section className="space-y-3">
+            {(() => {
+              const lbGroup = lbProducts.filter((p) => p.isLineaBlanca)
+              const otherGroup = lbProducts.filter((p) => !p.isLineaBlanca)
+              const groups: Array<{ title: string; products: typeof lbProducts }> = []
+              if (lbGroup.length) groups.push({ title: 'Línea Blanca', products: lbGroup })
+              if (otherGroup.length) groups.push({ title: 'Productos', products: otherGroup })
+              return groups.map((group) => (
+                <div key={group.title} className="space-y-2">
+                  <h4 className="text-xs font-semibold text-[var(--color-text-3)] uppercase">{group.title} ({group.products.length})</h4>
+                  {group.products.map((p) => {
+                    return (
                 <div key={p.productCode} className="p-3 bg-[var(--color-surface)] rounded-xl border border-[var(--color-border)] space-y-2">
                   {/* Header */}
                   <div className="flex items-center gap-2">
@@ -1252,8 +1379,11 @@ export function WizardPage() {
                 </div>
               )
             })}
-          </section>
-        )}
+            </div>
+          ))
+        })()}
+      </section>
+    )}
 
       </div>
 
@@ -1275,6 +1405,36 @@ export function WizardPage() {
                 <Camera className="w-4 h-4 text-emerald-500" /> Seleccionar imagen
                 <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { setShowPlusMenu(false); void handleNativeCapture(e, false) }} />
               </label>
+              {features.whatsappAudio && (
+                <button onClick={() => { setShowPlusMenu(false); setShowAudioRecorder(true) }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                  <Mic className="w-4 h-4 text-rose-500" /> Grabar audio
+                </button>
+              )}
+              {features.whatsappCatalog && (
+                <button onClick={() => { setShowPlusMenu(false); setShowCatalogPicker(true) }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                  <Package className="w-4 h-4 text-amber-600" /> Catálogo de productos
+                </button>
+              )}
+              {features.whatsappDocument && (
+                <label className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                  <FileText className="w-4 h-4 text-blue-500" /> Adjuntar documento
+                  <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" className="hidden"
+                    onChange={(e) => {
+                      setShowPlusMenu(false)
+                      const f = e.target.files?.[0]
+                      e.target.value = ''
+                      if (f) void sendAttachmentByWhatsApp('document', f)
+                    }} />
+                </label>
+              )}
+              {features.registrarActividad && (
+                <button onClick={() => { setShowPlusMenu(false); setShowActivityModal(true) }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                  <Activity className="w-4 h-4 text-indigo-600" /> Registrar actividad
+                </button>
+              )}
             </div>
           )}
           {/* Templates panel */}
@@ -1350,6 +1510,68 @@ export function WizardPage() {
               </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Grabador de audio (estilo WhatsApp) */}
+      <AudioRecorder
+        open={showAudioRecorder}
+        onClose={() => setShowAudioRecorder(false)}
+        sending={sendingAttachment}
+        onSend={(file) => {
+          setShowAudioRecorder(false)
+          void sendAttachmentByWhatsApp('audio', file)
+        }}
+      />
+
+      {/* Selector de catálogo de productos */}
+      <CatalogPicker
+        open={showCatalogPicker}
+        onClose={() => setShowCatalogPicker(false)}
+        existingCodes={lbProducts.map((p) => p.productCode)}
+        onSelect={(code, descripcion) => {
+          setShowCatalogPicker(false)
+          void handleAddFromCatalog(code, descripcion)
+        }}
+      />
+
+      {/* Registrar actividad modal */}
+      {showActivityModal && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Activity className="w-5 h-5 text-indigo-600" />
+                <h3 className="text-sm font-bold text-gray-800">Registrar actividad</h3>
+              </div>
+              <button onClick={() => { setShowActivityModal(false); setActivityText('') }} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <p className="text-xs text-gray-500">
+              Anota una novedad, observación o actividad realizada. Quedará registrada en el historial de actividad de la empresa.
+            </p>
+            <textarea
+              value={activityText}
+              onChange={(e) => setActivityText(e.target.value)}
+              placeholder="Ej: Se recibió mercancía parcial, faltan 3 cajas..."
+              rows={4}
+              autoFocus
+              className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm text-gray-800 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => { setShowActivityModal(false); setActivityText('') }}
+                className="px-4 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-100">
+                Cancelar
+              </button>
+              <button onClick={() => void handleRegisterActivity()}
+                disabled={activitySaving || !activityText.trim()}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5">
+                {activitySaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
+                Registrar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

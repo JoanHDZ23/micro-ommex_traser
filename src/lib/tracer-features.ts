@@ -7,6 +7,12 @@ export type TracerFeatures = {
   activityLog: boolean
   sendEmail: boolean
   emailTo: string
+  whatsappUnified: boolean
+  whatsappAudio: boolean
+  whatsappCatalog: boolean
+  whatsappDocument: boolean
+  markerEditor: boolean
+  registrarActividad: boolean
   loading: boolean
 }
 
@@ -21,12 +27,20 @@ export function useTracerFeatures(): TracerFeatures {
   const companyId = getCompanyId()
   const [features, setFeatures] = useState<TracerFeatures>(() => {
     if (cached && cacheCompanyId === companyId) return cached
-    return { sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '', loading: true }
+    return {
+      sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
+      whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
+      whatsappDocument: false, markerEditor: false, registrarActividad: false, loading: true,
+    }
   })
 
   useEffect(() => {
     if (!companyId) {
-      setFeatures({ sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '', loading: false })
+      setFeatures({
+        sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
+        whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
+        whatsappDocument: false, markerEditor: false, registrarActividad: false, loading: false,
+      })
       return
     }
     if (cached && cacheCompanyId === companyId) {
@@ -37,7 +51,11 @@ export function useTracerFeatures(): TracerFeatures {
     const load = async () => {
       try {
         const [feat, email] = await Promise.all([
-          apiRequest<{ sheetsEnabled: boolean; activityLog: boolean; sendEmail: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
+          apiRequest<{
+            sheetsEnabled: boolean; activityLog: boolean; sendEmail: boolean
+            whatsappUnified?: boolean; whatsappAudio?: boolean; whatsappCatalog?: boolean
+            whatsappDocument?: boolean; markerEditor?: boolean; registrarActividad?: boolean
+          }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`),
         ])
         const next: TracerFeatures = {
@@ -45,6 +63,12 @@ export function useTracerFeatures(): TracerFeatures {
           activityLog: feat.activityLog ?? false,
           sendEmail: feat.sendEmail ?? false,
           emailTo: email.emailTo ?? '',
+          whatsappUnified: feat.whatsappUnified ?? false,
+          whatsappAudio: feat.whatsappAudio ?? false,
+          whatsappCatalog: feat.whatsappCatalog ?? false,
+          whatsappDocument: feat.whatsappDocument ?? false,
+          markerEditor: feat.markerEditor ?? false,
+          registrarActividad: feat.registrarActividad ?? false,
           loading: false,
         }
         cached = next

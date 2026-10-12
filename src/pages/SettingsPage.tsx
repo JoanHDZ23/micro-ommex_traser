@@ -48,6 +48,7 @@ export function SettingsPage() {
 
   // Trazabilidad: registro de actividades y envío por correo
   const [activityLog, setActivityLog] = useState(false)
+  const [registrarActividad, setRegistrarActividad] = useState(false)
   const [sendEmail, setSendEmail] = useState(false)
   const [emailTo, setEmailTo] = useState('')
   const [savingTracer, setSavingTracer] = useState(false)
@@ -59,13 +60,14 @@ export function SettingsPage() {
       try {
         const [cleanupData, featuresData, emailData] = await Promise.all([
           apiRequest<{ cleanupEnabled: boolean; cleanupDays: number }>(`/settings/cleanup?companyId=${encodeURIComponent(companyId)}`),
-          apiRequest<{ sheetsEnabled: boolean; activityLog: boolean; sendEmail: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
+          apiRequest<{ sheetsEnabled: boolean; activityLog: boolean; registrarActividad?: boolean; sendEmail: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`),
         ])
         setCleanupEnabled(cleanupData.cleanupEnabled ?? false)
         setCleanupDays(cleanupData.cleanupDays ?? 20)
         setSheetsEnabled(featuresData.sheetsEnabled ?? false)
         setActivityLog(featuresData.activityLog ?? false)
+        setRegistrarActividad(featuresData.registrarActividad ?? false)
         setSendEmail(featuresData.sendEmail ?? false)
         setEmailTo(emailData.emailTo ?? '')
       } catch { /* no settings yet */ }
@@ -102,12 +104,13 @@ export function SettingsPage() {
     if (!companyId) { setFeedbackTracer('No se encontró el ID de empresa.'); return }
     setSavingTracer(true); setFeedbackTracer(null)
     try {
-      await apiRequest('/settings/features', { method: 'PUT', body: { companyId, activityLog, sendEmail } })
+      await apiRequest('/settings/features', { method: 'PUT', body: { companyId, activityLog, registrarActividad, sendEmail } })
       if (sendEmail) {
         await apiRequest('/settings/email', { method: 'PUT', body: { companyId, emailTo: emailTo.trim() } })
       }
       const parts: string[] = []
       parts.push(`Registro de actividades ${activityLog ? 'habilitado' : 'deshabilitado'}`)
+      parts.push(`Registrar actividad manual ${registrarActividad ? 'habilitado' : 'deshabilitado'}`)
       parts.push(`Envío por correo ${sendEmail ? 'habilitado' : 'deshabilitado'}`)
       setFeedbackTracer(`✓ ${parts.join(' · ')}.`)
     } catch (err) {
@@ -281,6 +284,18 @@ export function SettingsPage() {
         </label>
         <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
           Muestra un historial de acciones (creación, finalización, envíos) en la pantalla principal.
+        </p>
+
+        {/* Registrar actividad manual */}
+        <label className="flex items-center justify-between gap-3 cursor-pointer">
+          <span className="text-sm font-medium text-[var(--color-text)]">Registrar actividad manual</span>
+          <div className="relative flex-shrink-0" onClick={() => setRegistrarActividad((v) => !v)}>
+            <div className={`w-11 h-6 rounded-full transition-colors ${registrarActividad ? 'bg-indigo-600' : 'bg-gray-300'}`} />
+            <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${registrarActividad ? 'translate-x-5' : 'translate-x-0'}`} />
+          </div>
+        </label>
+        <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
+          Permite anotar actividades manualmente dentro de cada operación (ej. novedades, observaciones).
         </p>
 
         {/* Enviar por correo */}

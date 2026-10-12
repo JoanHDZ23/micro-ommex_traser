@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Flashlight, FlashlightOff, MessageSquare, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
+import { Check, Flashlight, FlashlightOff, MessageSquare, Pencil, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
 import { ErrorState, LoadingState } from './ui'
+import { ImageEditor } from './ImageEditor'
 
 interface CameraCaptureProps {
   stepName: string
@@ -19,6 +20,7 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
   const [showCommentInput, setShowCommentInput] = useState(false)
   const [torchOn, setTorchOn] = useState(false)
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment')
+  const [editing, setEditing] = useState(false)
 
   const startCamera = useCallback(async (facing?: 'environment' | 'user') => {
     try {
@@ -209,7 +211,7 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
               )}
 
               {/* Action buttons */}
-              <div className="flex items-center justify-center gap-6">
+              <div className="flex items-center justify-center gap-5">
                 <button
                   type="button"
                   onClick={retake}
@@ -217,6 +219,14 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
                   className="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
                 >
                   <RotateCcw className="w-5 h-5 text-white" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  aria-label="Editar imagen (dibujar)"
+                  className="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                >
+                  <Pencil className="w-5 h-5 text-white" />
                 </button>
                 <button
                   type="button"
@@ -243,6 +253,17 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
             </button>
           )}
         </div>
+      )}
+
+      {editing && preview && (
+        <ImageEditor
+          imageSrc={preview}
+          onConfirm={(edited) => {
+            setPreview(edited)
+            setEditing(false)
+          }}
+          onCancel={() => setEditing(false)}
+        />
       )}
     </div>
   )
