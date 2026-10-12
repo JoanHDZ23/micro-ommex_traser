@@ -94,6 +94,8 @@ export function WizardPage() {
   const [showCaptureTray, setShowCaptureTray] = useState(false)
   const [trayMessage, setTrayMessage] = useState('')
   const [traySending, setTraySending] = useState(false)
+  // Índice de la foto de la bandeja que se está editando con el marcador.
+  const [trayEditIdx, setTrayEditIdx] = useState<number | null>(null)
   const nativeCameraRef = useRef<HTMLInputElement>(null)
 
   // Línea Blanca
@@ -309,19 +311,24 @@ export function WizardPage() {
     const targetProduct = isProduct ? productCodeArg ?? activeLbProduct ?? undefined : undefined
     const comment = chatMessage.trim()
 
-    // Editor de imagen (marcador): si está activo, al elegir UNA imagen general
-    // de la galería se abre el editor antes de guardarla (como con la cámara).
-    if (features.markerEditor && !isProduct && files.length === 1) {
+    // Fotos GENERALES desde galería → van a la bandeja de revisión (estilo
+    // WhatsApp): ahí se pueden editar/marcar, escribir un mensaje y enviar.
+    if (!isProduct) {
       try {
-        const base64 = await compressImageToBase64(files[0])
-        setChatMessage('')
-        setImgEditor({ src: `data:image/jpeg;base64,${base64}`, comment })
+        const dataUrls: string[] = []
+        for (const f of files) {
+          const base64 = await compressImageToBase64(f)
+          dataUrls.push(`data:image/jpeg;base64,${base64}`)
+        }
+        setCaptureTray((prev) => [...prev, ...dataUrls])
+        setShowCaptureTray(true)
       } catch {
-        setFeedback('Error al leer la imagen')
+        setFeedback('Error al leer una imagen')
       }
       return
     }
 
+    // Fotos de PRODUCTO (Línea Blanca): subida directa.
     setChatMessage('')
     setFeedback(files.length > 1 ? `✓ Procesando ${files.length} fotos...` : '✓ Foto guardada')
 
@@ -1927,6 +1934,11 @@ export function WizardPage() {
                 {captureTray.map((src, i) => (
                   <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
                     <img src={src} className="w-full h-full object-cover" />
+                    {/* Editar/marcar foto (líneas, colores) */}
+                    <button onClick={() => setTrayEditIdx(i)} aria-label="Editar foto"
+                      className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
+                      <Pencil className="w-3.5 h-3.5 text-white" />
+                    </button>
                     <button onClick={() => removeTrayPhoto(i)} aria-label="Quitar foto"
                       className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
                       <X className="w-3.5 h-3.5 text-white" />
@@ -1964,6 +1976,19 @@ export function WizardPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Editor de imagen para una foto de la bandeja (marcar/dibujar antes de enviar) */}
+      {trayEditIdx !== null && captureTray[trayEditIdx] && (
+        <ImageEditor
+          imageSrc={captureTray[trayEditIdx]}
+          onConfirm={(editedBase64) => {
+            const dataUrl = editedBase64.startsWith('data:') ? editedBase64 : `data:image/jpeg;base64,${editedBase64}`
+            setCaptureTray((prev) => prev.map((src, i) => (i === trayEditIdx ? dataUrl : src)))
+            setTrayEditIdx(null)
+          }}
+          onCancel={() => setTrayEditIdx(null)}
+        />
       )}
 
       {/* Camera for general photos */}
