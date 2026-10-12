@@ -27,8 +27,11 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
   const [unavailable, setUnavailable] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Destino configurado
-  const [whatsappTo, setWhatsappTo] = useState('')
+  // Destinos configurados (varios chats/grupos)
+  type WaDest = { id: string; label: string; to: string }
+  const [destinations, setDestinations] = useState<WaDest[]>([])
+  const [newLabel, setNewLabel] = useState('')
+  const [newTo, setNewTo] = useState('')
   const [savingTo, setSavingTo] = useState(false)
   const [savedMsg, setSavedMsg] = useState<string | null>(null)
 
@@ -48,9 +51,23 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
 
   const loadDestino = async () => {
     try {
-      const r = await apiRequest<{ whatsappTo: string }>(`/settings/whatsapp?companyId=${encodeURIComponent(companyId)}`)
-      setWhatsappTo(r.whatsappTo ?? '')
+      const r = await apiRequest<{ destinations?: WaDest[]; whatsappTo?: string }>(`/settings/whatsapp?companyId=${encodeURIComponent(companyId)}`)
+      if (Array.isArray(r.destinations) && r.destinations.length) setDestinations(r.destinations)
+      else if (r.whatsappTo) setDestinations([{ id: r.whatsappTo, label: r.whatsappTo, to: r.whatsappTo }])
+      else setDestinations([])
     } catch { /* sin config aún */ }
+  }
+
+  const addDestination = () => {
+    const to = newTo.trim()
+    if (!to) { setSavedMsg('Escribe el número o ID de grupo.'); return }
+    const label = newLabel.trim() || to
+    setDestinations((prev) => [...prev, { id: `${to}-${Date.now()}`, label, to }])
+    setNewLabel(''); setNewTo(''); setSavedMsg(null)
+  }
+
+  const removeDestination = (id: string) => {
+    setDestinations((prev) => prev.filter((d) => d.id !== id))
   }
 
   // Sufijo de companyId para las rutas (cada empresa su propia sesión de WhatsApp).
@@ -106,8 +123,8 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
   const saveDestino = async () => {
     setSavingTo(true); setSavedMsg(null)
     try {
-      await apiRequest('/settings/whatsapp', { method: 'PUT', body: { companyId, whatsappTo: whatsappTo.trim() } })
-      setSavedMsg('✓ Destino guardado.')
+      await apiRequest('/settings/whatsapp', { method: 'PUT', body: { companyId, destinations } })
+      setSavedMsg(`✓ ${destinations.length} destino(s) guardado(s).`)
     } catch (err) {
       setSavedMsg(err instanceof Error ? err.message : 'Error al guardar.')
     } finally { setSavingTo(false) }
@@ -126,8 +143,9 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
       const g = await apiRequest<{ id: string; name: string }>(
         `/whatsapp-web/resolve-invite?link=${encodeURIComponent(link)}&${cq}`,
       )
-      setWhatsappTo(g.id)
-      setGroupMsg(`✓ Grupo "${g.name}" → ${g.id}`)
+      setDestinations((prev) => prev.some((d) => d.to === g.id) ? prev : [...prev, { id: `${g.id}-${Date.now()}`, label: g.name || g.id, to: g.id }])
+      setGroupLink('')
+      setGroupMsg(`✓ Grupo "${g.name}" agregado a la lista. Pulsa "Guardar destinos".`)
     } catch (err) {
       setGroupMsg(err instanceof Error ? err.message : 'No se pudo resolver el grupo. ¿WhatsApp está conectado?')
     } finally { setResolvingGroup(false) }
@@ -230,16 +248,50 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
             )}
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-[var(--color-text-2)]">Chat o grupo destino</label>
-            <input
-              value={whatsappTo}
-              onChange={(e) => setWhatsappTo(e.target.value)}
-              placeholder="Número (ej. 573001234567) o ID de grupo (xxxx@g.us)"
-              className="w-full px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
-            />
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-[var(--color-text-2)]">Chats o grupos destino</label>
+
+            {/* Lista de destinos agregados */}
+            {destinations.length > 0 ? (
+              <ul className="space-y-1.5">
+                {destinations.map((d) => (
+                  <li key={d.id} className="flex items-center gap-2 p-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[var(--color-text)] truncate">{d.label}</p>
+                      <p className="text-[10px] text-[var(--color-text-3)] truncate">{d.to}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeDestination(d.id)}
+                      className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-1"
+                    >
+                      Quitar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-[11px] text-[var(--color-text-3)]">Aún no hay destinos. Agrega al menos uno.</p>
+            )}
+
+            {/* Agregar un destino */}
+            <div className="flex items-center gap-2">
+              <input
+                value={newLabel}
+                onChange={(e) => setNewLabel(e.target.value)}
+                placeholder="Nombre (ej. Bodega)"
+                className="w-1/3 px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
+              />
+              <input
+                value={newTo}
+                onChange={(e) => setNewTo(e.target.value)}
+                placeholder="573001234567 o xxxx@g.us"
+                className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
+              />
+              <Button onClick={addDestination} variant="secondary" className="flex-shrink-0">Agregar</Button>
+            </div>
             <p className="text-[10px] text-[var(--color-text-3)]">
-              Aquí llegarán los registros al compartirlos. Para un grupo usa su ID terminado en <code>@g.us</code>.
+              Agrega varios chats o grupos. Al enviar un registro podrás elegir a cuál. Para un grupo usa su ID terminado en <code>@g.us</code>.
             </p>
           </div>
 
@@ -261,7 +313,7 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
                 fullWidth
                 leftIcon={<Save className="w-4 h-4" />}
               >
-                Guardar destino
+                Guardar destinos
               </Button>
             )}
             <Button
@@ -277,27 +329,48 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
         </>
       )}
 
-      {/* Permite guardar el destino aunque aún no esté conectado (solo modo completo) */}
+      {/* Permite gestionar los destinos aunque aún no esté conectado (solo modo completo) */}
       {!syncOnly && !unavailable && status !== 'open' && (
-        <div className="space-y-1.5 pt-2 border-t border-[var(--color-border)]">
-          <label className="text-xs font-medium text-[var(--color-text-2)]">Chat o grupo destino</label>
+        <div className="space-y-2 pt-2 border-t border-[var(--color-border)]">
+          <label className="text-xs font-medium text-[var(--color-text-2)]">Chats o grupos destino</label>
+          {destinations.length > 0 && (
+            <ul className="space-y-1.5">
+              {destinations.map((d) => (
+                <li key={d.id} className="flex items-center gap-2 p-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-[var(--color-text)] truncate">{d.label}</p>
+                    <p className="text-[10px] text-[var(--color-text-3)] truncate">{d.to}</p>
+                  </div>
+                  <button type="button" onClick={() => removeDestination(d.id)} className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-1">Quitar</button>
+                </li>
+              ))}
+            </ul>
+          )}
           <div className="flex items-center gap-2">
             <input
-              value={whatsappTo}
-              onChange={(e) => setWhatsappTo(e.target.value)}
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              placeholder="Nombre"
+              className="w-1/3 px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
+            />
+            <input
+              value={newTo}
+              onChange={(e) => setNewTo(e.target.value)}
               placeholder="573001234567 o xxxx@g.us"
               className="flex-1 px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
             />
-            <Button
-              onClick={() => void saveDestino()}
-              disabled={savingTo}
-              loading={savingTo}
-              variant="success"
-              leftIcon={<Save className="w-4 h-4" />}
-            >
-              Guardar
-            </Button>
+            <Button onClick={addDestination} variant="secondary" className="flex-shrink-0">Agregar</Button>
           </div>
+          <Button
+            onClick={() => void saveDestino()}
+            disabled={savingTo}
+            loading={savingTo}
+            variant="success"
+            fullWidth
+            leftIcon={<Save className="w-4 h-4" />}
+          >
+            Guardar destinos
+          </Button>
           {savedMsg && (
             <div className={`p-2 rounded-lg text-xs ${savedMsg.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
               {savedMsg}
