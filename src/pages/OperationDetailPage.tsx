@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Calendar, Camera, Clock, Edit3, ExternalLink, MapPin, MessageCircle, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
+import { ArrowLeft, Calendar, Camera, Clock, Edit3, ExternalLink, FileText, MapPin, MessageCircle, MessageSquare, Mic, Package, Share2, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId } from '../lib/context'
@@ -159,7 +159,7 @@ export function OperationDetailPage() {
       <div className="grid grid-cols-2 gap-2">
         <InfoCard icon={User} label="Operador" value={operation.operatorName} />
         <InfoCard icon={Calendar} label="Fecha" value={date.toLocaleDateString('es-CO')} />
-        {operation.vehiclePlate && <InfoCard icon={MapPin} label="Placa" value={operation.vehiclePlate} />}
+        {operation.vehiclePlate && <InfoCard icon={MapPin} label="Detalle" value={operation.vehiclePlate} />}
         <InfoCard icon={Clock} label="Hora" value={date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} />
         <InfoCard icon={Camera} label="Fotos" value={`${totalPhotos} total`} />
         {(operation.lineaBlanca ?? []).length > 0 && (
@@ -343,6 +343,31 @@ export function OperationDetailPage() {
 }
 
 function PhotoCard({ photo, onClick, useCommentAsTitle }: { photo: PhotoRecord; onClick: () => void; useCommentAsTitle?: boolean }) {
+  // Audio: reproductor embebido.
+  if (photo.mediaType === 'audio') {
+    const url = getDriveViewUrl(photo)
+    return (
+      <div className="rounded-lg overflow-hidden border border-gray-200 bg-white shadow-sm p-2 space-y-1">
+        <p className="text-[10px] font-medium text-gray-700 flex items-center gap-1"><Mic className="w-3 h-3 text-rose-500" /> {photo.comment || photo.fileName || 'Audio'}</p>
+        {url ? <audio src={url} controls className="w-full h-8" /> : <p className="text-[9px] text-gray-400">Audio no disponible</p>}
+      </div>
+    )
+  }
+  // Documento: enlace para abrir/descargar.
+  if (photo.mediaType === 'document') {
+    const url = getDriveViewUrl(photo)
+    return (
+      <a href={url ?? '#'} target="_blank" rel="noopener noreferrer"
+        className="rounded-lg overflow-hidden border border-gray-200 bg-white shadow-sm p-2.5 flex items-center gap-2 hover:shadow-md transition-shadow">
+        <FileText className="w-5 h-5 text-blue-500 flex-shrink-0" />
+        <div className="min-w-0">
+          <p className="text-[11px] font-medium text-gray-700 truncate">{photo.fileName || photo.comment || 'Documento'}</p>
+          <p className="text-[9px] text-gray-400">Abrir documento</p>
+        </div>
+      </a>
+    )
+  }
+
   const imageUrl = getDriveImageUrl(photo)
   const isPending = !imageUrl
   const title = useCommentAsTitle && photo.comment ? photo.comment : photo.stepName

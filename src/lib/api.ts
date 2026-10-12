@@ -63,6 +63,10 @@ export interface PhotoRecord {
   photoIndex?: number
   comment?: string
   photoType?: 'proceso' | 'producto'
+  /** Tipo de medio: imagen (default), audio o documento. */
+  mediaType?: 'image' | 'audio' | 'document'
+  fileName?: string
+  mimeType?: string
   timestamp: string
   /** Agrupa fotos tomadas juntas (una misma tanda) para mostrarlas como un álbum. */
   groupId?: string

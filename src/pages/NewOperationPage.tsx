@@ -92,7 +92,7 @@ export function NewOperationPage() {
       nextFieldErrors.operatorName = 'El nombre del operador es obligatorio.'
     }
     if (showPlate && !form.vehiclePlate?.trim()) {
-      nextFieldErrors.vehiclePlate = 'Ingresa la placa del vehículo.'
+      nextFieldErrors.vehiclePlate = 'Ingresa el detalle.'
     }
     setFieldErrors(nextFieldErrors)
     if (Object.keys(nextFieldErrors).length > 0) return
@@ -130,7 +130,7 @@ export function NewOperationPage() {
         nextFieldErrors.operatorName = 'El nombre del operador es obligatorio.'
       }
       if (showPlate && !form.vehiclePlate?.trim()) {
-        nextFieldErrors.vehiclePlate = 'Ingresa la placa del vehículo.'
+        nextFieldErrors.vehiclePlate = 'Ingresa el detalle.'
       }
       setFieldErrors(nextFieldErrors)
       return
@@ -286,7 +286,7 @@ export function NewOperationPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Truck className="w-4 h-4 text-[var(--color-primary)]" />
-              <label className="text-sm font-bold text-[var(--color-text)]">Vehículo (opcional)</label>
+              <label className="text-sm font-bold text-[var(--color-text)]">Detalle (opcional)</label>
             </div>
             <label className="flex items-center gap-3 cursor-pointer select-none">
               <div className="relative">
@@ -312,18 +312,17 @@ export function NewOperationPage() {
             <div className="space-y-3 pt-1 animate-in fade-in slide-in-from-top-2 duration-200">
               <Input
                 type="text"
-                label="Placa del vehículo"
+                label="Detalle"
                 list="saved-plates-list"
-                aria-label="Placa del vehículo"
+                aria-label="Detalle"
                 value={form.vehiclePlate ?? ''}
                 onChange={(e) => {
-                  const vehiclePlate = e.target.value.toUpperCase()
+                  const vehiclePlate = e.target.value
                   setForm((f) => ({ ...f, vehiclePlate }))
                   if (fieldErrors.vehiclePlate) setFieldErrors((fe) => ({ ...fe, vehiclePlate: undefined }))
                 }}
-                placeholder="EJ: ABC123"
-                maxLength={10}
-                className="uppercase"
+                placeholder="Ej: Placa ABC123, pedido #45, cliente..."
+                maxLength={60}
                 autoComplete="off"
                 error={fieldErrors.vehiclePlate}
               />
@@ -337,7 +336,7 @@ export function NewOperationPage() {
               {savedPlates.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-[11px] font-semibold text-[var(--color-text-3)] uppercase tracking-wide">
-                    Placas recientes ({savedPlates.length})
+                    Detalles recientes ({savedPlates.length})
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {savedPlates.slice(0, 8).map((plate) => {
@@ -359,7 +358,7 @@ export function NewOperationPage() {
                             if (companyId) void apiRequest('/settings/plates', { method: 'DELETE', body: { companyId, plate } })
                           }}
                             className="w-5 h-5 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-red-500 hover:bg-red-50 transition-colors"
-                            aria-label={`Eliminar placa ${plate}`}>
+                            aria-label={`Eliminar detalle ${plate}`}>
                             <X className="w-3 h-3" />
                           </button>
                         </div>

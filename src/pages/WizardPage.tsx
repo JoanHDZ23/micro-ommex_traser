@@ -308,6 +308,20 @@ export function WizardPage() {
     // Producto destino: el pasado explícitamente o el activo (evita condiciones de carrera)
     const targetProduct = isProduct ? productCodeArg ?? activeLbProduct ?? undefined : undefined
     const comment = chatMessage.trim()
+
+    // Editor de imagen (marcador): si está activo, al elegir UNA imagen general
+    // de la galería se abre el editor antes de guardarla (como con la cámara).
+    if (features.markerEditor && !isProduct && files.length === 1) {
+      try {
+        const base64 = await compressImageToBase64(files[0])
+        setChatMessage('')
+        setImgEditor({ src: `data:image/jpeg;base64,${base64}`, comment })
+      } catch {
+        setFeedback('Error al leer la imagen')
+      }
+      return
+    }
+
     setChatMessage('')
     setFeedback(files.length > 1 ? `✓ Procesando ${files.length} fotos...` : '✓ Foto guardada')
 
@@ -513,6 +527,13 @@ export function WizardPage() {
     file: File,
   ) => {
     if (!trackingCode) return
+    // Límite de tamaño: el archivo viaja como base64 (~+33%). 40MB de archivo
+    // ≈ 53MB de base64, por debajo del límite del servidor (60MB).
+    const MAX_BYTES = 40 * 1024 * 1024
+    if (file.size > MAX_BYTES) {
+      setFeedback(`El ${kind === 'audio' ? 'audio' : 'documento'} es muy grande (${(file.size / 1024 / 1024).toFixed(1)} MB). El máximo es 40 MB.`)
+      return
+    }
     setSendingAttachment(true)
     setFeedback(`⏳ Subiendo ${kind === 'audio' ? 'el audio' : 'el documento'}…`)
     try {
@@ -526,27 +547,41 @@ export function WizardPage() {
           companyId: operation?.companyId,
         },
       })
+      // 1. Guardar el adjunto en el registro (persiste aunque el WhatsApp falle).
+      try {
+        await apiRequest(`/operations/${trackingCode}/attachment`, {
+          method: 'POST',
+          body: { url: upload.url, mediaType: kind, fileName: file.name, mimeType: file.type || undefined },
+        })
+        await loadOperation()
+      } catch { /* si falla el guardado, igual se intenta enviar */ }
+
+      // 2. Enviar por WhatsApp (si falla, el adjunto ya quedó en el registro).
       setFeedback(`⏳ Enviando por WhatsApp…`)
-      if (kind === 'audio') {
-        await apiRequest('/whatsapp-web/send-audio', {
-          method: 'POST',
-          body: { trackingCode, audioUrl: upload.url },
-        })
-        setFeedback('✓ Audio enviado por WhatsApp')
-      } else {
-        await apiRequest('/whatsapp-web/send-document', {
-          method: 'POST',
-          body: {
-            trackingCode,
-            documentUrl: upload.url,
-            fileName: file.name,
-            mimetype: file.type || undefined,
-          },
-        })
-        setFeedback('✓ Documento enviado por WhatsApp')
+      try {
+        if (kind === 'audio') {
+          await apiRequest('/whatsapp-web/send-audio', {
+            method: 'POST',
+            body: { trackingCode, audioUrl: upload.url, mimetype: file.type || undefined },
+          })
+          setFeedback('✓ Audio agregado al registro y enviado por WhatsApp')
+        } else {
+          await apiRequest('/whatsapp-web/send-document', {
+            method: 'POST',
+            body: {
+              trackingCode,
+              documentUrl: upload.url,
+              fileName: file.name,
+              mimetype: file.type || undefined,
+            },
+          })
+          setFeedback('✓ Documento agregado al registro y enviado por WhatsApp')
+        }
+      } catch (waErr) {
+        setFeedback(`✓ ${kind === 'audio' ? 'Audio' : 'Documento'} agregado al registro. No se pudo enviar por WhatsApp: ${waErr instanceof Error ? waErr.message : 'error'}`)
       }
     } catch (err) {
-      setFeedback(err instanceof Error ? err.message : `Error al enviar ${kind === 'audio' ? 'el audio' : 'el documento'}`)
+      setFeedback(err instanceof Error ? err.message : `Error al subir ${kind === 'audio' ? 'el audio' : 'el documento'}`)
     } finally {
       setSendingAttachment(false)
     }
