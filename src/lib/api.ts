@@ -47,7 +47,11 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-export type OperationType = 'PRODUCTOS_ENTRANTES' | 'PRODUCTOS_SALIENTES' | 'ACTIVIDAD'
+// Tipos por defecto conocidos + cualquier tipo personalizado (string).
+// El `(string & {})` permite valores arbitrarios conservando el autocompletado
+// de los literales por defecto.
+export type DefaultOperationType = 'PRODUCTOS_ENTRANTES' | 'PRODUCTOS_SALIENTES' | 'ACTIVIDAD'
+export type OperationType = DefaultOperationType | (string & {})
 export type OperationStatus = 'EN_PROCESO' | 'COMPLETADO'
 
 export interface PhotoRecord {

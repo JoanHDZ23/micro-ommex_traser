@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Activity, ArrowDown, ArrowUp, Calendar, ChevronRight, Filter, Package, Search } from 'lucide-react'
-import { apiRequest, type Operation, type OperationType, type PaginatedOperations } from '../lib/api'
-import { OPERATION_LABELS } from '../lib/constants'
+import { apiRequest, type Operation, type PaginatedOperations } from '../lib/api'
+import { OPERATION_LABELS, operationTypeLabel } from '../lib/constants'
 import { getCompanyId } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import {
@@ -17,7 +17,9 @@ import {
   operationStatusTone,
 } from '../components/ui'
 
-const TYPE_ICONS: Record<OperationType, React.ComponentType<{ className?: string }>> = {
+import type { DefaultOperationType } from '../lib/api'
+
+const TYPE_ICONS: Record<DefaultOperationType, React.ComponentType<{ className?: string }>> = {
   PRODUCTOS_ENTRANTES: ArrowDown,
   PRODUCTOS_SALIENTES: ArrowUp,
   ACTIVIDAD: Activity,
@@ -60,6 +62,17 @@ export function HistoryPage() {
   const [filterOperator, setFilterOperator] = useState<string>('')
   const [filterProduct, setFilterProduct] = useState<string>('')
   const [showFilters, setShowFilters] = useState(false)
+
+  // Tipos de operación (para resolver labels de tipos personalizados y el filtro).
+  type OpTypeDef = { id: string; label: string; descripcion?: string }
+  const [opTypes, setOpTypes] = useState<OpTypeDef[]>([])
+  useEffect(() => {
+    const cid = getCompanyId()
+    if (!cid) return
+    void apiRequest<{ all: OpTypeDef[] }>(`/settings/operation-types?companyId=${encodeURIComponent(cid)}`)
+      .then((r) => setOpTypes(r.all ?? []))
+      .catch(() => { /* fallback a defaults */ })
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -123,8 +136,12 @@ export function HistoryPage() {
               className="px-3 py-2 rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-text)] bg-[var(--color-surface)]"
             >
               <option value="">Todos los tipos</option>
-              <option value="PRODUCTOS_ENTRANTES">{OPERATION_LABELS.PRODUCTOS_ENTRANTES}</option>
-              <option value="PRODUCTOS_SALIENTES">{OPERATION_LABELS.PRODUCTOS_SALIENTES}</option>
+              {(opTypes.length ? opTypes : [
+                { id: 'PRODUCTOS_ENTRANTES', label: OPERATION_LABELS.PRODUCTOS_ENTRANTES },
+                { id: 'PRODUCTOS_SALIENTES', label: OPERATION_LABELS.PRODUCTOS_SALIENTES },
+              ]).map((t) => (
+                <option key={t.id} value={t.id}>{t.label}</option>
+              ))}
             </select>
             <div className="relative">
               <Calendar className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--color-text-3)]" />
@@ -172,7 +189,7 @@ export function HistoryPage() {
       ) : (
         <div className="space-y-2">
           {operations.map((op) => {
-            const Icon = TYPE_ICONS[op.operationType] ?? Package
+            const Icon = (TYPE_ICONS as Record<string, React.ComponentType<{ className?: string }>>)[op.operationType] ?? Package
             const date = new Date(op.createdAt)
             return (
               <Card
@@ -201,7 +218,7 @@ export function HistoryPage() {
                     {op.trackingCode}
                   </p>
                   <p className="text-xs text-[var(--color-text-2)] truncate">
-                    {OPERATION_LABELS[op.operationType]} · {op.operatorName}
+                    {operationTypeLabel(op.operationType, opTypes)} · {op.operatorName}
                     {op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
                     {op.lineaBlanca?.length ? ` · ${op.lineaBlanca.length} producto(s)` : ''}
                   </p>

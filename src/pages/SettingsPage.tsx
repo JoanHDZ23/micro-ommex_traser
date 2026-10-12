@@ -60,6 +60,47 @@ export function SettingsPage() {
   const [savingTracer, setSavingTracer] = useState(false)
   const [feedbackTracer, setFeedbackTracer] = useState<string | null>(null)
 
+  // Tipos de operación personalizados
+  type OpTypeDef = { id: string; label: string; descripcion?: string }
+  const [defaultTypes, setDefaultTypes] = useState<OpTypeDef[]>([])
+  const [customTypes, setCustomTypes] = useState<OpTypeDef[]>([])
+  const [newTypeLabel, setNewTypeLabel] = useState('')
+  const [newTypeDesc, setNewTypeDesc] = useState('')
+  const [savingTypes, setSavingTypes] = useState(false)
+  const [feedbackTypes, setFeedbackTypes] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!companyId) return
+    void apiRequest<{ defaults: OpTypeDef[]; custom: OpTypeDef[] }>(`/settings/operation-types?companyId=${encodeURIComponent(companyId)}`)
+      .then((r) => { setDefaultTypes(r.defaults ?? []); setCustomTypes(r.custom ?? []) })
+      .catch(() => { /* sin tipos aún */ })
+  }, [companyId])
+
+  const addCustomType = () => {
+    const label = newTypeLabel.trim()
+    if (!label) { setFeedbackTypes('Escribe un nombre para el tipo.'); return }
+    setCustomTypes((prev) => [...prev, { id: '', label, descripcion: newTypeDesc.trim() || undefined }])
+    setNewTypeLabel(''); setNewTypeDesc(''); setFeedbackTypes(null)
+  }
+
+  const removeCustomType = (idx: number) => {
+    setCustomTypes((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  const handleSaveTypes = async () => {
+    if (!companyId) { setFeedbackTypes('No se encontró el ID de empresa.'); return }
+    setSavingTypes(true); setFeedbackTypes(null)
+    try {
+      const r = await apiRequest<{ custom: OpTypeDef[] }>('/settings/operation-types', {
+        method: 'PUT', body: { companyId, types: customTypes.map((t) => ({ label: t.label, descripcion: t.descripcion })) },
+      })
+      setCustomTypes(r.custom ?? [])
+      setFeedbackTypes('✓ Tipos de operación guardados.')
+    } catch (err) {
+      setFeedbackTypes(err instanceof Error ? err.message : 'Error al guardar.')
+    } finally { setSavingTypes(false) }
+  }
+
   useEffect(() => {
     if (!companyId) { setLoading(false); return }
     const load = async () => {
@@ -420,6 +461,88 @@ export function SettingsPage() {
       {feedbackTracer && !feedbackTracer.startsWith('✓') && (
         <ErrorState message={feedbackTracer} onRetry={() => void handleSaveTracer()} />
       )}
+
+      {/* ── Tipos de operación ── */}
+      <Card as="section" className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Activity className="w-5 h-5 text-indigo-600" />
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">Tipos de operación</h3>
+        </div>
+        <p className="text-xs text-[var(--color-text-2)]">
+          Crea tus propios tipos de operación. Aparecerán en la pantalla de inicio junto a los tipos por defecto para registrar operaciones.
+        </p>
+
+        {/* Tipos por defecto (no editables) */}
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-3)]">Por defecto</p>
+          {defaultTypes.map((t) => (
+            <div key={t.id} className="flex items-center gap-2 p-2 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-[var(--color-text)] truncate">{t.label}</p>
+                {t.descripcion && <p className="text-[10px] text-[var(--color-text-3)] truncate">{t.descripcion}</p>}
+              </div>
+              <span className="text-[10px] text-[var(--color-text-3)] flex-shrink-0">Fijo</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Tipos personalizados (editables) */}
+        <div className="space-y-1.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-3)]">Personalizados</p>
+          {customTypes.length === 0 && (
+            <p className="text-[11px] text-[var(--color-text-3)]">Aún no has creado tipos personalizados.</p>
+          )}
+          {customTypes.map((t, idx) => (
+            <div key={`${t.id}-${idx}`} className="flex items-center gap-2 p-2 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)]">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-[var(--color-text)] truncate">{t.label}</p>
+                {t.descripcion && <p className="text-[10px] text-[var(--color-text-3)] truncate">{t.descripcion}</p>}
+              </div>
+              <button type="button" onClick={() => removeCustomType(idx)} className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-1">Quitar</button>
+            </div>
+          ))}
+        </div>
+
+        {/* Agregar nuevo tipo */}
+        <div className="space-y-2 pt-1">
+          <input
+            type="text"
+            value={newTypeLabel}
+            onChange={(e) => setNewTypeLabel(e.target.value)}
+            placeholder="Nombre del tipo (ej. Inventario, Mantenimiento)"
+            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <input
+            type="text"
+            value={newTypeDesc}
+            onChange={(e) => setNewTypeDesc(e.target.value)}
+            placeholder="Descripción (opcional)"
+            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <button
+            type="button"
+            onClick={addCustomType}
+            className="w-full py-2 rounded-lg border border-indigo-200 text-indigo-600 text-sm font-medium hover:bg-indigo-50 transition-colors"
+          >
+            + Agregar tipo
+          </button>
+        </div>
+
+        {feedbackTypes && (
+          <div className={`p-2.5 rounded-lg text-xs ${feedbackTypes.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+            {feedbackTypes}
+          </div>
+        )}
+      </Card>
+
+      <Button
+        onClick={() => void handleSaveTypes()}
+        loading={savingTypes}
+        fullWidth
+        leftIcon={<Save className="w-4 h-4" />}
+      >
+        Guardar tipos de operación
+      </Button>
 
       {/* ── Herramientas ── */}
       <div className="pt-2 border-t border-[var(--color-border)]">

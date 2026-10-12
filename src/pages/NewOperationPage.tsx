@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Activity, ArrowDown, ArrowUp, CheckCircle2, ShieldCheck, Truck, UserRound, X } from 'lucide-react'
 import { apiRequest, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
-import { OPERATION_LABELS } from '../lib/constants'
+import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { Button, Card, ErrorState, Input, SectionHeader } from '../components/ui'
@@ -41,6 +41,18 @@ export function NewOperationPage() {
     vehiclePlate: '',
     companyId: getCompanyId(),
   })
+
+  // Tipos de operación configurados (por defecto + personalizados).
+  type OpTypeDef = { id: string; label: string; descripcion?: string }
+  const [opTypes, setOpTypes] = useState<OpTypeDef[]>([])
+  useEffect(() => {
+    const cid = getCompanyId()
+    if (!cid) return
+    void apiRequest<{ all: OpTypeDef[] }>(`/settings/operation-types?companyId=${encodeURIComponent(cid)}`)
+      .then((r) => setOpTypes(r.all ?? []))
+      .catch(() => { /* fallback a defaults */ })
+  }, [])
+  const currentTypeDef = opTypes.find((t) => t.id === form.operationType)
   const [showPlate, setShowPlate] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -164,14 +176,14 @@ export function NewOperationPage() {
               Tipo seleccionado
             </span>
             <h2 className="text-xl sm:text-2xl font-bold mt-0.5" style={{ color: 'var(--hero-text)' }}>
-              {OPERATION_LABELS[form.operationType]}
+              {operationTypeLabel(form.operationType, opTypes)}
             </h2>
             <p className="text-sm mt-0.5 max-w-md" style={{ color: 'var(--hero-text-2)' }}>
               {form.operationType === 'PRODUCTOS_ENTRANTES'
                 ? 'Registro fotográfico de productos que ingresan al almacén o local.'
-                : form.operationType === 'ACTIVIDAD'
-                  ? 'Registro fotográfico de una actividad (distinto de entrada/salida).'
-                  : 'Registro fotográfico de productos que salen para despacho o entrega.'}
+                : form.operationType === 'PRODUCTOS_SALIENTES'
+                  ? 'Registro fotográfico de productos que salen para despacho o entrega.'
+                  : (currentTypeDef?.descripcion ?? 'Registro fotográfico de una actividad.')}
             </p>
           </div>
           <div
@@ -193,21 +205,31 @@ export function NewOperationPage() {
             <label className="text-sm font-bold text-[var(--color-text)]">Tipo de operación</label>
           </div>
           <div className="grid grid-cols-2 gap-2.5">
-            {(['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES'] as OperationType[]).map((type) => {
-              const selected = form.operationType === type
-              const isEntrante = type === 'PRODUCTOS_ENTRANTES'
-              const Icon = isEntrante ? ArrowDown : ArrowUp
+            {(opTypes.length ? opTypes : [
+              { id: 'PRODUCTOS_ENTRANTES', label: 'Operación Entrante', descripcion: 'Productos que ingresan' },
+              { id: 'PRODUCTOS_SALIENTES', label: 'Operación Saliente', descripcion: 'Productos que salen' },
+            ]).map((t) => {
+              const selected = form.operationType === t.id
+              const isEntrante = t.id === 'PRODUCTOS_ENTRANTES'
+              const isSaliente = t.id === 'PRODUCTOS_SALIENTES'
+              const Icon = isEntrante ? ArrowDown : isSaliente ? ArrowUp : Activity
+              const grad = isEntrante
+                ? 'linear-gradient(135deg, #2563eb 0%, #0284c7 100%)'
+                : isSaliente
+                  ? 'linear-gradient(135deg, #059669 0%, #047857 100%)'
+                  : 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)'
+              const check = isEntrante ? '#2563eb' : isSaliente ? '#059669' : '#6366f1'
               return (
                 <button
-                  key={type}
+                  key={t.id}
                   type="button"
-                  onClick={() => setForm((f) => ({ ...f, operationType: type }))}
+                  onClick={() => setForm((f) => ({ ...f, operationType: t.id }))}
                   className={`relative overflow-hidden p-3.5 sm:p-4 rounded-xl border text-left transition-all ${
                     selected
                       ? 'border-transparent shadow-md'
                       : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:shadow-sm'
                   }`}
-                  style={selected ? { backgroundImage: `linear-gradient(135deg, ${isEntrante ? '#2563eb' : '#059669'} 0%, ${isEntrante ? '#0284c7' : '#047857'} 100%)` } : undefined}
+                  style={selected ? { backgroundImage: grad } : undefined}
                 >
                   <div className="relative flex flex-col gap-2.5 items-start">
                     <div
@@ -218,15 +240,15 @@ export function NewOperationPage() {
                     </div>
                     <div className="min-w-0">
                       <p className={`text-sm font-bold ${selected ? 'text-white' : 'text-[var(--color-text)]'}`}>
-                        {OPERATION_LABELS[type]}
+                        {t.label}
                       </p>
                       <p className={`text-[11px] mt-0.5 leading-snug ${selected ? 'text-white/85' : 'text-[var(--color-text-3)]'}`}>
-                        {type === 'PRODUCTOS_ENTRANTES' ? 'Productos que ingresan' : 'Productos que salen'}
+                        {t.descripcion ?? 'Registro fotográfico'}
                       </p>
                     </div>
                     {selected && (
                       <div className="absolute top-2 right-2">
-                        <div className="w-5 h-5 rounded-full bg-white flex items-center justify-center shadow-sm" style={{ color: isEntrante ? '#2563eb' : '#059669' }}>
+                        <div className="w-5 h-5 rounded-full bg-white flex items-center justify-center shadow-sm" style={{ color: check }}>
                           <CheckCircle2 className="w-4 h-4" />
                         </div>
                       </div>

@@ -48,6 +48,17 @@ export function HomePage() {
   const [activity, setActivity] = useState<Array<{ _id: string; action: string; detail: string; createdAt: string }>>([])
   const [loadingActivity, setLoadingActivity] = useState(true)
 
+  // Tipos de operación (por defecto + personalizados configurados por la empresa)
+  type OpTypeDef = { id: string; label: string; descripcion?: string }
+  const [opTypes, setOpTypes] = useState<OpTypeDef[]>([])
+  useEffect(() => {
+    const companyId = getCompanyId()
+    if (!companyId) return
+    void apiRequest<{ all: OpTypeDef[] }>(`/settings/operation-types?companyId=${encodeURIComponent(companyId)}`)
+      .then((r) => setOpTypes(r.all ?? []))
+      .catch(() => { /* usa fallback por defecto si falla */ })
+  }, [])
+
   useEffect(() => {
     const companyId = getCompanyId()
     if (!companyId) {
@@ -167,35 +178,39 @@ export function HomePage() {
       <section className="space-y-3">
         <SectionHeader eyebrow="Iniciar operación" title="¿Qué quieres registrar?" />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <QuickAction
-            icon={ArrowDown}
-            title="Operación Entrante"
-            description="Registro de productos que ingresan al almacén o local"
-            gradientFrom="from-blue-500"
-            gradientTo="to-sky-600"
-            accentBgClass="bg-[color:var(--color-primary-bg)] text-[color:var(--color-primary)]"
-            onClick={() => navigate('/new?type=PRODUCTOS_ENTRANTES')}
-          />
-          <QuickAction
-            icon={ArrowUp}
-            title="Operación Saliente"
-            description="Registro de productos que salen para despacho o entrega"
-            gradientFrom="from-emerald-500"
-            gradientTo="to-teal-600"
-            accentBgClass="bg-emerald-50 text-emerald-600"
-            onClick={() => navigate('/new?type=PRODUCTOS_SALIENTES')}
-          />
-          {features.registrarActividad && (
-            <QuickAction
-              icon={Activity}
-              title="Registro de actividad"
-              description="Registro fotográfico de una actividad (distinto de entrada/salida)"
-              gradientFrom="from-indigo-500"
-              gradientTo="to-violet-600"
-              accentBgClass="bg-indigo-50 text-indigo-600"
-              onClick={() => navigate('/new?type=ACTIVIDAD')}
-            />
-          )}
+          {(() => {
+            // Estilo/ícono por tipo: los por defecto tienen su look; los
+            // personalizados usan un ícono y color genéricos.
+            const style: Record<string, { icon: typeof ArrowDown; from: string; to: string; accent: string }> = {
+              PRODUCTOS_ENTRANTES: { icon: ArrowDown, from: 'from-blue-500', to: 'to-sky-600', accent: 'bg-[color:var(--color-primary-bg)] text-[color:var(--color-primary)]' },
+              PRODUCTOS_SALIENTES: { icon: ArrowUp, from: 'from-emerald-500', to: 'to-teal-600', accent: 'bg-emerald-50 text-emerald-600' },
+              ACTIVIDAD: { icon: Activity, from: 'from-indigo-500', to: 'to-violet-600', accent: 'bg-indigo-50 text-indigo-600' },
+            }
+            const fallback = { icon: ClipboardList, from: 'from-slate-500', to: 'to-gray-600', accent: 'bg-slate-100 text-slate-600' }
+            // Si aún no cargaron los tipos del backend, usa los por defecto.
+            const list = opTypes.length ? opTypes : [
+              { id: 'PRODUCTOS_ENTRANTES', label: 'Operación Entrante', descripcion: 'Registro de productos que ingresan al almacén o local' },
+              { id: 'PRODUCTOS_SALIENTES', label: 'Operación Saliente', descripcion: 'Registro de productos que salen para despacho o entrega' },
+            ]
+            return list
+              // Oculta "ACTIVIDAD" si la empresa no tiene activada esa función.
+              .filter((t) => t.id !== 'ACTIVIDAD' || features.registrarActividad)
+              .map((t) => {
+                const s = style[t.id] ?? fallback
+                return (
+                  <QuickAction
+                    key={t.id}
+                    icon={s.icon}
+                    title={t.label}
+                    description={t.descripcion ?? 'Registro fotográfico'}
+                    gradientFrom={s.from}
+                    gradientTo={s.to}
+                    accentBgClass={s.accent}
+                    onClick={() => navigate(`/new?type=${encodeURIComponent(t.id)}`)}
+                  />
+                )
+              })
+          })()}
         </div>
       </section>
 

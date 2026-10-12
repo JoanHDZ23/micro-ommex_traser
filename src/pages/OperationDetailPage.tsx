@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Calendar, Camera, Clock, Edit3, ExternalLink, MapPin, MessageCircle, MessageSquare, Package, Share2, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
-import { OPERATION_LABELS } from '../lib/constants'
+import { operationTypeLabel } from '../lib/constants'
+import { getCompanyId } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
 import { Badge, Button, Card, ErrorState, LoadingState, operationStatusLabel, operationStatusTone } from '../components/ui'
@@ -80,6 +81,14 @@ export function OperationDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<PhotoRecord | null>(null)
   const [showWaSync, setShowWaSync] = useState(false)
+  const [opTypes, setOpTypes] = useState<Array<{ id: string; label: string }>>([])
+  useEffect(() => {
+    const cid = getCompanyId()
+    if (!cid) return
+    void apiRequest<{ all: Array<{ id: string; label: string }> }>(`/settings/operation-types?companyId=${encodeURIComponent(cid)}`)
+      .then((r) => setOpTypes(r.all ?? []))
+      .catch(() => { /* fallback */ })
+  }, [])
 
   const load = useCallback(async () => {
     if (!trackingCode) return
@@ -139,7 +148,7 @@ export function OperationDetailPage() {
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-base font-bold text-gray-900">{operation.trackingCode}</h2>
-          <p className="text-xs text-gray-500">{OPERATION_LABELS[operation.operationType]}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''}</p>
+          <p className="text-xs text-gray-500">{operationTypeLabel(operation.operationType, opTypes)}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''}</p>
         </div>
         <Badge tone={operationStatusTone(operation.status)}>
           {operationStatusLabel(operation.status)}
