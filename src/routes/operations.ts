@@ -1531,3 +1531,31 @@ operationsRouter.get('/activity', async (req, res) => {
     res.status(500).json({ message: 'Error al leer el log de actividad.' })
   }
 })
+
+/**
+ * POST /api/activity
+ * Registra manualmente una entrada en el log de actividad de la empresa.
+ * Body: { companyId, action, detail, meta? }
+ */
+operationsRouter.post('/activity', async (req, res) => {
+  const { companyId, action, detail, meta } = req.body ?? {}
+  if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  if (!action?.trim() || !detail?.trim()) {
+    res.status(400).json({ message: 'action y detail son requeridos.' })
+    return
+  }
+  try {
+    const entry = {
+      companyId: companyId.trim(),
+      action: String(action).trim(),
+      detail: String(detail).trim(),
+      meta: meta ?? {},
+      createdAt: new Date().toISOString(),
+    }
+    await getDb().collection('activity_log').insertOne(entry)
+    res.json({ message: 'Actividad registrada.', entry })
+  } catch (err) {
+    console.error('[activity] Error al registrar:', err)
+    res.status(500).json({ message: 'Error al registrar la actividad.' })
+  }
+})

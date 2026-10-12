@@ -5,6 +5,10 @@ export const settingsRouter = Router()
 
 const COLLECTION = 'company_settings'
 
+function resetWhatsAppUnifiedCache() {
+  import('./whatsapp-web.js').then((m) => m.resetUnifiedCache?.()).catch(() => { /* noop */ })
+}
+
 /**
  * Extrae el folderId desde una URL de Google Drive.
  * Soporta formatos:
@@ -216,6 +220,12 @@ settingsRouter.get('/features', async (req, res) => {
       sheetsEnabled: doc?.sheetsEnabled === true,
       activityLog: doc?.activityLog === true,
       sendEmail: doc?.sendEmail === true,
+      whatsappUnified: doc?.whatsappUnified === true,
+      whatsappAudio: doc?.whatsappAudio === true,
+      whatsappCatalog: doc?.whatsappCatalog === true,
+      whatsappDocument: doc?.whatsappDocument === true,
+      markerEditor: doc?.markerEditor === true,
+      registrarActividad: doc?.registrarActividad === true,
     })
   } catch (err) {
     console.error('[settings] Error al leer features:', err)
@@ -226,10 +236,10 @@ settingsRouter.get('/features', async (req, res) => {
 /**
  * PUT /api/settings/features
  * Habilita/deshabilita funciones para la empresa.
- * Body: { companyId, sheetsEnabled?, activityLog?, sendEmail? }
+ * Body: { companyId, sheetsEnabled?, activityLog?, sendEmail?, whatsappUnified?, whatsappAudio?, whatsappCatalog?, whatsappDocument?, markerEditor?, registrarActividad? }
  */
 settingsRouter.put('/features', async (req, res) => {
-  const { companyId, sheetsEnabled, activityLog, sendEmail } = req.body ?? {}
+  const { companyId, sheetsEnabled, activityLog, sendEmail, whatsappUnified, whatsappAudio, whatsappCatalog, whatsappDocument, markerEditor, registrarActividad } = req.body ?? {}
   if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
   try {
     const db = getDb()
@@ -240,12 +250,19 @@ settingsRouter.put('/features', async (req, res) => {
     if (typeof sheetsEnabled === 'boolean') $set.sheetsEnabled = sheetsEnabled
     if (typeof activityLog === 'boolean') $set.activityLog = activityLog
     if (typeof sendEmail === 'boolean') $set.sendEmail = sendEmail
+    if (typeof whatsappUnified === 'boolean') $set.whatsappUnified = whatsappUnified
+    if (typeof whatsappAudio === 'boolean') $set.whatsappAudio = whatsappAudio
+    if (typeof whatsappCatalog === 'boolean') $set.whatsappCatalog = whatsappCatalog
+    if (typeof whatsappDocument === 'boolean') $set.whatsappDocument = whatsappDocument
+    if (typeof markerEditor === 'boolean') $set.markerEditor = markerEditor
+    if (typeof registrarActividad === 'boolean') $set.registrarActividad = registrarActividad
 
     await db.collection(COLLECTION).updateOne(
       { companyId: companyId.trim() },
       { $set },
       { upsert: true },
     )
+    resetWhatsAppUnifiedCache()
     res.json({ message: 'Funciones actualizadas.', ...$set })
   } catch (err) {
     console.error('[settings] Error al guardar features:', err)

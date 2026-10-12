@@ -180,6 +180,30 @@ export async function sendImage(to: string, image: Buffer | string, caption?: st
   return { id: res?.key?.id ?? null }
 }
 
+/** Envía un audio (desde Buffer o URL) a un número o grupo. */
+export async function sendAudio(to: string, audio: Buffer | string, companyId?: string): Promise<{ id: string | null }> {
+  const sock = ensureOpen(companyId)
+  const aud = typeof audio === 'string' ? { url: audio } : audio
+  const res = await sock.sendMessage(toJid(to), { audio: aud, ptt: true })
+  return { id: res?.key?.id ?? null }
+}
+
+/** Envía un documento (desde Buffer o URL) a un número o grupo, con nombre y caption opcionales. */
+export async function sendDocument(
+  to: string,
+  document: Buffer | string,
+  opts: { fileName?: string; caption?: string; mimetype?: string } = {},
+  companyId?: string,
+): Promise<{ id: string | null }> {
+  const sock = ensureOpen(companyId)
+  const doc = typeof document === 'string' ? { url: document } : document
+  const docMessage: Record<string, unknown> = { document: doc, fileName: opts.fileName ?? 'documento' }
+  if (opts.caption) docMessage.caption = opts.caption
+  if (opts.mimetype) docMessage.mimetype = opts.mimetype
+  const res = await sock.sendMessage(toJid(to), docMessage as never)
+  return { id: res?.key?.id ?? null }
+}
+
 /**
  * Envía varias imágenes como un ÁLBUM (agrupadas, como una galería en WhatsApp)
  * con un único texto (caption) que aparece una sola vez al final del grupo.

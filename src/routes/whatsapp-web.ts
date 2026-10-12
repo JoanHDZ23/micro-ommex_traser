@@ -15,7 +15,7 @@ import { Router } from 'express'
 import { getDb } from '../lib/mongodb.js'
 import {
   startWhatsAppWeb, getStatus, getQrDataUrl, sendText, sendImage, sendAlbum, sendImageFromGitHub,
-  listGroups, resolveGroupInvite, clearSession, toJid,
+  listGroups, resolveGroupInvite, clearSession, toJid, sendAudio, sendDocument,
 } from '../lib/whatsapp-web.js'
 import { isGitHubConfigured } from '../lib/github-storage.js'
 
@@ -23,14 +23,130 @@ export const whatsappWebRouter = Router()
 
 const COLLECTION = 'whatsapp_messages'
 
-whatsappWebRouter.get('/status', (req, res) => {
+const TURNOS_API_URL = (process.env.TURNOS_API_URL || '').replace(/\/$/, '')
+
+async function isUnifiedMode(companyId?: string): Promise<boolean> {
+  if (!companyId || !TURNOS_API_URL) return false
+  try {
+    const doc = await getDb().collection('company_settings').findOne({ companyId })
+    return doc?.whatsappUnified === true
+  } catch {
+    return false
+  }
+}
+
+async function forwardToTurnos(
+  path: string,
+  method: 'GET' | 'POST',
+  body?: unknown,
+  query?: Record<string, string | undefined>,
+): Promise<{ status: number; data: any }> {
+  const url = new URL(`${TURNOS_API_URL}/whatsapp-turnos${path}`)
+  if (query) {
+    for (const [k, v] of Object.entries(query)) {
+      if (v !== undefined && v !== null) url.searchParams.set(k, v)
+    }
+  }
+  const res = await fetch(url.toString(), {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const text = await res.text()
+  let data: any
+  try { data = JSON.parse(text) } catch { data = text }
+  return { status: res.status, data }
+}
+
+let unifiedCache: Record<string, boolean> = {}
+async function isUnified(companyId?: string): Promise<boolean> {
+  if (!companyId || !TURNOS_API_URL) return false
+  if (unifiedCache[companyId] !== undefined) return unifiedCache[companyId]
+  const v = await isUnifiedMode(companyId)
+  unifiedCache[companyId] = v
+  return v
+}
+
+export function resetUnifiedCache() { unifiedCache = {} }
+
+async function uSendText(to: string, text: string, companyId?: string): Promise<{ id: string | null }> {
+  if (await isUnified(companyId)) {
+    const r = await forwardToTurnos('/send-text', 'POST', { to, text, companyId })
+    if (r.status >= 400) throw new Error(r.data?.message || `Error ${r.status}`)
+    return { id: r.data?.id ?? null }
+  }
+  return sendText(to, text, companyId)
+}
+
+async function uSendImage(to: string, imageUrl: string, caption?: string, companyId?: string): Promise<{ id: string | null }> {
+  if (await isUnified(companyId)) {
+    const r = await forwardToTurnos('/send-image', 'POST', { to, imageUrl, caption, companyId })
+    if (r.status >= 400) throw new Error(r.data?.message || `Error ${r.status}`)
+    return { id: r.data?.id ?? null }
+  }
+  return sendImage(to, imageUrl, caption, companyId)
+}
+
+async function uSendAlbum(to: string, urls: string[], caption?: string, companyId?: string): Promise<{ id: string | null; count: number }> {
+  if (await isUnified(companyId)) {
+    const r = await forwardToTurnos('/send-album', 'POST', {
+      to,
+      images: urls.map((imageUrl) => ({ imageUrl })),
+      caption,
+      companyId,
+    })
+    if (r.status >= 400) throw new Error(r.data?.message || `Error ${r.status}`)
+    return { id: r.data?.id ?? null, count: r.data?.count ?? urls.length }
+  }
+  return sendAlbum(to, urls, caption, companyId)
+}
+
+async function uSendAudio(to: string, audioUrl: string, companyId?: string): Promise<{ id: string | null }> {
+  if (await isUnified(companyId)) {
+    const r = await forwardToTurnos('/send-audio', 'POST', { to, audioUrl, companyId })
+    if (r.status >= 400) throw new Error(r.data?.message || `Error ${r.status}`)
+    return { id: r.data?.id ?? null }
+  }
+  return sendAudio(to, audioUrl, companyId)
+}
+
+async function uSendDocument(
+  to: string,
+  docUrl: string,
+  opts: { fileName?: string; caption?: string; mimetype?: string } = {},
+  companyId?: string,
+): Promise<{ id: string | null }> {
+  if (await isUnified(companyId)) {
+    const r = await forwardToTurnos('/send-document', 'POST', {
+      to,
+      documentUrl: docUrl,
+      fileName: opts.fileName,
+      caption: opts.caption,
+      mimetype: opts.mimetype,
+      companyId,
+    })
+    if (r.status >= 400) throw new Error(r.data?.message || `Error ${r.status}`)
+    return { id: r.data?.id ?? null }
+  }
+  return sendDocument(to, docUrl, opts, companyId)
+}
+
+whatsappWebRouter.get('/status', async (req, res) => {
   const companyId = (req.query.companyId as string) || undefined
+  if (await isUnifiedMode(companyId)) {
+    const r = await forwardToTurnos('/status', 'GET', undefined, companyId ? { companyId } : undefined)
+    return res.status(r.status).json(r.data)
+  }
   res.json(getStatus(companyId))
 })
 
 /** Inicia la conexión (si no está activa) y devuelve el estado. */
 whatsappWebRouter.post('/start', async (req, res) => {
   const companyId = (req.body?.companyId as string) || (req.query.companyId as string) || undefined
+  if (await isUnifiedMode(companyId)) {
+    const r = await forwardToTurnos('/start', 'POST', { companyId })
+    return res.status(r.status).json(r.data)
+  }
   try {
     await startWhatsAppWeb(companyId)
     res.json(getStatus(companyId))
@@ -45,6 +161,10 @@ whatsappWebRouter.post('/start', async (req, res) => {
  */
 whatsappWebRouter.get('/qr', async (req, res) => {
   const companyId = (req.query.companyId as string) || undefined
+  if (await isUnifiedMode(companyId)) {
+    const r = await forwardToTurnos('/qr', 'GET', undefined, { companyId, format: req.query.format as string | undefined })
+    return res.status(r.status).json(r.data)
+  }
   try {
     const st = getStatus(companyId)
     if (st.status === 'disconnected') await startWhatsAppWeb(companyId)
@@ -75,6 +195,25 @@ whatsappWebRouter.post('/send', async (req, res) => {
   const { to, text, imageUrl, caption, companyId, trackingCode } = req.body ?? {}
   if (!to) { res.status(400).json({ message: 'El destino "to" es requerido (número o JID de grupo).' }); return }
   if (!text && !imageUrl) { res.status(400).json({ message: 'Debes enviar "text" o "imageUrl".' }); return }
+
+  if (await isUnifiedMode(companyId)) {
+    const path = imageUrl ? '/send-image' : '/send-text'
+    const body = imageUrl
+      ? { to, imageUrl, caption, companyId }
+      : { to, text, companyId }
+    const r = await forwardToTurnos(path, 'POST', body)
+    if (r.status >= 200 && r.status < 300) {
+      try {
+        await getDb().collection(COLLECTION).insertOne({
+          direction: 'outbound', channel: 'whatsapp-web', to: toJid(to),
+          body: caption ?? text ?? null, imageUrl: imageUrl ?? null,
+          messageId: r.data?.id ?? null, companyId: companyId ?? null,
+          trackingCode: trackingCode ?? null, createdAt: new Date().toISOString(),
+        })
+      } catch { /* db opcional */ }
+    }
+    return res.status(r.status).json(r.data)
+  }
 
   try {
     const result = imageUrl
@@ -186,7 +325,7 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
       ? `🕒 Inicio: ${inicio}\n✅ Finalizado: ${fin}`
       : `🕒 ${inicio}`
     const header = `📋 *Registro ${op.trackingCode}*\n${op.operationType}${op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}\n👤 ${op.operatorName}\n${horaLinea}`
-    await sendText(to, header, companyId); sent++
+    await uSendText(to, header, companyId); sent++
     await delay(PAUSE)
 
     // 2. Fotos generales y NOTAS de texto, en el orden del registro.
@@ -200,7 +339,7 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
         // Mensaje escrito del registro (nota de solo texto).
         const hora = item.timestamp ? fmt(item.timestamp) : ''
         const txt = hora ? `📝 ${item.comment}\n🕒 ${hora}` : `📝 ${item.comment}`
-        await sendText(to, txt, companyId)
+        await uSendText(to, txt, companyId)
         sent++
         await delay(PAUSE)
         i++
@@ -223,11 +362,11 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
         // Caption: el comentario de la primera foto del grupo (si hay).
         const caption = (group[0].comment ?? '').trim() || undefined
         const urls = group.map((p) => p.driveUrl as string)
-        const r = await sendAlbum(to, urls, caption, companyId)
+        const r = await uSendAlbum(to, urls, caption, companyId)
         sent += r.count
         i += group.length
       } else {
-        await sendImage(to, item.driveUrl as string, item.comment || item.stepName || '', companyId)
+        await uSendImage(to, item.driveUrl as string, item.comment || item.stepName || '', companyId)
         sent++
         i++
       }
@@ -248,7 +387,7 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
       const caption = `📦 *${prod.productCode}*${desc}${obs}`
 
       const urls = sendable.map((p) => p.driveUrl as string)
-      const r = await sendAlbum(to, urls, caption, companyId)
+      const r = await uSendAlbum(to, urls, caption, companyId)
       sent += r.count
       await delay(PAUSE)
     }
@@ -300,11 +439,73 @@ whatsappWebRouter.post('/send-product', async (req, res) => {
     const obs = obsList.length ? `\n📝 ${obsList.join(' · ')}` : ''
     const caption = `📦 *${prod.productCode}*${desc}${obs}`
 
-    const r = await sendAlbum(to, sendable.map((p) => p.driveUrl as string), caption, companyId)
+    const r = await uSendAlbum(to, sendable.map((p) => p.driveUrl as string), caption, companyId)
     res.json({ message: `Producto ${productCode} enviado (${r.count} foto(s)).`, to, sent: r.count })
   } catch (err) {
     console.error('[whatsapp-web] Error al enviar producto:', err)
     res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo enviar el producto.' })
+  }
+})
+
+/**
+ * POST /api/whatsapp-web/send-audio
+ * Envía un audio (nota de voz) al destino configurado de la empresa.
+ * Body: { trackingCode, audioUrl, to? }
+ */
+whatsappWebRouter.post('/send-audio', async (req, res) => {
+  const { trackingCode, audioUrl, to: toOverride } = req.body ?? {}
+  if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
+  if (!audioUrl) { res.status(400).json({ message: 'audioUrl es requerido.' }); return }
+
+  try {
+    const { getOperationsCollection, getDb } = await import('../lib/mongodb.js')
+    const op = await getOperationsCollection().findOne({ trackingCode })
+    if (!op) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const companyId = (op.companyId as string | undefined) || undefined
+    let to = (toOverride ?? '').trim()
+    if (!to && op.companyId) {
+      const settings = await getDb().collection('company_settings').findOne({ companyId: op.companyId })
+      to = (settings?.whatsappTo as string) ?? ''
+    }
+    if (!to) { res.status(400).json({ message: 'No hay destino de WhatsApp configurado para esta empresa.' }); return }
+
+    const r = await uSendAudio(to, audioUrl, companyId)
+    res.json({ message: 'Audio enviado a WhatsApp.', to, id: r.id })
+  } catch (err) {
+    console.error('[whatsapp-web] Error al enviar audio:', err)
+    res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo enviar el audio.' })
+  }
+})
+
+/**
+ * POST /api/whatsapp-web/send-document
+ * Envía un documento (PDF, Excel, etc.) al destino configurado de la empresa.
+ * Body: { trackingCode, documentUrl, fileName?, caption?, mimetype?, to? }
+ */
+whatsappWebRouter.post('/send-document', async (req, res) => {
+  const { trackingCode, documentUrl, fileName, caption, mimetype, to: toOverride } = req.body ?? {}
+  if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
+  if (!documentUrl) { res.status(400).json({ message: 'documentUrl es requerido.' }); return }
+
+  try {
+    const { getOperationsCollection, getDb } = await import('../lib/mongodb.js')
+    const op = await getOperationsCollection().findOne({ trackingCode })
+    if (!op) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const companyId = (op.companyId as string | undefined) || undefined
+    let to = (toOverride ?? '').trim()
+    if (!to && op.companyId) {
+      const settings = await getDb().collection('company_settings').findOne({ companyId: op.companyId })
+      to = (settings?.whatsappTo as string) ?? ''
+    }
+    if (!to) { res.status(400).json({ message: 'No hay destino de WhatsApp configurado para esta empresa.' }); return }
+
+    const r = await uSendDocument(to, documentUrl, { fileName, caption, mimetype }, companyId)
+    res.json({ message: 'Documento enviado a WhatsApp.', to, id: r.id })
+  } catch (err) {
+    console.error('[whatsapp-web] Error al enviar documento:', err)
+    res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo enviar el documento.' })
   }
 })
 
@@ -314,6 +515,10 @@ whatsappWebRouter.post('/send-product', async (req, res) => {
  */
 whatsappWebRouter.get('/groups', async (req, res) => {
   const companyId = (req.query.companyId as string) || undefined
+  if (await isUnifiedMode(companyId)) {
+    const r = await forwardToTurnos('/groups', 'GET', undefined, companyId ? { companyId } : undefined)
+    return res.status(r.status).json(r.data)
+  }
   try {
     const groups = await listGroups(companyId)
     res.json({ groups })
@@ -340,6 +545,11 @@ whatsappWebRouter.get('/resolve-invite', async (req, res) => {
 
 whatsappWebRouter.post('/logout', async (req, res) => {
   const companyId = (req.body?.companyId as string) || (req.query.companyId as string) || undefined
+  resetUnifiedCache()
+  if (await isUnifiedMode(companyId)) {
+    const r = await forwardToTurnos('/logout', 'POST', { companyId })
+    return res.status(r.status).json(r.data)
+  }
   try {
     await clearSession(companyId)
     res.json({ message: 'Sesión cerrada. Escanea el QR para volver a conectar.' })
