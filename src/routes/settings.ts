@@ -306,16 +306,37 @@ settingsRouter.put('/email', async (req, res) => {
   }
 })
 
+/** Destino de WhatsApp: etiqueta + número/JID. */
+type WaDestination = { id: string; label: string; to: string }
+
+/**
+ * Normaliza la configuración de destinos a una lista, soportando datos viejos
+ * (un solo `whatsappTo` string) y nuevos (`whatsappDestinations` array).
+ */
+function readDestinations(doc: Record<string, unknown> | null): WaDestination[] {
+  const list = Array.isArray(doc?.whatsappDestinations) ? (doc!.whatsappDestinations as WaDestination[]) : []
+  if (list.length > 0) {
+    return list
+      .filter((d) => d && typeof d.to === 'string' && d.to.trim())
+      .map((d) => ({ id: String(d.id || d.to), label: String(d.label || d.to).trim(), to: String(d.to).trim() }))
+  }
+  // Compatibilidad: un único whatsappTo legacy.
+  const legacy = (doc?.whatsappTo as string) ?? ''
+  return legacy.trim() ? [{ id: legacy.trim(), label: legacy.trim(), to: legacy.trim() }] : []
+}
+
 /**
  * GET /api/settings/whatsapp?companyId=xxx
- * Destino de WhatsApp (número o JID de grupo) al que se envían los registros.
+ * Devuelve la lista de destinos de WhatsApp y, por compatibilidad, el primero
+ * como `whatsappTo` (string).
  */
 settingsRouter.get('/whatsapp', async (req, res) => {
   const { companyId } = req.query as Record<string, string>
   if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
   try {
-    const doc = await getDb().collection(COLLECTION).findOne({ companyId })
-    res.json({ whatsappTo: (doc?.whatsappTo as string) ?? '' })
+    const doc = await getDb().collection(COLLECTION).findOne({ companyId }) as Record<string, unknown> | null
+    const destinations = readDestinations(doc)
+    res.json({ destinations, whatsappTo: destinations[0]?.to ?? '' })
   } catch (err) {
     console.error('[settings] Error al leer whatsapp:', err)
     res.status(500).json({ message: 'Error al leer el destino de WhatsApp.' })
@@ -324,18 +345,37 @@ settingsRouter.get('/whatsapp', async (req, res) => {
 
 /**
  * PUT /api/settings/whatsapp
- * Body: { companyId, whatsappTo }  — número (+57...) o JID de grupo (xxxx@g.us)
+ * Body (nuevo): { companyId, destinations: Array<{ id?, label, to }> }
+ * Body (compat): { companyId, whatsappTo }  — un único destino
  */
 settingsRouter.put('/whatsapp', async (req, res) => {
-  const { companyId, whatsappTo } = req.body ?? {}
+  const { companyId, destinations, whatsappTo } = req.body ?? {}
   if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
   try {
+    let list: WaDestination[]
+    if (Array.isArray(destinations)) {
+      list = (destinations as Array<Partial<WaDestination>>)
+        .map((d) => ({ to: String(d.to ?? '').trim(), label: String(d.label ?? d.to ?? '').trim() }))
+        .filter((d) => d.to)
+        .map((d) => ({ id: d.to, label: d.label || d.to, to: d.to }))
+    } else {
+      // Compat: un solo whatsappTo
+      const t = (whatsappTo ?? '').trim()
+      list = t ? [{ id: t, label: t, to: t }] : []
+    }
     await getDb().collection(COLLECTION).updateOne(
       { companyId: companyId.trim() },
-      { $set: { companyId: companyId.trim(), whatsappTo: (whatsappTo ?? '').trim(), updatedAt: new Date().toISOString() } },
+      {
+        $set: {
+          companyId: companyId.trim(),
+          whatsappDestinations: list,
+          whatsappTo: list[0]?.to ?? '', // mantiene compat para envíos sin selección
+          updatedAt: new Date().toISOString(),
+        },
+      },
       { upsert: true },
     )
-    res.json({ message: 'Destino de WhatsApp guardado.', whatsappTo: (whatsappTo ?? '').trim() })
+    res.json({ message: 'Destinos de WhatsApp guardados.', destinations: list, whatsappTo: list[0]?.to ?? '' })
   } catch (err) {
     console.error('[settings] Error al guardar whatsapp:', err)
     res.status(500).json({ message: 'Error al guardar el destino de WhatsApp.' })
