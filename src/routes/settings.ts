@@ -403,24 +403,35 @@ function slugifyTypeId(label: string): string {
     .slice(0, 40) || `TIPO_${Date.now()}`
 }
 
-function readCustomTypes(doc: Record<string, unknown> | null): OperationTypeDef[] {
-  const list = Array.isArray(doc?.operationTypes) ? (doc!.operationTypes as OperationTypeDef[]) : []
-  return list
-    .filter((t) => t && typeof t.id === 'string' && t.id.trim() && typeof t.label === 'string' && t.label.trim())
-    .map((t) => ({ id: t.id.trim(), label: t.label.trim(), descripcion: (t.descripcion ?? '').trim() || undefined }))
+function sanitizeTypes(raw: unknown): OperationTypeDef[] {
+  const list = Array.isArray(raw) ? (raw as Array<Partial<OperationTypeDef>>) : []
+  const seen = new Set<string>()
+  const clean: OperationTypeDef[] = []
+  for (const t of list) {
+    const label = String(t?.label ?? '').trim()
+    if (!label) continue
+    const id = (t?.id && String(t.id).trim()) ? String(t.id).trim() : slugifyTypeId(label)
+    if (seen.has(id)) continue
+    seen.add(id)
+    clean.push({ id, label, descripcion: String(t?.descripcion ?? '').trim() || undefined })
+  }
+  return clean
 }
 
 /**
  * GET /api/settings/operation-types?companyId=xxx
- * Devuelve los tipos de operación: los por defecto + los personalizados de la empresa.
+ * Devuelve la lista COMPLETA de tipos de la empresa. Si la empresa nunca los
+ * configuró, se devuelven los por defecto como punto de partida (editables).
+ * `defaults` se incluye solo como referencia (para "restaurar por defecto").
  */
 settingsRouter.get('/operation-types', async (req, res) => {
   const { companyId } = req.query as Record<string, string>
   if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
   try {
     const doc = await getDb().collection(COLLECTION).findOne({ companyId }) as Record<string, unknown> | null
-    const custom = readCustomTypes(doc)
-    res.json({ defaults: DEFAULT_OPERATION_TYPES, custom, all: [...DEFAULT_OPERATION_TYPES, ...custom] })
+    const saved = Array.isArray(doc?.operationTypes) ? sanitizeTypes(doc!.operationTypes) : null
+    const all = saved ?? DEFAULT_OPERATION_TYPES
+    res.json({ defaults: DEFAULT_OPERATION_TYPES, all, configured: saved !== null })
   } catch (err) {
     console.error('[settings] Error al leer tipos de operación:', err)
     res.status(500).json({ message: 'Error al leer los tipos de operación.' })
@@ -430,25 +441,16 @@ settingsRouter.get('/operation-types', async (req, res) => {
 /**
  * PUT /api/settings/operation-types
  * Body: { companyId, types: Array<{ id?, label, descripcion? }> }
- * Guarda SOLO los tipos personalizados (los por defecto no se tocan).
- * Rechaza colisiones con los ids por defecto.
+ * Guarda la lista COMPLETA de tipos que la empresa quiere (puede incluir,
+ * editar u omitir los por defecto). Debe haber al menos un tipo.
  */
 settingsRouter.put('/operation-types', async (req, res) => {
   const { companyId, types } = req.body ?? {}
   if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
   if (!Array.isArray(types)) { res.status(400).json({ message: 'types debe ser un arreglo.' }); return }
 
-  const defaultIds = new Set(DEFAULT_OPERATION_TYPES.map((t) => t.id))
-  const seen = new Set<string>()
-  const clean: OperationTypeDef[] = []
-  for (const t of types as Array<Partial<OperationTypeDef>>) {
-    const label = String(t.label ?? '').trim()
-    if (!label) continue
-    const id = (t.id && String(t.id).trim()) ? String(t.id).trim() : slugifyTypeId(label)
-    if (defaultIds.has(id) || seen.has(id)) continue // no duplicar defaults ni repetidos
-    seen.add(id)
-    clean.push({ id, label, descripcion: String(t.descripcion ?? '').trim() || undefined })
-  }
+  const clean = sanitizeTypes(types)
+  if (clean.length === 0) { res.status(400).json({ message: 'Debe quedar al menos un tipo de operación.' }); return }
 
   try {
     await getDb().collection(COLLECTION).updateOne(
@@ -456,7 +458,7 @@ settingsRouter.put('/operation-types', async (req, res) => {
       { $set: { companyId: companyId.trim(), operationTypes: clean, updatedAt: new Date().toISOString() } },
       { upsert: true },
     )
-    res.json({ message: 'Tipos de operación guardados.', custom: clean, all: [...DEFAULT_OPERATION_TYPES, ...clean] })
+    res.json({ message: 'Tipos de operación guardados.', all: clean })
   } catch (err) {
     console.error('[settings] Error al guardar tipos de operación:', err)
     res.status(500).json({ message: 'Error al guardar los tipos de operación.' })

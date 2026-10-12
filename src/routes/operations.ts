@@ -1042,6 +1042,51 @@ operationsRouter.patch('/:trackingCode/reopen', async (req, res) => {
 })
 
 /**
+ * POST /api/operations/:trackingCode/attachment
+ * Anexa un adjunto YA subido (audio o documento) como item del registro.
+ * Body: { url, mediaType: 'audio'|'document', fileName?, mimeType?, comment? }
+ */
+operationsRouter.post('/:trackingCode/attachment', async (req, res) => {
+  const { trackingCode } = req.params
+  const { url, mediaType, fileName, mimeType, comment } = req.body ?? {}
+  if (!url) { res.status(400).json({ message: 'url es requerida.' }); return }
+  if (mediaType !== 'audio' && mediaType !== 'document') {
+    res.status(400).json({ message: "mediaType debe ser 'audio' o 'document'." }); return
+  }
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const record = {
+      stepIndex: 0,
+      stepName: mediaType === 'audio' ? 'Audio' : 'Documento',
+      driveUrl: String(url),
+      fileId: 'attachment',
+      mediaType,
+      ...(fileName ? { fileName: String(fileName) } : {}),
+      ...(mimeType ? { mimeType: String(mimeType) } : {}),
+      ...(comment?.trim() ? { comment: comment.trim() } : {}),
+      timestamp: new Date().toISOString(),
+    }
+
+    await col.updateOne({ trackingCode }, { $push: { photos: record } as never, $set: { updatedAt: new Date().toISOString() } })
+
+    void logActivity(
+      operation.companyId as string | undefined,
+      mediaType === 'audio' ? 'audio_agregado' : 'documento_agregado',
+      `${mediaType === 'audio' ? 'Audio' : 'Documento'} agregado al registro ${trackingCode}`,
+      { trackingCode, fileName },
+    )
+
+    res.status(201).json({ message: 'Adjunto agregado al registro.', record })
+  } catch (err) {
+    console.error('[operations] Error al agregar adjunto:', err)
+    res.status(500).json({ message: 'Error al agregar el adjunto.' })
+  }
+})
+
+/**
  * PATCH /api/operations/:trackingCode
  * Actualiza datos de la operación (placa, operador, etc.)
  */

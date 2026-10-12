@@ -101,13 +101,13 @@ async function uSendAlbum(to: string, urls: string[], caption?: string, companyI
   return sendAlbum(to, urls, caption, companyId)
 }
 
-async function uSendAudio(to: string, audioUrl: string, companyId?: string): Promise<{ id: string | null }> {
+async function uSendAudio(to: string, audioUrl: string, companyId?: string, mimetype?: string): Promise<{ id: string | null }> {
   if (await isUnified(companyId)) {
-    const r = await forwardToTurnos('/send-audio', 'POST', { to, audioUrl, companyId })
+    const r = await forwardToTurnos('/send-audio', 'POST', { to, audioUrl, mimetype, companyId })
     if (r.status >= 400) throw new Error(r.data?.message || `Error ${r.status}`)
     return { id: r.data?.id ?? null }
   }
-  return sendAudio(to, audioUrl, companyId)
+  return sendAudio(to, audioUrl, companyId, mimetype)
 }
 
 async function uSendDocument(
@@ -453,7 +453,7 @@ whatsappWebRouter.post('/send-product', async (req, res) => {
  * Body: { trackingCode, audioUrl, to? }
  */
 whatsappWebRouter.post('/send-audio', async (req, res) => {
-  const { trackingCode, audioUrl, to: toOverride } = req.body ?? {}
+  const { trackingCode, audioUrl, mimetype, to: toOverride } = req.body ?? {}
   if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
   if (!audioUrl) { res.status(400).json({ message: 'audioUrl es requerido.' }); return }
 
@@ -470,7 +470,7 @@ whatsappWebRouter.post('/send-audio', async (req, res) => {
     }
     if (!to) { res.status(400).json({ message: 'No hay destino de WhatsApp configurado para esta empresa.' }); return }
 
-    const r = await uSendAudio(to, audioUrl, companyId)
+    const r = await uSendAudio(to, audioUrl, companyId, mimetype)
     res.json({ message: 'Audio enviado a WhatsApp.', to, id: r.id })
   } catch (err) {
     console.error('[whatsapp-web] Error al enviar audio:', err)

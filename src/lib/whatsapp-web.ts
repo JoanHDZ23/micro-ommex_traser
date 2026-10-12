@@ -181,10 +181,10 @@ export async function sendImage(to: string, image: Buffer | string, caption?: st
 }
 
 /** Envía un audio (desde Buffer o URL) a un número o grupo. */
-export async function sendAudio(to: string, audio: Buffer | string, companyId?: string): Promise<{ id: string | null }> {
+export async function sendAudio(to: string, audio: Buffer | string, companyId?: string, mimetype?: string): Promise<{ id: string | null }> {
   const sock = ensureOpen(companyId)
   const aud = typeof audio === 'string' ? { url: audio } : audio
-  const res = await sock.sendMessage(toJid(to), { audio: aud, ptt: true })
+  const res = await sock.sendMessage(toJid(to), { audio: aud, mimetype: mimetype || 'audio/mp4', ptt: true })
   return { id: res?.key?.id ?? null }
 }
 

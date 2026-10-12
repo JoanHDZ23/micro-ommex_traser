@@ -22,7 +22,7 @@ app.use(cors({
   ],
   credentials: true,
 }))
-app.use(express.json({ limit: '20mb' }))
+app.use(express.json({ limit: '60mb' }))
 
 // Routes
 app.use('/api/operations', operationsRouter)
