@@ -184,7 +184,13 @@ export async function sendImage(to: string, image: Buffer | string, caption?: st
 export async function sendAudio(to: string, audio: Buffer | string, companyId?: string, mimetype?: string): Promise<{ id: string | null }> {
   const sock = ensureOpen(companyId)
   const aud = typeof audio === 'string' ? { url: audio } : audio
-  const res = await sock.sendMessage(toJid(to), { audio: aud, mimetype: mimetype || 'audio/mp4', ptt: true })
+  // WhatsApp sólo reproduce notas de voz opus (ogg) o mp4; el webm/opus de
+  // Chrome se declara como audio/ogg; codecs=opus para que no salga como archivo.
+  const m = (mimetype || '').toLowerCase()
+  const finalMime = (!m || m.includes('webm') || m.includes('ogg') || m.includes('opus'))
+    ? 'audio/ogg; codecs=opus'
+    : (m.includes('mp4') || m.includes('m4a') ? 'audio/mp4' : mimetype!)
+  const res = await sock.sendMessage(toJid(to), { audio: aud, mimetype: finalMime, ptt: true })
   return { id: res?.key?.id ?? null }
 }
 
