@@ -17,19 +17,37 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
     config.body = JSON.stringify(body)
   }
 
-  const response = await fetch(`${BASE_URL}${endpoint}`, config)
-  const data = await response.json()
-
-  if (!response.ok) {
-    throw new Error(data.message || `Error ${response.status}`)
+  let response: Response
+  try {
+    response = await fetch(`${BASE_URL}${endpoint}`, config)
+  } catch {
+    // Error de red (sin conexión, CORS, servidor caído).
+    throw new Error('No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.')
   }
 
-  return data as T
+  // Lee el cuerpo como texto y parsea de forma segura: así una respuesta vacía
+  // o HTML (p. ej. 404/502 de un proxy) no revienta con "JSON.parse: unexpected character".
+  const raw = await response.text()
+  let data: unknown = null
+  if (raw) {
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      data = null
+    }
+  }
+
+  if (!response.ok) {
+    const msg = (data as { message?: string } | null)?.message
+    throw new Error(msg || `Error ${response.status}${response.statusText ? ` · ${response.statusText}` : ''}`)
+  }
+
+  return (data ?? null) as T
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-export type OperationType = 'PRODUCTOS_ENTRANTES' | 'PRODUCTOS_SALIENTES'
+export type OperationType = 'PRODUCTOS_ENTRANTES' | 'PRODUCTOS_SALIENTES' | 'ACTIVIDAD'
 export type OperationStatus = 'EN_PROCESO' | 'COMPLETADO'
 
 export interface PhotoRecord {

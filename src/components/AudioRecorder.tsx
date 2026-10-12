@@ -57,6 +57,9 @@ export function AudioRecorder({ open, onClose, onSend, sending }: AudioRecorderP
     setElapsed(0)
     chunksRef.current = []
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Tu navegador no permite grabar audio aquí. Necesita conexión segura (HTTPS) y permiso de micrófono.')
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
       const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
@@ -73,7 +76,15 @@ export function AudioRecorder({ open, onClose, onSend, sending }: AudioRecorderP
       recorder.start()
       timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000)
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'No se pudo acceder al micrófono.')
+      // Mensajes claros según el tipo de error de permisos del micrófono.
+      let msg = err instanceof Error ? err.message : 'No se pudo acceder al micrófono.'
+      const name = (err as { name?: string })?.name
+      if (name === 'NotAllowedError' || /not allowed/i.test(msg)) {
+        msg = 'Permiso de micrófono denegado. Permite el acceso al micrófono en el navegador e inténtalo de nuevo.'
+      } else if (name === 'NotFoundError') {
+        msg = 'No se encontró ningún micrófono en el dispositivo.'
+      }
+      setErrorMsg(msg)
       setStatus('error')
     }
   }

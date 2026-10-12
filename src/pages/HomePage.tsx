@@ -185,6 +185,17 @@ export function HomePage() {
             accentBgClass="bg-emerald-50 text-emerald-600"
             onClick={() => navigate('/new?type=PRODUCTOS_SALIENTES')}
           />
+          {features.registrarActividad && (
+            <QuickAction
+              icon={Activity}
+              title="Registro de actividad"
+              description="Registro fotográfico de una actividad (distinto de entrada/salida)"
+              gradientFrom="from-indigo-500"
+              gradientTo="to-violet-600"
+              accentBgClass="bg-indigo-50 text-indigo-600"
+              onClick={() => navigate('/new?type=ACTIVIDAD')}
+            />
+          )}
         </div>
       </section>
 

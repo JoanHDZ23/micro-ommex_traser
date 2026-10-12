@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowDown, ArrowUp, CheckCircle2, ShieldCheck, Truck, UserRound, X } from 'lucide-react'
+import { Activity, ArrowDown, ArrowUp, CheckCircle2, ShieldCheck, Truck, UserRound, X } from 'lucide-react'
 import { apiRequest, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
 import { getCompanyId, getOperatorName } from '../lib/context'
@@ -153,6 +153,8 @@ export function NewOperationPage() {
           >
             {form.operationType === 'PRODUCTOS_ENTRANTES' ? (
               <ArrowDown className="w-7 h-7 sm:w-8 sm:h-8" />
+            ) : form.operationType === 'ACTIVIDAD' ? (
+              <Activity className="w-7 h-7 sm:w-8 sm:h-8" />
             ) : (
               <ArrowUp className="w-7 h-7 sm:w-8 sm:h-8" />
             )}
@@ -167,7 +169,9 @@ export function NewOperationPage() {
             <p className="text-sm mt-0.5 max-w-md" style={{ color: 'var(--hero-text-2)' }}>
               {form.operationType === 'PRODUCTOS_ENTRANTES'
                 ? 'Registro fotográfico de productos que ingresan al almacén o local.'
-                : 'Registro fotográfico de productos que salen para despacho o entrega.'}
+                : form.operationType === 'ACTIVIDAD'
+                  ? 'Registro fotográfico de una actividad (distinto de entrada/salida).'
+                  : 'Registro fotográfico de productos que salen para despacho o entrega.'}
             </p>
           </div>
           <div

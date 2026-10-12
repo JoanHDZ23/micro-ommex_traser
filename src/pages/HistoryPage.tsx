@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowDown, ArrowUp, Calendar, ChevronRight, Filter, Package, Search } from 'lucide-react'
+import { Activity, ArrowDown, ArrowUp, Calendar, ChevronRight, Filter, Package, Search } from 'lucide-react'
 import { apiRequest, type Operation, type OperationType, type PaginatedOperations } from '../lib/api'
 import { OPERATION_LABELS } from '../lib/constants'
 import { getCompanyId } from '../lib/context'
@@ -20,6 +20,7 @@ import {
 const TYPE_ICONS: Record<OperationType, React.ComponentType<{ className?: string }>> = {
   PRODUCTOS_ENTRANTES: ArrowDown,
   PRODUCTOS_SALIENTES: ArrowUp,
+  ACTIVIDAD: Activity,
 }
 
 const HISTORY_GUIDE: GuideStep[] = [
