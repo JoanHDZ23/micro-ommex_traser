@@ -51,6 +51,12 @@ export function SettingsPage() {
   const [registrarActividad, setRegistrarActividad] = useState(false)
   const [sendEmail, setSendEmail] = useState(false)
   const [emailTo, setEmailTo] = useState('')
+  // Funciones adicionales del módulo de trazabilidad
+  const [whatsappUnified, setWhatsappUnified] = useState(false)
+  const [whatsappAudio, setWhatsappAudio] = useState(false)
+  const [whatsappCatalog, setWhatsappCatalog] = useState(false)
+  const [whatsappDocument, setWhatsappDocument] = useState(false)
+  const [markerEditor, setMarkerEditor] = useState(false)
   const [savingTracer, setSavingTracer] = useState(false)
   const [feedbackTracer, setFeedbackTracer] = useState<string | null>(null)
 
@@ -60,7 +66,10 @@ export function SettingsPage() {
       try {
         const [cleanupData, featuresData, emailData] = await Promise.all([
           apiRequest<{ cleanupEnabled: boolean; cleanupDays: number }>(`/settings/cleanup?companyId=${encodeURIComponent(companyId)}`),
-          apiRequest<{ sheetsEnabled: boolean; activityLog: boolean; registrarActividad?: boolean; sendEmail: boolean }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
+          apiRequest<{
+            sheetsEnabled: boolean; activityLog: boolean; registrarActividad?: boolean; sendEmail: boolean
+            whatsappUnified?: boolean; whatsappAudio?: boolean; whatsappCatalog?: boolean; whatsappDocument?: boolean; markerEditor?: boolean
+          }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`),
         ])
         setCleanupEnabled(cleanupData.cleanupEnabled ?? false)
@@ -69,6 +78,11 @@ export function SettingsPage() {
         setActivityLog(featuresData.activityLog ?? false)
         setRegistrarActividad(featuresData.registrarActividad ?? false)
         setSendEmail(featuresData.sendEmail ?? false)
+        setWhatsappUnified(featuresData.whatsappUnified ?? false)
+        setWhatsappAudio(featuresData.whatsappAudio ?? false)
+        setWhatsappCatalog(featuresData.whatsappCatalog ?? false)
+        setWhatsappDocument(featuresData.whatsappDocument ?? false)
+        setMarkerEditor(featuresData.markerEditor ?? false)
         setEmailTo(emailData.emailTo ?? '')
       } catch { /* no settings yet */ }
       finally { setLoading(false) }
@@ -104,15 +118,14 @@ export function SettingsPage() {
     if (!companyId) { setFeedbackTracer('No se encontró el ID de empresa.'); return }
     setSavingTracer(true); setFeedbackTracer(null)
     try {
-      await apiRequest('/settings/features', { method: 'PUT', body: { companyId, activityLog, registrarActividad, sendEmail } })
+      await apiRequest('/settings/features', {
+        method: 'PUT',
+        body: { companyId, activityLog, registrarActividad, sendEmail, whatsappUnified, whatsappAudio, whatsappCatalog, whatsappDocument, markerEditor },
+      })
       if (sendEmail) {
         await apiRequest('/settings/email', { method: 'PUT', body: { companyId, emailTo: emailTo.trim() } })
       }
-      const parts: string[] = []
-      parts.push(`Registro de actividades ${activityLog ? 'habilitado' : 'deshabilitado'}`)
-      parts.push(`Registrar actividad manual ${registrarActividad ? 'habilitado' : 'deshabilitado'}`)
-      parts.push(`Envío por correo ${sendEmail ? 'habilitado' : 'deshabilitado'}`)
-      setFeedbackTracer(`✓ ${parts.join(' · ')}.`)
+      setFeedbackTracer('✓ Opciones de trazabilidad guardadas.')
     } catch (err) {
       setFeedbackTracer(err instanceof Error ? err.message : 'Error al guardar')
     } finally { setSavingTracer(false) }
@@ -322,6 +335,69 @@ export function SettingsPage() {
           />
           <p className="text-[10px] text-[var(--color-text-3)]">
             Los registros completados se enviarán a este correo. Para varios destinatarios, sepáralos con coma.
+          </p>
+        </div>
+
+        {/* ── Funciones adicionales (habilitar/deshabilitar) ── */}
+        <div className="pt-2 mt-1 border-t border-[var(--color-border)] space-y-3">
+          {/* Cuenta de WhatsApp unificada */}
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--color-text)]">Usar WhatsApp de Turnos</span>
+            <div className="relative flex-shrink-0" onClick={() => setWhatsappUnified((v) => !v)}>
+              <div className={`w-11 h-6 rounded-full transition-colors ${whatsappUnified ? 'bg-indigo-600' : 'bg-gray-300'}`} />
+              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${whatsappUnified ? 'translate-x-5' : 'translate-x-0'}`} />
+            </div>
+          </label>
+          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
+            Usa la misma cuenta de WhatsApp de Turnos para enviar los registros de trazabilidad.
+          </p>
+
+          {/* Notas de voz */}
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--color-text)]">Notas de voz</span>
+            <div className="relative flex-shrink-0" onClick={() => setWhatsappAudio((v) => !v)}>
+              <div className={`w-11 h-6 rounded-full transition-colors ${whatsappAudio ? 'bg-indigo-600' : 'bg-gray-300'}`} />
+              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${whatsappAudio ? 'translate-x-5' : 'translate-x-0'}`} />
+            </div>
+          </label>
+          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
+            Permite adjuntar notas de voz en los registros (estilo WhatsApp).
+          </p>
+
+          {/* Catálogo de productos */}
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--color-text)]">Catálogo de productos</span>
+            <div className="relative flex-shrink-0" onClick={() => setWhatsappCatalog((v) => !v)}>
+              <div className={`w-11 h-6 rounded-full transition-colors ${whatsappCatalog ? 'bg-indigo-600' : 'bg-gray-300'}`} />
+              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${whatsappCatalog ? 'translate-x-5' : 'translate-x-0'}`} />
+            </div>
+          </label>
+          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
+            Permite seleccionar productos del catálogo en los registros.
+          </p>
+
+          {/* Adjuntar documentos */}
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--color-text)]">Adjuntar documentos</span>
+            <div className="relative flex-shrink-0" onClick={() => setWhatsappDocument((v) => !v)}>
+              <div className={`w-11 h-6 rounded-full transition-colors ${whatsappDocument ? 'bg-indigo-600' : 'bg-gray-300'}`} />
+              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${whatsappDocument ? 'translate-x-5' : 'translate-x-0'}`} />
+            </div>
+          </label>
+          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
+            Permite adjuntar archivos (PDF, Excel, etc.) en los registros.
+          </p>
+
+          {/* Editor de imágenes (marcador) */}
+          <label className="flex items-center justify-between gap-3 cursor-pointer">
+            <span className="text-sm font-medium text-[var(--color-text)]">Editor de imágenes</span>
+            <div className="relative flex-shrink-0" onClick={() => setMarkerEditor((v) => !v)}>
+              <div className={`w-11 h-6 rounded-full transition-colors ${markerEditor ? 'bg-indigo-600' : 'bg-gray-300'}`} />
+              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${markerEditor ? 'translate-x-5' : 'translate-x-0'}`} />
+            </div>
+          </label>
+          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
+            Permite dibujar/rayar sobre las fotos antes de guardarlas (estilo WhatsApp).
           </p>
         </div>
       </Card>

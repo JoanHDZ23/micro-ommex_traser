@@ -7,6 +7,7 @@ import { SheetsModal } from '../components/SheetsModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { CatalogPicker } from '../components/CatalogPicker'
+import { ImageEditor } from '../components/ImageEditor'
 import { Button, ErrorState, LoadingState } from '../components/ui'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
@@ -130,6 +131,9 @@ export function WizardPage() {
   const [showSendSelector, setShowSendSelector] = useState(false)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
   const [sendingSelected, setSendingSelected] = useState(false)
+
+  // Editor de imagen (marcador): intercepta una foto general antes de guardarla.
+  const [imgEditor, setImgEditor] = useState<{ src: string; comment: string } | null>(null)
 
   // Selección de destino de WhatsApp (varios chats/grupos configurados).
   type WaDest = { id: string; label: string; to: string }
@@ -454,6 +458,17 @@ export function WizardPage() {
   const handlePhotoCapture = async (base64: string, comment: string) => {
     if (!trackingCode) return
     setShowCamera(false)
+    // Si el editor de imágenes (marcador) está activo, abrir para marcar antes de guardar.
+    if (features.markerEditor) {
+      setImgEditor({ src: `data:image/jpeg;base64,${base64}`, comment })
+      return
+    }
+    await savePhotoGeneral(base64, comment)
+  }
+
+  // Guarda una foto general (cache local + subida en background).
+  const savePhotoGeneral = async (base64: string, comment: string) => {
+    if (!trackingCode) return
     setFeedback(null)
 
     // 1. Guardar en cache local (instantáneo)
@@ -1921,6 +1936,20 @@ export function WizardPage() {
         <CameraCapture stepName="Registro fotográfico" stepIndex={0}
           onCapture={(b64, cmt) => { void handlePhotoCapture(b64, cmt || chatMessage); setChatMessage('') }}
           onCancel={() => setShowCamera(false)} />
+      )}
+
+      {/* Editor de imagen (marcador) — se abre si la función está activa */}
+      {imgEditor && (
+        <ImageEditor
+          imageSrc={imgEditor.src}
+          onConfirm={(editedBase64) => {
+            const b64 = editedBase64.includes(',') ? editedBase64.split(',')[1] : editedBase64
+            const comment = imgEditor.comment
+            setImgEditor(null)
+            void savePhotoGeneral(b64, comment)
+          }}
+          onCancel={() => setImgEditor(null)}
+        />
       )}
 
       {/* Camera for Línea Blanca */}
