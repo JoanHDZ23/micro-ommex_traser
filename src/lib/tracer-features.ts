@@ -7,6 +7,7 @@ export type TracerFeatures = {
   activityLog: boolean
   sendEmail: boolean
   emailTo: string
+  whatsappTrazabilidad: boolean
   whatsappUnified: boolean
   whatsappAudio: boolean
   whatsappCatalog: boolean
@@ -29,7 +30,7 @@ export function useTracerFeatures(): TracerFeatures {
     if (cached && cacheCompanyId === companyId) return cached
     return {
       sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
-      whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
+      whatsappTrazabilidad: false, whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
       whatsappDocument: false, markerEditor: false, registrarActividad: false, loading: true,
     }
   })
@@ -38,7 +39,7 @@ export function useTracerFeatures(): TracerFeatures {
     if (!companyId) {
       setFeatures({
         sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
-        whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
+        whatsappTrazabilidad: false, whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
         whatsappDocument: false, markerEditor: false, registrarActividad: false, loading: false,
       })
       return
@@ -53,6 +54,7 @@ export function useTracerFeatures(): TracerFeatures {
         const [feat, email] = await Promise.all([
           apiRequest<{
             sheetsEnabled: boolean; activityLog: boolean; sendEmail: boolean
+            whatsappTrazabilidad?: boolean
             whatsappUnified?: boolean; whatsappAudio?: boolean; whatsappCatalog?: boolean
             whatsappDocument?: boolean; markerEditor?: boolean; registrarActividad?: boolean
           }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
@@ -63,6 +65,7 @@ export function useTracerFeatures(): TracerFeatures {
           activityLog: feat.activityLog ?? false,
           sendEmail: feat.sendEmail ?? false,
           emailTo: email.emailTo ?? '',
+          whatsappTrazabilidad: feat.whatsappTrazabilidad ?? false,
           whatsappUnified: feat.whatsappUnified ?? false,
           whatsappAudio: feat.whatsappAudio ?? false,
           whatsappCatalog: feat.whatsappCatalog ?? false,

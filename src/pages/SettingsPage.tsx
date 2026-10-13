@@ -334,8 +334,8 @@ export function SettingsPage() {
       </Card>
       )}
 
-      {/* ── WhatsApp (sincronización por QR + envío) ── */}
-      <WhatsAppSync />
+      {/* ── WhatsApp (sincronización por QR + envío) — solo si el root lo permite ── */}
+      {can('whatsappTrazabilidad') && <WhatsAppSync />}
 
       {/* ── Subconfiguración de Trazabilidad ── */}
       <Card as="section" className="space-y-3">

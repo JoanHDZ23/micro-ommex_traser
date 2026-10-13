@@ -6,6 +6,7 @@ import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
+import { useTracerFeatures } from '../lib/tracer-features'
 import { Badge, Button, Card, ErrorState, LoadingState, operationStatusLabel, operationStatusTone } from '../components/ui'
 
 const DETAIL_GUIDE: GuideStep[] = [
@@ -81,6 +82,7 @@ export function OperationDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [lightbox, setLightbox] = useState<PhotoRecord | null>(null)
   const [showWaSync, setShowWaSync] = useState(false)
+  const { whatsappTrazabilidad } = useTracerFeatures()
   const [opTypes, setOpTypes] = useState<Array<{ id: string; label: string }>>([])
   useEffect(() => {
     const cid = getCompanyId()
@@ -185,7 +187,8 @@ export function OperationDetailPage() {
         <SyncButton trackingCode={operation.trackingCode} onSynced={load} />
       )}
 
-      {/* Sincronizar WhatsApp de la empresa (QR) */}
+      {/* Sincronizar WhatsApp de la empresa (QR) — solo si el root habilitó WhatsApp de Trazabilidad */}
+      {whatsappTrazabilidad && (
       <Button
         variant="secondary"
         fullWidth
@@ -195,9 +198,10 @@ export function OperationDetailPage() {
       >
         Sincronizar WhatsApp
       </Button>
+      )}
 
       {/* Compartir: WhatsApp (con selección de chats si hay varios) o correo */}
-      <ShareButton trackingCode={operation.trackingCode} companyId={operation.companyId} />
+      <ShareButton trackingCode={operation.trackingCode} companyId={operation.companyId} whatsappEnabled={whatsappTrazabilidad} />
 
       {/* Modal: sincronización de WhatsApp (solo QR, sin ID de grupo) */}
       {showWaSync && (
@@ -428,7 +432,7 @@ function PhotoCard({ photo, onClick, useCommentAsTitle }: { photo: PhotoRecord; 
  * - Correo: envía al/los correo(s) configurados en Ajustes.
  */
 type WaDest = { id: string; label: string; to: string }
-function ShareButton({ trackingCode, companyId }: { trackingCode: string; companyId?: string }) {
+function ShareButton({ trackingCode, companyId, whatsappEnabled = true }: { trackingCode: string; companyId?: string; whatsappEnabled?: boolean }) {
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'channel' | 'whatsapp'>('channel')
   const [sending, setSending] = useState(false)
@@ -530,6 +534,7 @@ function ShareButton({ trackingCode, companyId }: { trackingCode: string; compan
             {step === 'channel' ? (
               <div className="p-4 space-y-2">
                 <p className="text-xs text-gray-500 mb-1">¿Por dónde quieres enviar el registro?</p>
+                {whatsappEnabled && (
                 <button onClick={() => onPickWhatsApp()} disabled={sending}
                   className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-[#128c7e] hover:bg-emerald-50 transition-colors disabled:opacity-50">
                   <div className="w-10 h-10 rounded-full bg-[#128c7e]/10 flex items-center justify-center flex-shrink-0">
@@ -540,6 +545,7 @@ function ShareButton({ trackingCode, companyId }: { trackingCode: string; compan
                     <p className="text-[11px] text-gray-400">{dests.length > 1 ? `${dests.length} chats configurados — elige a cuáles` : 'Enviar al chat configurado'}</p>
                   </div>
                 </button>
+                )}
                 <button onClick={() => void sendEmail()} disabled={sending}
                   className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-indigo-400 hover:bg-indigo-50 transition-colors disabled:opacity-50">
                   <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0">
