@@ -201,8 +201,6 @@ export function HomePage() {
             const customTypes = opTypes.filter((t) => !baseIds.has(t.id))
             const list = [...BASE_OPERATION_TYPES, ...customTypes]
             return list
-              // Oculta "ACTIVIDAD" si la empresa no tiene activada esa función.
-              .filter((t) => t.id !== 'ACTIVIDAD' || features.registrarActividad)
               .map((t) => {
                 const s = style[t.id] ?? fallback
                 return (

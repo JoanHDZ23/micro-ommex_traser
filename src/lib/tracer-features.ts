@@ -19,6 +19,18 @@ export type TracerFeatures = {
 
 let cached: TracerFeatures | null = null
 let cacheCompanyId = ''
+const subscribers = new Set<() => void>()
+
+/**
+ * Invalida la caché de features y notifica a los hooks activos para que
+ * vuelvan a consultar el backend. Se usa cuando el panel root envía una
+ * señal de refresco por postMessage.
+ */
+export function invalidateTracerFeaturesCache() {
+  cached = null
+  cacheCompanyId = ''
+  for (const fn of subscribers) fn()
+}
 
 /**
  * Devuelve los features de trazabilidad de la empresa (cacheados en memoria).
@@ -36,20 +48,9 @@ export function useTracerFeatures(): TracerFeatures {
   })
 
   useEffect(() => {
-    if (!companyId) {
-      setFeatures({
-        sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
-        whatsappTrazabilidad: false, whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
-        whatsappDocument: false, markerEditor: false, registrarActividad: false, loading: false,
-      })
-      return
-    }
-    if (cached && cacheCompanyId === companyId) {
-      setFeatures(cached)
-      return
-    }
     let cancelled = false
     const load = async () => {
+      if (!companyId) return
       try {
         const [feat, email] = await Promise.all([
           apiRequest<{
@@ -81,8 +82,28 @@ export function useTracerFeatures(): TracerFeatures {
         if (!cancelled) setFeatures((prev) => ({ ...prev, loading: false }))
       }
     }
-    void load()
-    return () => { cancelled = true }
+
+    const onInvalidate = () => {
+      cached = null
+      cacheCompanyId = ''
+      void load()
+    }
+    subscribers.add(onInvalidate)
+
+    if (!companyId) {
+      setFeatures({
+        sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
+        whatsappTrazabilidad: false, whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
+        whatsappDocument: false, markerEditor: false, registrarActividad: false, loading: false,
+      })
+      return () => { cancelled = true; subscribers.delete(onInvalidate) }
+    }
+    if (cached && cacheCompanyId === companyId) {
+      setFeatures(cached)
+    } else {
+      void load()
+    }
+    return () => { cancelled = true; subscribers.delete(onInvalidate) }
   }, [companyId])
 
   return features
