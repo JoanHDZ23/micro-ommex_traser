@@ -217,6 +217,9 @@ const FEATURE_KEYS = [
 ] as const
 type FeatureKey = typeof FEATURE_KEYS[number]
 
+/** Límite por defecto de tipos de operación personalizados (0 = sin límite). */
+const DEFAULT_OPERATION_TYPES_LIMIT = 0
+
 /**
  * Devuelve el mapa de funciones PERMITIDAS por el root.
  * El panel root es la autoridad: una función solo está permitida si el root la
@@ -245,6 +248,7 @@ settingsRouter.get('/features', async (req, res) => {
     // defecto; el admin de empresa solo puede desactivarla como preferencia
     // (doc[k] === false). Si el root NO la permite, nunca está activa.
     const eff = (k: FeatureKey) => allowed[k] === true && doc?.[k] !== false
+    const opLimit = typeof doc?.operationTypesLimit === 'number' ? doc.operationTypesLimit : DEFAULT_OPERATION_TYPES_LIMIT
     res.json({
       sheetsEnabled: eff('sheetsEnabled'),
       activityLog: eff('activityLog'),
@@ -256,6 +260,7 @@ settingsRouter.get('/features', async (req, res) => {
       whatsappDocument: eff('whatsappDocument'),
       markerEditor: eff('markerEditor'),
       registrarActividad: eff('registrarActividad'),
+      operationTypesLimit: opLimit,
       // `allowed`: qué funciones concedió el root (para que el panel del cliente
       // oculte/bloquee las no permitidas, incluso para el admin principal).
       allowed,
@@ -301,6 +306,10 @@ settingsRouter.put('/features', async (req, res) => {
         }
       }
       $set.allowedFeatures = newAllowed
+      // El root también define el límite de tipos de operación personalizados.
+      if (typeof body.operationTypesLimit === 'number' && body.operationTypesLimit >= 0) {
+        $set.operationTypesLimit = Math.round(body.operationTypesLimit)
+      }
     } else {
       // Admin de empresa: ignora cualquier función NO permitida por el root.
       for (const k of FEATURE_KEYS) {
@@ -438,12 +447,20 @@ settingsRouter.put('/whatsapp', async (req, res) => {
 /** Tipo de operación configurable por la empresa. */
 type OperationTypeDef = { id: string; label: string; descripcion?: string }
 
-/** Tipos de operación por defecto (siempre disponibles). */
-const DEFAULT_OPERATION_TYPES: OperationTypeDef[] = [
+/** Tipos de operación base que SIEMPRE están disponibles (no se pueden eliminar). */
+const BASE_OPERATION_TYPES: OperationTypeDef[] = [
   { id: 'PRODUCTOS_ENTRANTES', label: 'Operación Entrante', descripcion: 'Registro de productos que ingresan al almacén o local.' },
   { id: 'PRODUCTOS_SALIENTES', label: 'Operación Saliente', descripcion: 'Registro de productos que salen para despacho o entrega.' },
+]
+
+/** Tipos de operación por defecto (base + actividad). */
+const DEFAULT_OPERATION_TYPES: OperationTypeDef[] = [
+  ...BASE_OPERATION_TYPES,
   { id: 'ACTIVIDAD', label: 'Registro de actividad', descripcion: 'Registro fotográfico de una actividad.' },
 ]
+
+/** IDs de los tipos base (siempre presentes). */
+const BASE_TYPE_IDS = new Set(BASE_OPERATION_TYPES.map((t) => t.id))
 
 /** Convierte una etiqueta libre en un id en MAYÚSCULAS_CON_GUIONES. */
 function slugifyTypeId(label: string): string {
@@ -473,9 +490,12 @@ function sanitizeTypes(raw: unknown): OperationTypeDef[] {
 
 /**
  * GET /api/settings/operation-types?companyId=xxx
- * Devuelve la lista COMPLETA de tipos de la empresa. Si la empresa nunca los
+ * Devuelve la lista COMPLETA de tipos de la empresa. Los tipos base
+ * (PRODUCTOS_ENTRANTES y PRODUCTOS_SALIENTES) siempre están presentes: la
+ * opción de crear operación queda siempre activa. Si la empresa nunca los
  * configuró, se devuelven los por defecto como punto de partida (editables).
  * `defaults` se incluye solo como referencia (para "restaurar por defecto").
+ * `limit` es el máximo de tipos personalizados permitidos (0 = sin límite).
  */
 settingsRouter.get('/operation-types', async (req, res) => {
   const { companyId } = req.query as Record<string, string>
@@ -483,8 +503,14 @@ settingsRouter.get('/operation-types', async (req, res) => {
   try {
     const doc = await getDb().collection(COLLECTION).findOne({ companyId }) as Record<string, unknown> | null
     const saved = Array.isArray(doc?.operationTypes) ? sanitizeTypes(doc!.operationTypes) : null
-    const all = saved ?? DEFAULT_OPERATION_TYPES
-    res.json({ defaults: DEFAULT_OPERATION_TYPES, all, configured: saved !== null })
+    const raw = saved ?? DEFAULT_OPERATION_TYPES
+    // Garantiza que los tipos base siempre estén presentes (no se pueden eliminar).
+    const savedBase = raw.filter((t) => BASE_TYPE_IDS.has(t.id))
+    const mergedBase = BASE_OPERATION_TYPES.map((b) => savedBase.find((s) => s.id === b.id) ?? b)
+    const customTypes = raw.filter((t) => !BASE_TYPE_IDS.has(t.id))
+    const all = [...mergedBase, ...customTypes]
+    const limit = typeof doc?.operationTypesLimit === 'number' ? doc.operationTypesLimit : DEFAULT_OPERATION_TYPES_LIMIT
+    res.json({ defaults: DEFAULT_OPERATION_TYPES, all, configured: saved !== null, limit })
   } catch (err) {
     console.error('[settings] Error al leer tipos de operación:', err)
     res.status(500).json({ message: 'Error al leer los tipos de operación.' })
@@ -495,7 +521,10 @@ settingsRouter.get('/operation-types', async (req, res) => {
  * PUT /api/settings/operation-types
  * Body: { companyId, types: Array<{ id?, label, descripcion? }> }
  * Guarda la lista COMPLETA de tipos que la empresa quiere (puede incluir,
- * editar u omitir los por defecto). Debe haber al menos un tipo.
+ * editar u omitir los por defecto). Los tipos base (PRODUCTOS_ENTRANTES y
+ * PRODUCTOS_SALIENTES) siempre se conservan: la opción de crear operación
+ * queda siempre activa. Se respeta el límite de tipos personalizados
+ * (operationTypesLimit, 0 = sin límite).
  */
 settingsRouter.put('/operation-types', async (req, res) => {
   const { companyId, types } = req.body ?? {}
@@ -503,15 +532,37 @@ settingsRouter.put('/operation-types', async (req, res) => {
   if (!Array.isArray(types)) { res.status(400).json({ message: 'types debe ser un arreglo.' }); return }
 
   const clean = sanitizeTypes(types)
-  if (clean.length === 0) { res.status(400).json({ message: 'Debe quedar al menos un tipo de operación.' }); return }
+
+  // Lee el límite configurado por el root (si existe).
+  let opLimit = DEFAULT_OPERATION_TYPES_LIMIT
+  try {
+    const doc = await getDb().collection(COLLECTION).findOne({ companyId: companyId.trim() }) as Record<string, unknown> | null
+    opLimit = typeof doc?.operationTypesLimit === 'number' ? doc.operationTypesLimit : DEFAULT_OPERATION_TYPES_LIMIT
+  } catch { /* sin límite */ }
+
+  // Separa tipos base de personalizados. Los base siempre se conservan.
+  const submittedBase = clean.filter((t) => BASE_TYPE_IDS.has(t.id))
+  const custom = clean.filter((t) => !BASE_TYPE_IDS.has(t.id))
+
+  // Aplica el límite de tipos personalizados (0 = sin límite).
+  if (opLimit > 0 && custom.length > opLimit) {
+    res.status(400).json({ message: `No puedes agregar más de ${opLimit} tipo(s) de operación personalizado(s).` })
+    return
+  }
+
+  // Reconstruye la lista: base (con los datos enviados si existen, si no los por defecto) + personalizados.
+  const mergedBase = BASE_OPERATION_TYPES.map((b) => submittedBase.find((s) => s.id === b.id) ?? b)
+  const finalList = [...mergedBase, ...custom]
+
+  if (finalList.length === 0) { res.status(400).json({ message: 'Debe quedar al menos un tipo de operación.' }); return }
 
   try {
     await getDb().collection(COLLECTION).updateOne(
       { companyId: companyId.trim() },
-      { $set: { companyId: companyId.trim(), operationTypes: clean, updatedAt: new Date().toISOString() } },
+      { $set: { companyId: companyId.trim(), operationTypes: finalList, updatedAt: new Date().toISOString() } },
       { upsert: true },
     )
-    res.json({ message: 'Tipos de operación guardados.', all: clean })
+    res.json({ message: 'Tipos de operación guardados.', all: finalList, limit: opLimit })
   } catch (err) {
     console.error('[settings] Error al guardar tipos de operación:', err)
     res.status(500).json({ message: 'Error al guardar los tipos de operación.' })
