@@ -214,7 +214,8 @@ export function HomePage() {
         </div>
       </section>
 
-      {/* ── Base de datos ─────────────────────────────────── */}
+      {/* ── Base de datos — solo si "Importar documentación" está activo ── */}
+      {features.sheetsEnabled && (
       <section className="space-y-3">
         <SectionHeader eyebrow="Base de datos" title="Tablas importadas" />
         <Card interactive padding="none" className="overflow-hidden group" onClick={() => navigate('/documentos')}>
@@ -250,6 +251,7 @@ export function HomePage() {
           </div>
         </Card>
       </section>
+      )}
 
       {/* ── Accesos secundarios ─────────────────────────── */}
       <section className="space-y-3">
