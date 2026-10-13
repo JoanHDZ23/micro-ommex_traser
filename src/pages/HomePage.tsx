@@ -38,6 +38,14 @@ const HOME_GUIDE: GuideStep[] = [
   },
 ]
 
+// Tipos de operación base que SIEMPRE están disponibles (crear operación siempre activo).
+// La empresa puede agregar tipos personalizados, pero estos nunca se ocultan.
+type OpTypeDef = { id: string; label: string; descripcion?: string }
+const BASE_OPERATION_TYPES: OpTypeDef[] = [
+  { id: 'PRODUCTOS_ENTRANTES', label: 'Operación Entrante', descripcion: 'Registro de productos que ingresan al almacén o local.' },
+  { id: 'PRODUCTOS_SALIENTES', label: 'Operación Saliente', descripcion: 'Registro de productos que salen para despacho o entrega.' },
+]
+
 export function HomePage() {
   const navigate = useNavigate()
   const features = useTracerFeatures()
@@ -49,7 +57,6 @@ export function HomePage() {
   const [loadingActivity, setLoadingActivity] = useState(true)
 
   // Tipos de operación (por defecto + personalizados configurados por la empresa)
-  type OpTypeDef = { id: string; label: string; descripcion?: string }
   const [opTypes, setOpTypes] = useState<OpTypeDef[]>([])
   useEffect(() => {
     const companyId = getCompanyId()
@@ -187,11 +194,12 @@ export function HomePage() {
               ACTIVIDAD: { icon: Activity, from: 'from-indigo-500', to: 'to-violet-600', accent: 'bg-indigo-50 text-indigo-600' },
             }
             const fallback = { icon: ClipboardList, from: 'from-slate-500', to: 'to-gray-600', accent: 'bg-slate-100 text-slate-600' }
-            // Si aún no cargaron los tipos del backend, usa los por defecto.
-            const list = opTypes.length ? opTypes : [
-              { id: 'PRODUCTOS_ENTRANTES', label: 'Operación Entrante', descripcion: 'Registro de productos que ingresan al almacén o local' },
-              { id: 'PRODUCTOS_SALIENTES', label: 'Operación Saliente', descripcion: 'Registro de productos que salen para despacho o entrega' },
-            ]
+            // Fusiona los tipos base (siempre disponibles) con los personalizados
+            // del backend, deduplicando por id. Los tipos base nunca se ocultan:
+            // la opción de crear operación queda siempre activa.
+            const baseIds = new Set(BASE_OPERATION_TYPES.map((b) => b.id))
+            const customTypes = opTypes.filter((t) => !baseIds.has(t.id))
+            const list = [...BASE_OPERATION_TYPES, ...customTypes]
             return list
               // Oculta "ACTIVIDAD" si la empresa no tiene activada esa función.
               .filter((t) => t.id !== 'ACTIVIDAD' || features.registrarActividad)

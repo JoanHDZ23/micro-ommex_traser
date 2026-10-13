@@ -69,8 +69,10 @@ export function SettingsPage() {
 
   // Tipos de operación personalizados
   type OpTypeDef = { id: string; label: string; descripcion?: string }
+  const BASE_TYPE_IDS = new Set(['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES'])
   const [defaultTypes, setDefaultTypes] = useState<OpTypeDef[]>([])
   const [opTypes, setOpTypes] = useState<OpTypeDef[]>([]) // lista completa editable
+  const [opTypesLimit, setOpTypesLimit] = useState(0) // 0 = sin límite
   const [newTypeLabel, setNewTypeLabel] = useState('')
   const [newTypeDesc, setNewTypeDesc] = useState('')
   const [savingTypes, setSavingTypes] = useState(false)
@@ -78,14 +80,18 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (!companyId) return
-    void apiRequest<{ defaults: OpTypeDef[]; all: OpTypeDef[] }>(`/settings/operation-types?companyId=${encodeURIComponent(companyId)}`)
-      .then((r) => { setDefaultTypes(r.defaults ?? []); setOpTypes(r.all ?? []) })
+    void apiRequest<{ defaults: OpTypeDef[]; all: OpTypeDef[]; limit?: number }>(`/settings/operation-types?companyId=${encodeURIComponent(companyId)}`)
+      .then((r) => { setDefaultTypes(r.defaults ?? []); setOpTypes(r.all ?? []); setOpTypesLimit(r.limit ?? 0) })
       .catch(() => { /* sin tipos aún */ })
   }, [companyId])
+
+  const customCount = opTypes.filter((t) => !BASE_TYPE_IDS.has(t.id)).length
+  const limitReached = opTypesLimit > 0 && customCount >= opTypesLimit
 
   const addOpType = () => {
     const label = newTypeLabel.trim()
     if (!label) { setFeedbackTypes('Escribe un nombre para el tipo.'); return }
+    if (limitReached) { setFeedbackTypes(`Has alcanzado el límite de ${opTypesLimit} tipo(s) personalizado(s).`); return }
     setOpTypes((prev) => [...prev, { id: '', label, descripcion: newTypeDesc.trim() || undefined }])
     setNewTypeLabel(''); setNewTypeDesc(''); setFeedbackTypes(null)
   }
@@ -95,7 +101,11 @@ export function SettingsPage() {
   }
 
   const removeOpType = (idx: number) => {
-    setOpTypes((prev) => prev.filter((_, i) => i !== idx))
+    setOpTypes((prev) => {
+      const target = prev[idx]
+      if (target && BASE_TYPE_IDS.has(target.id)) return prev
+      return prev.filter((_, i) => i !== idx)
+    })
   }
 
   const restoreDefaultTypes = () => {
@@ -516,7 +526,7 @@ export function SettingsPage() {
           </button>
         </div>
         <p className="text-xs text-[var(--color-text-2)]">
-          Crea, edita o elimina los tipos de operación. Todos (incluidos los iniciales) se pueden modificar. Aparecerán en la pantalla de inicio para registrar operaciones.
+          Los tipos base (Entrante y Saliente) siempre están disponibles y no se pueden eliminar. Puedes editar su nombre y descripción, y agregar tipos personalizados adicionales.
         </p>
 
         {/* Lista editable de tipos */}
@@ -524,52 +534,69 @@ export function SettingsPage() {
           {opTypes.length === 0 && (
             <p className="text-[11px] text-[var(--color-text-3)]">No hay tipos. Agrega al menos uno.</p>
           )}
-          {opTypes.map((t, idx) => (
-            <div key={`${t.id || 'new'}-${idx}`} className="p-2.5 rounded-lg bg-[var(--color-surface)] border border-[var(--color-border)] space-y-2">
-              <div className="flex items-center gap-2">
+          {opTypes.map((t, idx) => {
+            const isBase = BASE_TYPE_IDS.has(t.id)
+            return (
+              <div key={`${t.id || 'new'}-${idx}`} className={`p-2.5 rounded-lg border space-y-2 ${isBase ? 'bg-indigo-50/50 border-indigo-200' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}`}>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={t.label}
+                    onChange={(e) => updateOpType(idx, { label: e.target.value })}
+                    placeholder="Nombre del tipo"
+                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  {isBase ? (
+                    <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-100 px-2 py-1 rounded flex-shrink-0">Base</span>
+                  ) : (
+                    <button type="button" onClick={() => removeOpType(idx)} className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-1">Quitar</button>
+                  )}
+                </div>
                 <input
                   type="text"
-                  value={t.label}
-                  onChange={(e) => updateOpType(idx, { label: e.target.value })}
-                  placeholder="Nombre del tipo"
-                  className="flex-1 min-w-0 px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  value={t.descripcion ?? ''}
+                  onChange={(e) => updateOpType(idx, { descripcion: e.target.value })}
+                  placeholder="Descripción (opcional)"
+                  className="w-full px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-xs text-[var(--color-text-2)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-                <button type="button" onClick={() => removeOpType(idx)} className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-1">Quitar</button>
               </div>
-              <input
-                type="text"
-                value={t.descripcion ?? ''}
-                onChange={(e) => updateOpType(idx, { descripcion: e.target.value })}
-                placeholder="Descripción (opcional)"
-                className="w-full px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-xs text-[var(--color-text-2)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         {/* Agregar nuevo tipo */}
         <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-3)]">Agregar tipo</p>
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-3)]">Agregar tipo</p>
+            {opTypesLimit > 0 && (
+              <span className="text-[10px] text-[var(--color-text-3)]">
+                {customCount}/{opTypesLimit} personalizados
+              </span>
+            )}
+          </div>
           <input
             type="text"
             value={newTypeLabel}
             onChange={(e) => setNewTypeLabel(e.target.value)}
             placeholder="Nombre del tipo (ej. Inventario, Mantenimiento)"
-            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            disabled={limitReached}
+            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
           />
           <input
             type="text"
             value={newTypeDesc}
             onChange={(e) => setNewTypeDesc(e.target.value)}
             placeholder="Descripción (opcional)"
-            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            disabled={limitReached}
+            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
           />
           <button
             type="button"
             onClick={addOpType}
-            className="w-full py-2 rounded-lg border border-indigo-200 text-indigo-600 text-sm font-medium hover:bg-indigo-50 transition-colors"
+            disabled={limitReached}
+            className="w-full py-2 rounded-lg border border-indigo-200 text-indigo-600 text-sm font-medium hover:bg-indigo-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            + Agregar tipo
+            {limitReached ? `Límite alcanzado (${opTypesLimit})` : '+ Agregar tipo'}
           </button>
         </div>
 
