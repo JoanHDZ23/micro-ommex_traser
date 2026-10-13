@@ -1548,7 +1548,7 @@ operationsRouter.post('/:trackingCode/send-email', async (req, res) => {
       operatorName: op.operatorName,
       createdAt: op.createdAt,
       completedAt: op.completedAt,
-      photos: (op.photos ?? []) as Array<{ driveUrl?: string; comment?: string; stepName?: string }>,
+      photos: (op.photos ?? []) as Array<{ driveUrl?: string; comment?: string; stepName?: string; mediaType?: 'image' | 'audio' | 'document'; fileName?: string; mimeType?: string }>,
       products: (op.lineaBlanca ?? []) as Array<{
         productCode: string
         labelData?: { descripcion?: string }
