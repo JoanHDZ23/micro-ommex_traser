@@ -244,10 +244,11 @@ settingsRouter.get('/features', async (req, res) => {
     const db = getDb()
     const doc = await db.collection(COLLECTION).findOne({ companyId }) as Record<string, unknown> | null
     const allowed = readAllowed(doc)
-    // El root es la autoridad. Si el root PERMITE una función, queda ACTIVA por
-    // defecto; el admin de empresa solo puede desactivarla como preferencia
-    // (doc[k] === false). Si el root NO la permite, nunca está activa.
-    const eff = (k: FeatureKey) => allowed[k] === true && doc?.[k] !== false
+    // El root es la autoridad: el valor EFECTIVO de cada función es exactamente
+    // lo que el root permitió. Si el root la activa, la función aparece y queda
+    // activa en el cliente de inmediato (sin depender de un flag secundario que
+    // el admin pudiera haber dejado en false). Si el root la apaga, desaparece.
+    const eff = (k: FeatureKey) => allowed[k] === true
     const opLimit = typeof doc?.operationTypesLimit === 'number' ? doc.operationTypesLimit : DEFAULT_OPERATION_TYPES_LIMIT
     res.json({
       sheetsEnabled: eff('sheetsEnabled'),
