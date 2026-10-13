@@ -63,7 +63,8 @@ export function SettingsPage() {
   // de empresa NO la ve ni puede activarla aquí.
   type AllowedMap = Record<string, boolean>
   const [allowed, setAllowed] = useState<AllowedMap>({})
-  const can = (k: string) => allowed[k] !== false // por defecto permitido si no viene info
+  // El panel root manda: una opción solo se ve si el root la permitió explícitamente.
+  const can = (k: string) => allowed[k] === true
   const canAny = (...ks: string[]) => ks.some((k) => can(k)) // true si al menos una está permitida
 
   // Tipos de operación personalizados
