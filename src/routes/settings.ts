@@ -212,7 +212,7 @@ settingsRouter.put('/cleanup', async (req, res) => {
  */
 /** Claves de funciones de trazabilidad que el root puede permitir/denegar. */
 const FEATURE_KEYS = [
-  'sheetsEnabled', 'activityLog', 'sendEmail', 'whatsappUnified',
+  'sheetsEnabled', 'activityLog', 'sendEmail', 'whatsappTrazabilidad', 'whatsappUnified',
   'whatsappAudio', 'whatsappCatalog', 'whatsappDocument', 'markerEditor', 'registrarActividad',
 ] as const
 type FeatureKey = typeof FEATURE_KEYS[number]
@@ -245,6 +245,7 @@ settingsRouter.get('/features', async (req, res) => {
       sheetsEnabled: eff('sheetsEnabled'),
       activityLog: eff('activityLog'),
       sendEmail: eff('sendEmail'),
+      whatsappTrazabilidad: eff('whatsappTrazabilidad'),
       whatsappUnified: eff('whatsappUnified'),
       whatsappAudio: eff('whatsappAudio'),
       whatsappCatalog: eff('whatsappCatalog'),
