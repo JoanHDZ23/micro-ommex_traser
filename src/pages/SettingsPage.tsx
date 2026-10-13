@@ -59,6 +59,11 @@ export function SettingsPage() {
   const [markerEditor, setMarkerEditor] = useState(false)
   const [savingTracer, setSavingTracer] = useState(false)
   const [feedbackTracer, setFeedbackTracer] = useState<string | null>(null)
+  // Funciones permitidas por el panel root. Si una no está permitida, el admin
+  // de empresa NO la ve ni puede activarla aquí.
+  type AllowedMap = Record<string, boolean>
+  const [allowed, setAllowed] = useState<AllowedMap>({})
+  const can = (k: string) => allowed[k] !== false // por defecto permitido si no viene info
 
   // Tipos de operación personalizados
   type OpTypeDef = { id: string; label: string; descripcion?: string }
@@ -120,11 +125,13 @@ export function SettingsPage() {
           apiRequest<{
             sheetsEnabled: boolean; activityLog: boolean; registrarActividad?: boolean; sendEmail: boolean
             whatsappUnified?: boolean; whatsappAudio?: boolean; whatsappCatalog?: boolean; whatsappDocument?: boolean; markerEditor?: boolean
+            allowed?: Record<string, boolean>
           }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`),
         ])
         setCleanupEnabled(cleanupData.cleanupEnabled ?? false)
         setCleanupDays(cleanupData.cleanupDays ?? 20)
+        setAllowed(featuresData.allowed ?? {})
         setSheetsEnabled(featuresData.sheetsEnabled ?? false)
         setActivityLog(featuresData.activityLog ?? false)
         setRegistrarActividad(featuresData.registrarActividad ?? false)
@@ -283,7 +290,8 @@ export function SettingsPage() {
         <ErrorState message={cleanupError} onRetry={() => void handleSaveCleanup()} />
       )}
 
-      {/* ── Función: Documentos a Google Sheets ── */}
+      {/* ── Función: Documentos a Google Sheets (solo si el root la permite) ── */}
+      {can('sheetsEnabled') && (
       <Card as="section" className="space-y-3">
         <div className="flex items-center gap-2">
           <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
@@ -324,6 +332,7 @@ export function SettingsPage() {
           </Button>
         )}
       </Card>
+      )}
 
       {/* ── WhatsApp (sincronización por QR + envío) ── */}
       <WhatsAppSync />
@@ -339,6 +348,7 @@ export function SettingsPage() {
         </p>
 
         {/* Registro de actividades */}
+        {can('activityLog') && (<>
         <label className="flex items-center justify-between gap-3 cursor-pointer">
           <span className="text-sm font-medium text-[var(--color-text)]">Registro de actividades</span>
           <div className="relative flex-shrink-0" onClick={() => setActivityLog((v) => !v)}>
@@ -349,8 +359,10 @@ export function SettingsPage() {
         <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
           Muestra un historial de acciones (creación, finalización, envíos) en la pantalla principal.
         </p>
+        </>)}
 
         {/* Registrar actividad manual */}
+        {can('registrarActividad') && (<>
         <label className="flex items-center justify-between gap-3 cursor-pointer">
           <span className="text-sm font-medium text-[var(--color-text)]">Registrar actividad manual</span>
           <div className="relative flex-shrink-0" onClick={() => setRegistrarActividad((v) => !v)}>
@@ -361,8 +373,10 @@ export function SettingsPage() {
         <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
           Permite anotar actividades manualmente dentro de cada operación (ej. novedades, observaciones).
         </p>
+        </>)}
 
         {/* Enviar por correo */}
+        {can('sendEmail') && (<>
         <label className="flex items-center justify-between gap-3 cursor-pointer">
           <span className="text-sm font-medium text-[var(--color-text)]">Enviar por correo</span>
           <div className="relative flex-shrink-0" onClick={() => setSendEmail((v) => !v)}>
@@ -388,10 +402,12 @@ export function SettingsPage() {
             Los registros completados se enviarán a este correo. Para varios destinatarios, sepáralos con coma.
           </p>
         </div>
+        </>)}
 
         {/* ── Funciones adicionales (habilitar/deshabilitar) ── */}
         <div className="pt-2 mt-1 border-t border-[var(--color-border)] space-y-3">
           {/* Cuenta de WhatsApp unificada */}
+          {can('whatsappUnified') && (<>
           <label className="flex items-center justify-between gap-3 cursor-pointer">
             <span className="text-sm font-medium text-[var(--color-text)]">Usar WhatsApp de Turnos</span>
             <div className="relative flex-shrink-0" onClick={() => setWhatsappUnified((v) => !v)}>
@@ -402,8 +418,10 @@ export function SettingsPage() {
           <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
             Usa la misma cuenta de WhatsApp de Turnos para enviar los registros de trazabilidad.
           </p>
+          </>)}
 
           {/* Notas de voz */}
+          {can('whatsappAudio') && (<>
           <label className="flex items-center justify-between gap-3 cursor-pointer">
             <span className="text-sm font-medium text-[var(--color-text)]">Notas de voz</span>
             <div className="relative flex-shrink-0" onClick={() => setWhatsappAudio((v) => !v)}>
@@ -414,8 +432,10 @@ export function SettingsPage() {
           <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
             Permite adjuntar notas de voz en los registros (estilo WhatsApp).
           </p>
+          </>)}
 
           {/* Catálogo de productos */}
+          {can('whatsappCatalog') && (<>
           <label className="flex items-center justify-between gap-3 cursor-pointer">
             <span className="text-sm font-medium text-[var(--color-text)]">Catálogo de productos</span>
             <div className="relative flex-shrink-0" onClick={() => setWhatsappCatalog((v) => !v)}>
@@ -426,8 +446,10 @@ export function SettingsPage() {
           <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
             Permite seleccionar productos del catálogo en los registros.
           </p>
+          </>)}
 
           {/* Adjuntar documentos */}
+          {can('whatsappDocument') && (<>
           <label className="flex items-center justify-between gap-3 cursor-pointer">
             <span className="text-sm font-medium text-[var(--color-text)]">Adjuntar documentos</span>
             <div className="relative flex-shrink-0" onClick={() => setWhatsappDocument((v) => !v)}>
@@ -438,8 +460,10 @@ export function SettingsPage() {
           <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
             Permite adjuntar archivos (PDF, Excel, etc.) en los registros.
           </p>
+          </>)}
 
           {/* Editor de imágenes (marcador) */}
+          {can('markerEditor') && (<>
           <label className="flex items-center justify-between gap-3 cursor-pointer">
             <span className="text-sm font-medium text-[var(--color-text)]">Editor de imágenes</span>
             <div className="relative flex-shrink-0" onClick={() => setMarkerEditor((v) => !v)}>
@@ -450,6 +474,7 @@ export function SettingsPage() {
           <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
             Permite dibujar/rayar sobre las fotos antes de guardarlas (estilo WhatsApp).
           </p>
+          </>)}
         </div>
       </Card>
 
