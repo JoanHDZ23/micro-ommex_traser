@@ -210,22 +210,50 @@ settingsRouter.put('/cleanup', async (req, res) => {
  * GET /api/settings/features?companyId=xxx
  * Devuelve los flags de funciones habilitadas para la empresa.
  */
+/** Claves de funciones de trazabilidad que el root puede permitir/denegar. */
+const FEATURE_KEYS = [
+  'sheetsEnabled', 'activityLog', 'sendEmail', 'whatsappUnified',
+  'whatsappAudio', 'whatsappCatalog', 'whatsappDocument', 'markerEditor', 'registrarActividad',
+] as const
+type FeatureKey = typeof FEATURE_KEYS[number]
+
+/**
+ * Devuelve el mapa de funciones PERMITIDAS por el root.
+ * - Si existe `allowedFeatures` en el documento, se usa tal cual.
+ * - Si NO existe (empresas antiguas, aún sin pasar por el root), se consideran
+ *   todas permitidas para no romper el comportamiento previo.
+ */
+function readAllowed(doc: Record<string, unknown> | null): Record<FeatureKey, boolean> {
+  const stored = (doc?.allowedFeatures ?? null) as Record<string, unknown> | null
+  const out = {} as Record<FeatureKey, boolean>
+  for (const k of FEATURE_KEYS) {
+    out[k] = stored ? stored[k] === true : true
+  }
+  return out
+}
+
 settingsRouter.get('/features', async (req, res) => {
   const { companyId } = req.query as Record<string, string>
   if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
   try {
     const db = getDb()
-    const doc = await db.collection(COLLECTION).findOne({ companyId })
+    const doc = await db.collection(COLLECTION).findOne({ companyId }) as Record<string, unknown> | null
+    const allowed = readAllowed(doc)
+    // El valor EFECTIVO de cada función es: preferencia de la empresa AND permiso del root.
+    const eff = (k: FeatureKey) => doc?.[k] === true && allowed[k]
     res.json({
-      sheetsEnabled: doc?.sheetsEnabled === true,
-      activityLog: doc?.activityLog === true,
-      sendEmail: doc?.sendEmail === true,
-      whatsappUnified: doc?.whatsappUnified === true,
-      whatsappAudio: doc?.whatsappAudio === true,
-      whatsappCatalog: doc?.whatsappCatalog === true,
-      whatsappDocument: doc?.whatsappDocument === true,
-      markerEditor: doc?.markerEditor === true,
-      registrarActividad: doc?.registrarActividad === true,
+      sheetsEnabled: eff('sheetsEnabled'),
+      activityLog: eff('activityLog'),
+      sendEmail: eff('sendEmail'),
+      whatsappUnified: eff('whatsappUnified'),
+      whatsappAudio: eff('whatsappAudio'),
+      whatsappCatalog: eff('whatsappCatalog'),
+      whatsappDocument: eff('whatsappDocument'),
+      markerEditor: eff('markerEditor'),
+      registrarActividad: eff('registrarActividad'),
+      // `allowed`: qué funciones concedió el root (para que el panel del cliente
+      // oculte/bloquee las no permitidas, incluso para el admin principal).
+      allowed,
     })
   } catch (err) {
     console.error('[settings] Error al leer features:', err)
@@ -239,26 +267,46 @@ settingsRouter.get('/features', async (req, res) => {
  * Body: { companyId, sheetsEnabled?, activityLog?, sendEmail?, whatsappUnified?, whatsappAudio?, whatsappCatalog?, whatsappDocument?, markerEditor?, registrarActividad? }
  */
 settingsRouter.put('/features', async (req, res) => {
-  const { companyId, sheetsEnabled, activityLog, sendEmail, whatsappUnified, whatsappAudio, whatsappCatalog, whatsappDocument, markerEditor, registrarActividad } = req.body ?? {}
-  if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  const body = req.body ?? {}
+  const companyId = (body.companyId as string)?.trim()
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+
+  // Origen de la petición:
+  //  - 'root': proviene del panel super-admin. Define QUÉ se permite (allowedFeatures)
+  //            además del valor; es la autoridad final.
+  //  - admin de empresa (sin source): solo puede cambiar funciones PERMITIDAS por el root.
+  const isRoot = body.source === 'root'
+
   try {
     const db = getDb()
-    const $set: Record<string, unknown> = {
-      companyId: companyId.trim(),
-      updatedAt: new Date().toISOString(),
+    const existing = await db.collection(COLLECTION).findOne({ companyId }) as Record<string, unknown> | null
+    const allowed = readAllowed(existing)
+
+    const $set: Record<string, unknown> = { companyId, updatedAt: new Date().toISOString() }
+
+    if (isRoot) {
+      // El root permite una función cuando la enciende; la deniega cuando la apaga.
+      const newAllowed = {} as Record<FeatureKey, boolean>
+      for (const k of FEATURE_KEYS) {
+        if (typeof body[k] === 'boolean') {
+          $set[k] = body[k]
+          newAllowed[k] = body[k] as boolean
+        } else {
+          newAllowed[k] = allowed[k]
+        }
+      }
+      $set.allowedFeatures = newAllowed
+    } else {
+      // Admin de empresa: ignora cualquier función NO permitida por el root.
+      for (const k of FEATURE_KEYS) {
+        if (typeof body[k] === 'boolean') {
+          $set[k] = allowed[k] ? body[k] : false
+        }
+      }
     }
-    if (typeof sheetsEnabled === 'boolean') $set.sheetsEnabled = sheetsEnabled
-    if (typeof activityLog === 'boolean') $set.activityLog = activityLog
-    if (typeof sendEmail === 'boolean') $set.sendEmail = sendEmail
-    if (typeof whatsappUnified === 'boolean') $set.whatsappUnified = whatsappUnified
-    if (typeof whatsappAudio === 'boolean') $set.whatsappAudio = whatsappAudio
-    if (typeof whatsappCatalog === 'boolean') $set.whatsappCatalog = whatsappCatalog
-    if (typeof whatsappDocument === 'boolean') $set.whatsappDocument = whatsappDocument
-    if (typeof markerEditor === 'boolean') $set.markerEditor = markerEditor
-    if (typeof registrarActividad === 'boolean') $set.registrarActividad = registrarActividad
 
     await db.collection(COLLECTION).updateOne(
-      { companyId: companyId.trim() },
+      { companyId },
       { $set },
       { upsert: true },
     )
