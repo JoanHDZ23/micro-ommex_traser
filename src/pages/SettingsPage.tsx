@@ -69,7 +69,6 @@ export function SettingsPage() {
 
   // Tipos de operación personalizados
   type OpTypeDef = { id: string; label: string; descripcion?: string }
-  const BASE_TYPE_IDS = new Set(['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES'])
   const [defaultTypes, setDefaultTypes] = useState<OpTypeDef[]>([])
   const [opTypes, setOpTypes] = useState<OpTypeDef[]>([]) // lista completa editable
   const [opTypesLimit, setOpTypesLimit] = useState(0) // 0 = sin límite
@@ -85,13 +84,12 @@ export function SettingsPage() {
       .catch(() => { /* sin tipos aún */ })
   }, [companyId])
 
-  const customCount = opTypes.filter((t) => !BASE_TYPE_IDS.has(t.id)).length
-  const limitReached = opTypesLimit > 0 && customCount >= opTypesLimit
+  const limitReached = opTypesLimit > 0 && opTypes.length >= opTypesLimit
 
   const addOpType = () => {
     const label = newTypeLabel.trim()
     if (!label) { setFeedbackTypes('Escribe un nombre para el tipo.'); return }
-    if (limitReached) { setFeedbackTypes(`Has alcanzado el límite de ${opTypesLimit} tipo(s) personalizado(s).`); return }
+    if (limitReached) { setFeedbackTypes(`Has alcanzado el límite de ${opTypesLimit} tipo(s) de operación.`); return }
     setOpTypes((prev) => [...prev, { id: '', label, descripcion: newTypeDesc.trim() || undefined }])
     setNewTypeLabel(''); setNewTypeDesc(''); setFeedbackTypes(null)
   }
@@ -101,11 +99,7 @@ export function SettingsPage() {
   }
 
   const removeOpType = (idx: number) => {
-    setOpTypes((prev) => {
-      const target = prev[idx]
-      if (target && BASE_TYPE_IDS.has(target.id)) return prev
-      return prev.filter((_, i) => i !== idx)
-    })
+    setOpTypes((prev) => prev.filter((_, i) => i !== idx))
   }
 
   const restoreDefaultTypes = () => {
@@ -526,7 +520,7 @@ export function SettingsPage() {
           </button>
         </div>
         <p className="text-xs text-[var(--color-text-2)]">
-          Los tipos base (Entrante y Saliente) siempre están disponibles y no se pueden eliminar. Puedes editar su nombre y descripción, y agregar tipos personalizados adicionales.
+          Crea, edita o elimina los tipos de operación. Todos se pueden modificar y eliminar. Aparecerán en la pantalla de inicio para registrar operaciones. Debe quedar al menos uno.
         </p>
 
         {/* Lista editable de tipos */}
@@ -534,34 +528,27 @@ export function SettingsPage() {
           {opTypes.length === 0 && (
             <p className="text-[11px] text-[var(--color-text-3)]">No hay tipos. Agrega al menos uno.</p>
           )}
-          {opTypes.map((t, idx) => {
-            const isBase = BASE_TYPE_IDS.has(t.id)
-            return (
-              <div key={`${t.id || 'new'}-${idx}`} className={`p-2.5 rounded-lg border space-y-2 ${isBase ? 'bg-indigo-50/50 border-indigo-200' : 'bg-[var(--color-surface)] border-[var(--color-border)]'}`}>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={t.label}
-                    onChange={(e) => updateOpType(idx, { label: e.target.value })}
-                    placeholder="Nombre del tipo"
-                    className="flex-1 min-w-0 px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                  {isBase ? (
-                    <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-100 px-2 py-1 rounded flex-shrink-0">Base</span>
-                  ) : (
-                    <button type="button" onClick={() => removeOpType(idx)} className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-1">Quitar</button>
-                  )}
-                </div>
+          {opTypes.map((t, idx) => (
+            <div key={`${t.id || 'new'}-${idx}`} className="p-2.5 rounded-lg border space-y-2 bg-[var(--color-surface)] border-[var(--color-border)]">
+              <div className="flex items-center gap-2">
                 <input
                   type="text"
-                  value={t.descripcion ?? ''}
-                  onChange={(e) => updateOpType(idx, { descripcion: e.target.value })}
-                  placeholder="Descripción (opcional)"
-                  className="w-full px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-xs text-[var(--color-text-2)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  value={t.label}
+                  onChange={(e) => updateOpType(idx, { label: e.target.value })}
+                  placeholder="Nombre del tipo"
+                  className="flex-1 min-w-0 px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+                <button type="button" onClick={() => removeOpType(idx)} className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-1">Quitar</button>
               </div>
-            )
-          })}
+              <input
+                type="text"
+                value={t.descripcion ?? ''}
+                onChange={(e) => updateOpType(idx, { descripcion: e.target.value })}
+                placeholder="Descripción (opcional)"
+                className="w-full px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-xs text-[var(--color-text-2)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          ))}
         </div>
 
         {/* Agregar nuevo tipo */}
@@ -570,7 +557,7 @@ export function SettingsPage() {
             <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-3)]">Agregar tipo</p>
             {opTypesLimit > 0 && (
               <span className="text-[10px] text-[var(--color-text-3)]">
-                {customCount}/{opTypesLimit} personalizados
+                {opTypes.length}/{opTypesLimit} tipos
               </span>
             )}
           </div>

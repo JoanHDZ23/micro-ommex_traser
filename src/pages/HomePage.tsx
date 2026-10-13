@@ -38,10 +38,13 @@ const HOME_GUIDE: GuideStep[] = [
   },
 ]
 
-// Tipos de operación base que SIEMPRE están disponibles (crear operación siempre activo).
-// La empresa puede agregar tipos personalizados, pero estos nunca se ocultan.
+// Tipo de operación configurable por la empresa. Todos son editables/eliminables
+// desde Configuración; aquí solo se listan los que la empresa tenga definidos.
 type OpTypeDef = { id: string; label: string; descripcion?: string }
-const BASE_OPERATION_TYPES: OpTypeDef[] = [
+
+// Tipos de operación por defecto, usados solo como fallback mientras cargan los
+// del backend o si la petición falla. No son fijos.
+const FALLBACK_OPERATION_TYPES: OpTypeDef[] = [
   { id: 'PRODUCTOS_ENTRANTES', label: 'Operación Entrante', descripcion: 'Registro de productos que ingresan al almacén o local.' },
   { id: 'PRODUCTOS_SALIENTES', label: 'Operación Saliente', descripcion: 'Registro de productos que salen para despacho o entrega.' },
 ]
@@ -194,12 +197,9 @@ export function HomePage() {
               ACTIVIDAD: { icon: Activity, from: 'from-indigo-500', to: 'to-violet-600', accent: 'bg-indigo-50 text-indigo-600' },
             }
             const fallback = { icon: ClipboardList, from: 'from-slate-500', to: 'to-gray-600', accent: 'bg-slate-100 text-slate-600' }
-            // Fusiona los tipos base (siempre disponibles) con los personalizados
-            // del backend, deduplicando por id. Los tipos base nunca se ocultan:
-            // la opción de crear operación queda siempre activa.
-            const baseIds = new Set(BASE_OPERATION_TYPES.map((b) => b.id))
-            const customTypes = opTypes.filter((t) => !baseIds.has(t.id))
-            const list = [...BASE_OPERATION_TYPES, ...customTypes]
+            // Usa los tipos configurados por la empresa (todos editables/eliminables).
+            // Mientras cargan o si no hay ninguno, muestra el fallback por defecto.
+            const list = opTypes.length ? opTypes : FALLBACK_OPERATION_TYPES
             return list
               .map((t) => {
                 const s = style[t.id] ?? fallback
