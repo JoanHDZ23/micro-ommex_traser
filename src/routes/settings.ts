@@ -219,15 +219,17 @@ type FeatureKey = typeof FEATURE_KEYS[number]
 
 /**
  * Devuelve el mapa de funciones PERMITIDAS por el root.
- * - Si existe `allowedFeatures` en el documento, se usa tal cual.
- * - Si NO existe (empresas antiguas, aún sin pasar por el root), se consideran
- *   todas permitidas para no romper el comportamiento previo.
+ * El panel root es la autoridad: una función solo está permitida si el root la
+ * activó explícitamente. Por defecto (sin configurar o clave ausente) NO se
+ * permite, de modo que el admin principal no ve ni puede activar nada que el
+ * root no haya habilitado. Lo único siempre disponible es iniciar operaciones
+ * (el registro base), que no forma parte de estas claves.
  */
 function readAllowed(doc: Record<string, unknown> | null): Record<FeatureKey, boolean> {
   const stored = (doc?.allowedFeatures ?? null) as Record<string, unknown> | null
   const out = {} as Record<FeatureKey, boolean>
   for (const k of FEATURE_KEYS) {
-    out[k] = stored ? stored[k] === true : true
+    out[k] = stored ? stored[k] === true : false
   }
   return out
 }
