@@ -64,6 +64,7 @@ export function SettingsPage() {
   type AllowedMap = Record<string, boolean>
   const [allowed, setAllowed] = useState<AllowedMap>({})
   const can = (k: string) => allowed[k] !== false // por defecto permitido si no viene info
+  const canAny = (...ks: string[]) => ks.some((k) => can(k)) // true si al menos una está permitida
 
   // Tipos de operación personalizados
   type OpTypeDef = { id: string; label: string; descripcion?: string }
@@ -337,7 +338,9 @@ export function SettingsPage() {
       {/* ── WhatsApp (sincronización por QR + envío) — solo si el root lo permite ── */}
       {can('whatsappTrazabilidad') && <WhatsAppSync />}
 
-      {/* ── Subconfiguración de Trazabilidad ── */}
+      {/* ── Subconfiguración de Trazabilidad ──
+          Solo se muestra si el root permitió al menos una de estas funciones. */}
+      {canAny('activityLog', 'registrarActividad', 'sendEmail', 'whatsappUnified', 'whatsappAudio', 'whatsappCatalog', 'whatsappDocument', 'markerEditor') && (<>
       <Card as="section" className="space-y-3">
         <div className="flex items-center gap-2">
           <Activity className="w-5 h-5 text-indigo-600" />
@@ -405,6 +408,7 @@ export function SettingsPage() {
         </>)}
 
         {/* ── Funciones adicionales (habilitar/deshabilitar) ── */}
+        {canAny('whatsappUnified', 'whatsappAudio', 'whatsappCatalog', 'whatsappDocument', 'markerEditor') && (
         <div className="pt-2 mt-1 border-t border-[var(--color-border)] space-y-3">
           {/* Cuenta de WhatsApp unificada */}
           {can('whatsappUnified') && (<>
@@ -476,6 +480,7 @@ export function SettingsPage() {
           </p>
           </>)}
         </div>
+        )}
       </Card>
 
       <Button
@@ -496,6 +501,7 @@ export function SettingsPage() {
       {feedbackTracer && !feedbackTracer.startsWith('✓') && (
         <ErrorState message={feedbackTracer} onRetry={() => void handleSaveTracer()} />
       )}
+      </>)}
 
       {/* ── Tipos de operación ── */}
       <Card as="section" className="space-y-3">
