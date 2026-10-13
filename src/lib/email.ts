@@ -76,17 +76,47 @@ function buildOperationHtml(op: OperationEmailData): string {
 }
 
 /**
+ * Envía un correo por la API HTTP de Resend (puerto 443). Funciona en entornos
+ * donde el SMTP saliente está bloqueado (p. ej. Render free).
+ * Acepta varios destinatarios separados por coma.
+ */
+async function sendWithResend(to: string, subject: string, html: string, text: string): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY
+  if (!apiKey) return false
+  const from = process.env.RESEND_FROM ?? process.env.SMTP_FROM ?? 'Klock <onboarding@resend.dev>'
+  const recipients = to.split(',').map((s) => s.trim()).filter(Boolean)
+  if (recipients.length === 0) return false
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from, to: recipients, subject, html, text }),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`Resend respondió ${res.status}: ${detail.slice(0, 300)}`)
+  }
+  return true
+}
+
+/**
  * Envía un registro completo por correo electrónico.
- * @returns true si se envió, false si no hay SMTP configurado.
+ * Prioriza Resend (API HTTP). Si no hay RESEND_API_KEY, cae a SMTP.
+ * @returns true si se envió, false si no hay ningún proveedor configurado.
  */
 export async function sendOperationEmail(to: string, op: OperationEmailData): Promise<boolean> {
-  const transporter = createTransporter()
-  if (!transporter) return false
-
   const subject = `Registro ${op.trackingCode} — ${op.operationType}${op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}`
   const html = buildOperationHtml(op)
   const text = `Registro ${op.trackingCode}\nTipo: ${op.operationType}\nOperador: ${op.operatorName}`
 
+  // 1. Resend (recomendado; funciona aunque el SMTP saliente esté bloqueado).
+  if (process.env.RESEND_API_KEY) {
+    return await sendWithResend(to, subject, html, text)
+  }
+
+  // 2. Fallback a SMTP (nodemailer).
+  const transporter = createTransporter()
+  if (!transporter) return false
   await transporter.sendMail({
     from: process.env.SMTP_FROM ?? process.env.SMTP_USER,
     to,
