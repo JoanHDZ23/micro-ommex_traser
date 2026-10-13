@@ -435,6 +435,7 @@ function ShareButton({ trackingCode, companyId }: { trackingCode: string; compan
   const [msg, setMsg] = useState<string | null>(null)
   const [dests, setDests] = useState<WaDest[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [emailTo, setEmailTo] = useState('')
 
   const openModal = async () => {
     setOpen(true); setStep('channel'); setMsg(null); setSelected(new Set())
@@ -446,6 +447,10 @@ function ShareButton({ trackingCode, companyId }: { trackingCode: string; compan
         const list = (r.destinations ?? []).filter((d) => d?.to)
         setDests(list)
       } catch { setDests([]) }
+      try {
+        const e = await apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`)
+        setEmailTo((e.emailTo ?? '').trim())
+      } catch { setEmailTo('') }
     }
   }
 
@@ -476,10 +481,14 @@ function ShareButton({ trackingCode, companyId }: { trackingCode: string; compan
   }
 
   const sendEmail = async () => {
+    if (!emailTo) {
+      setMsg('No hay correo destinatario configurado. Añádelo en Configuración → Enviar por correo.')
+      return
+    }
     setSending(true); setMsg(null)
     try {
-      const r = await apiRequest<{ message: string }>(`/operations/${trackingCode}/send-email`, { method: 'POST' })
-      setMsg(`✓ ${r.message}`)
+      const r = await apiRequest<{ message: string; to?: string }>(`/operations/${trackingCode}/send-email`, { method: 'POST' })
+      setMsg(`✓ Registro enviado por correo a ${r.to ?? emailTo}.`)
       setOpen(false)
     } catch (err) {
       setMsg(err instanceof Error ? err.message : 'No se pudo enviar por correo.')
@@ -536,9 +545,11 @@ function ShareButton({ trackingCode, companyId }: { trackingCode: string; compan
                   <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0">
                     <Mail className="w-5 h-5 text-indigo-500" />
                   </div>
-                  <div className="text-left">
+                  <div className="text-left min-w-0">
                     <p className="text-sm font-semibold text-gray-800">Correo electrónico</p>
-                    <p className="text-[11px] text-gray-400">Enviar al correo configurado en Ajustes</p>
+                    <p className="text-[11px] text-gray-400 truncate">
+                      {emailTo ? `Enviar a: ${emailTo}` : 'Sin correo configurado (ve a Configuración)'}
+                    </p>
                   </div>
                 </button>
                 {sending && <p className="text-xs text-gray-500 text-center pt-1">Enviando…</p>}
