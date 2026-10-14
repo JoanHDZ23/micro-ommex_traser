@@ -5,7 +5,7 @@ import {
   Search, CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
   Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus,
 } from 'lucide-react'
-import { apiRequest, fileToBase64, type CompanySheet, type Operation, type OperationType, type ParsedTable, type SheetData } from '../lib/api'
+import { apiRequest, fileToBase64, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
@@ -430,7 +430,24 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
   // Modal de destino: filas a volcar + a qué operación.
   const [bringRows, setBringRows] = useState<string[][] | null>(null)
   const [existingOps, setExistingOps] = useState<Operation[]>([])
-  const [bringType, setBringType] = useState<OperationType>('PRODUCTOS_ENTRANTES')
+  const [bringType, setBringType] = useState<string>('PRODUCTOS_ENTRANTES')
+  // Tipos de operación configurados por la empresa (select al crear un registro nuevo).
+  const [opTypes, setOpTypes] = useState<Array<{ id: string; label: string }>>([
+    { id: 'PRODUCTOS_ENTRANTES', label: 'Operación Entrante' },
+    { id: 'PRODUCTOS_SALIENTES', label: 'Operación Saliente' },
+  ])
+  // Carga los tipos de la empresa al montar.
+  useEffect(() => {
+    if (!companyId) return
+    void apiRequest<{ all: Array<{ id: string; label: string }> }>(
+      `/settings/operation-types?companyId=${encodeURIComponent(companyId)}`,
+    ).then((r) => {
+      if (r.all?.length) {
+        setOpTypes(r.all)
+        setBringType(r.all[0].id)
+      }
+    }).catch(() => { /* usa tipos por defecto */ })
+  }, [companyId])
   // Placa opcional al crear un registro nuevo desde el documento.
   const [bringPlate, setBringPlate] = useState('')
   // Modal de selección de columnas adicionales (mobile-friendly)
@@ -511,7 +528,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
   }
 
   /** Crea una operación nueva (opcionalmente con placa) y devuelve su trackingCode. */
-  const createOperation = async (operationType: OperationType, vehiclePlate?: string): Promise<string> => {
+  const createOperation = async (operationType: string, vehiclePlate?: string): Promise<string> => {
     const op = await apiRequest<Operation>('/operations', {
       method: 'POST',
       body: {
@@ -552,20 +569,20 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
   // Si no: abre el selector de destino (crear nuevo o agregar a existente).
   const handleCreateRecordFromRow = async (row: string[]) => {
     if (targetTrackingCode) { await bringRowsToTarget([row]); return }
-    setBringRows([row]); setBringType('PRODUCTOS_ENTRANTES'); setBringPlate('')
+    setBringRows([row]); setBringType(opTypes[0]?.id ?? 'PRODUCTOS_ENTRANTES'); setBringPlate('')
     void loadExistingOps()
   }
 
   const handleCreateProductFromRow = async (row: string[]) => {
     if (targetTrackingCode) { await bringRowsToTarget([row]); return }
-    setBringRows([row]); setBringType('PRODUCTOS_ENTRANTES'); setBringPlate('')
+    setBringRows([row]); setBringType(opTypes[0]?.id ?? 'PRODUCTOS_ENTRANTES'); setBringPlate('')
     void loadExistingOps()
   }
 
   // Traer VARIAS filas seleccionadas.
   const handleBringToRecord = async (rows: string[][]) => {
     if (targetTrackingCode) { await bringRowsToTarget(rows); return }
-    setBringRows(rows); setBringType('PRODUCTOS_ENTRANTES'); setBringPlate('')
+    setBringRows(rows); setBringType(opTypes[0]?.id ?? 'PRODUCTOS_ENTRANTES'); setBringPlate('')
     void loadExistingOps()
   }
 
@@ -1224,18 +1241,19 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
               {/* Opción A: nuevo registro */}
               <section className="space-y-2.5">
                 <h4 className="text-[10px] font-semibold text-[var(--color-text-3)] uppercase tracking-wide">Crear un registro nuevo</h4>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['PRODUCTOS_ENTRANTES', 'PRODUCTOS_SALIENTES'] as OperationType[]).map((t) => (
-                    <button key={t} type="button" onClick={() => setBringType(t)}
-                      className={`px-3 py-2.5 rounded-[var(--radius)] border text-xs font-semibold transition-colors ${
-                        bringType === t
-                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)] text-[var(--color-primary)] shadow-sm'
-                          : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-2)] hover:border-[var(--color-primary)]/40 hover:text-[var(--color-primary)]'
-                      }`}>
-                      {t === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'}
-                    </button>
-                  ))}
-                </div>
+                {/* Select con todos los tipos de operación configurados */}
+                <label className="block space-y-1.5">
+                  <span className="text-xs font-semibold text-[var(--color-text-2)]">Tipo de operación</span>
+                  <select
+                    value={bringType}
+                    onChange={(e) => setBringType(e.target.value)}
+                    className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                  >
+                    {opTypes.map((t) => (
+                      <option key={t.id} value={t.id}>{t.label}</option>
+                    ))}
+                  </select>
+                </label>
                 {/* Placa opcional del vehículo */}
                 <Input
                   label="Placa del vehículo (opcional)"
@@ -1264,7 +1282,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                         <div className="min-w-0 flex-1">
                           <p className="text-xs font-semibold text-[var(--color-text)] truncate">{op.trackingCode}</p>
                           <p className="text-[10px] text-[var(--color-text-3)] truncate">
-                            {op.operationType === 'PRODUCTOS_ENTRANTES' ? 'Entrantes' : 'Salientes'} · {op.operatorName}
+                            {opTypes.find((t) => t.id === op.operationType)?.label ?? op.operationType} · {op.operatorName}
                             {op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
                           </p>
                         </div>
