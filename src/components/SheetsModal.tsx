@@ -48,7 +48,8 @@ interface DataTableProps {
     extraCols: number[]
     onCodeColChange: (col: number) => void
     onDescColChange: (col: number) => void
-    onToggleExtraCol: (col: number) => void
+    /** Establece la lista completa de columnas extra (usado por el select múltiple). */
+    onExtraColsChange: (cols: number[]) => void
     /** Crear un registro nuevo con una sola fila. */
     onCreateRecord: (row: string[]) => void
     /** Crear un producto desde una fila (en un registro nuevo o existente). */
@@ -138,7 +139,7 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
   const selectedRows = Array.from(selected).map((i) => rows[i]).filter(Boolean)
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       {/* Filtro */}
       <div className="flex items-center gap-2 flex-wrap">
         <select
@@ -183,7 +184,7 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
 
       {/* Mapeo de columnas → producto (solo en modo registros) */}
       {actions && (
-        <div className="space-y-3 p-4 rounded-[var(--radius-lg)] bg-[var(--color-bg)] border border-[var(--color-border)]">
+        <div className="space-y-3 p-3 rounded-[var(--radius-lg)] bg-[var(--color-bg)] border border-[var(--color-border)]">
           <div className="flex items-center gap-2">
             <Database className="w-4 h-4 text-[var(--color-primary)]" />
             <span className="text-[11px] font-bold text-[var(--color-text-2)] uppercase tracking-wide">
@@ -207,24 +208,30 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
               </select>
             </label>
           </div>
-          {/* Columnas EXTRA que se añaden a la info del producto (pueden ser varias) */}
-          <div className="space-y-2">
-            <span className="text-xs font-medium text-[var(--color-text-3)]">Columnas adicionales (haz clic para alternar):</span>
-            <div className="flex flex-wrap gap-1.5">
+          {/* Columnas EXTRA que se añaden a la info del producto (selección múltiple) */}
+          <div className="space-y-1.5">
+            <span className="text-xs font-medium text-[var(--color-text-3)]">
+              Columnas adicionales (mantené Ctrl/Cmd para seleccionar varias):
+            </span>
+            <select
+              multiple
+              size={Math.min(6, Math.max(3, headers.length - 2))}
+              value={actions.extraCols.map(String)}
+              onChange={(e) => {
+                const selected = Array.from(e.target.selectedOptions).map((o) => Number(o.value))
+                actions.onExtraColsChange(selected)
+              }}
+              className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 [&>option]:px-2 [&>option]:py-1"
+            >
               {headers.map((h, i) => {
                 if (i === actions.codeCol || i === actions.descCol) return null
-                const on = actions.extraCols.includes(i)
                 return (
-                  <button key={i} type="button" onClick={() => actions.onToggleExtraCol(i)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
-                      on ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)] shadow-sm shadow-[var(--color-primary)]/30'
-                         : 'bg-[var(--color-surface)] text-[var(--color-text-2)] border-[var(--color-border)] hover:border-[var(--color-primary)]/40 hover:text-[var(--color-primary)]'
-                    }`}>
+                  <option key={i} value={i}>
                     {h || `Columna ${i + 1}`}
-                  </button>
+                  </option>
                 )
               })}
-            </div>
+            </select>
           </div>
         </div>
       )}
@@ -417,8 +424,14 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
   // Placa opcional al crear un registro nuevo desde el documento.
   const [bringPlate, setBringPlate] = useState('')
 
-  const toggleExtraCol = (col: number) => {
-    setExtraCols((prev) => prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col])
+  const handleCodeColChange = (col: number) => {
+    setCodeCol(col)
+    setExtraCols((prev) => prev.filter((c) => c !== col))
+  }
+
+  const handleDescColChange = (col: number) => {
+    setDescCol(col)
+    if (col >= 0) setExtraCols((prev) => prev.filter((c) => c !== col))
   }
 
   // Al abrir el visor: primero intenta cargar la selección guardada; si no existe
@@ -971,9 +984,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                   markKey={`${companyId}_${viewing.id}`}
                   actions={{
                     codeCol, descCol, extraCols,
-                    onCodeColChange: setCodeCol,
-                    onDescColChange: setDescCol,
-                    onToggleExtraCol: toggleExtraCol,
+                    onCodeColChange: handleCodeColChange,
+                    onDescColChange: handleDescColChange,
+                    onExtraColsChange: setExtraCols,
                     onCreateRecord: (row) => void handleCreateRecordFromRow(row),
                     onCreateProduct: (row) => void handleCreateProductFromRow(row),
                     onBringToRecord: (rows) => void handleBringToRecord(rows),
