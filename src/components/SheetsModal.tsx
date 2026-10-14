@@ -48,8 +48,9 @@ interface DataTableProps {
     extraCols: number[]
     onCodeColChange: (col: number) => void
     onDescColChange: (col: number) => void
-    /** Establece la lista completa de columnas extra (usado por el select múltiple). */
     onExtraColsChange: (cols: number[]) => void
+    /** Abre el modal de selección de columnas adicionales. */
+    onOpenExtraColsModal?: () => void
     /** Crear un registro nuevo con una sola fila. */
     onCreateRecord: (row: string[]) => void
     /** Crear un producto desde una fila (en un registro nuevo o existente). */
@@ -140,39 +141,6 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
 
   return (
     <div className="space-y-2">
-      {/* Filtro */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <select
-          value={filterCol}
-          onChange={(e) => setFilterCol(Number(e.target.value))}
-          className="min-w-[150px] rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
-        >
-          <option value={-1}>Todas las columnas</option>
-          {headers.map((h, i) => (
-            <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>
-          ))}
-        </select>
-        <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-3)]" />
-          <input
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            placeholder="Filtrar filas…"
-            className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 pl-9 pr-9 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-3)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
-          />
-          {filterText && (
-            <button onClick={() => setFilterText('')} aria-label="Limpiar filtro"
-              className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-        {/* Filtrar al escanear un código (igual que al agregar producto en registros) */}
-        <Button variant="secondary" size="md" onClick={() => setScanning(true)} title="Filtrar escaneando un código"
-          leftIcon={<QrCode className="w-4 h-4" />} className="flex-shrink-0">
-          <span className="hidden sm:inline">Escanear</span>
-        </Button>
-      </div>
 
       {/* Escáner: al detectar un código, lo coloca en el filtro de texto */}
       {scanning && (
@@ -208,30 +176,39 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
               </select>
             </label>
           </div>
-          {/* Columnas EXTRA que se añaden a la info del producto (selección múltiple) */}
+          {/* Columnas EXTRA — botón "+" abre un modal con checkboxes táctiles */}
           <div className="space-y-1.5">
-            <span className="text-xs font-medium text-[var(--color-text-3)]">
-              Columnas adicionales (mantené Ctrl/Cmd para seleccionar varias):
-            </span>
-            <select
-              multiple
-              size={Math.min(6, Math.max(3, headers.length - 2))}
-              value={actions.extraCols.map(String)}
-              onChange={(e) => {
-                const selected = Array.from(e.target.selectedOptions).map((o) => Number(o.value))
-                actions.onExtraColsChange(selected)
-              }}
-              className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-1.5 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 [&>option]:px-2 [&>option]:py-1"
-            >
-              {headers.map((h, i) => {
-                if (i === actions.codeCol || i === actions.descCol) return null
-                return (
-                  <option key={i} value={i}>
-                    {h || `Columna ${i + 1}`}
-                  </option>
-                )
-              })}
-            </select>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-[var(--color-text-3)]">Columnas adicionales</span>
+              <button
+                type="button"
+                onClick={() => actions.onOpenExtraColsModal?.()}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--color-primary-bg)] text-[var(--color-primary)] text-xs font-semibold hover:bg-[var(--color-primary)]/20 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Agregar
+              </button>
+            </div>
+            {/* Chips de columnas seleccionadas */}
+            {actions.extraCols.length === 0 ? (
+              <p className="text-[11px] text-[var(--color-text-3)] italic">Ninguna — solo se usará Código y Descripción.</p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {actions.extraCols.map((i) => (
+                  <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[var(--color-primary)] text-white text-[11px] font-medium">
+                    {headers[i] || `Col ${i + 1}`}
+                    <button
+                      type="button"
+                      onClick={() => actions.onExtraColsChange(actions.extraCols.filter((c) => c !== i))}
+                      className="ml-0.5 hover:opacity-70 transition-opacity"
+                      aria-label={`Quitar ${headers[i]}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -255,6 +232,39 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
           </div>
         </div>
       )}
+      {/* Filtro */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <select
+          value={filterCol}
+          onChange={(e) => setFilterCol(Number(e.target.value))}
+          className="min-w-[150px] rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
+        >
+          <option value={-1}>Todas las columnas</option>
+          {headers.map((h, i) => (
+            <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>
+          ))}
+        </select>
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-3)]" />
+          <input
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            placeholder="Filtrar filas…"
+            className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 pl-9 pr-9 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-3)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
+          />
+          {filterText && (
+            <button onClick={() => setFilterText('')} aria-label="Limpiar filtro"
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+        {/* Filtrar al escanear un código (igual que al agregar producto en registros) */}
+        <Button variant="secondary" size="md" onClick={() => setScanning(true)} title="Filtrar escaneando un código"
+          leftIcon={<QrCode className="w-4 h-4" />} className="flex-shrink-0">
+          <span className="hidden sm:inline">Escanear</span>
+        </Button>
+      </div>
 
       {/* Tabla */}
       <div className="border border-[var(--color-border)] rounded-[var(--radius-lg)] overflow-hidden bg-[var(--color-surface)] shadow-sm">
@@ -423,6 +433,8 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
   const [bringType, setBringType] = useState<OperationType>('PRODUCTOS_ENTRANTES')
   // Placa opcional al crear un registro nuevo desde el documento.
   const [bringPlate, setBringPlate] = useState('')
+  // Modal de selección de columnas adicionales (mobile-friendly)
+  const [extraColsModalOpen, setExtraColsModalOpen] = useState(false)
 
   const handleCodeColChange = (col: number) => {
     setCodeCol(col)
@@ -987,6 +999,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                     onCodeColChange: handleCodeColChange,
                     onDescColChange: handleDescColChange,
                     onExtraColsChange: setExtraCols,
+                    onOpenExtraColsModal: () => setExtraColsModalOpen(true),
                     onCreateRecord: (row) => void handleCreateRecordFromRow(row),
                     onCreateProduct: (row) => void handleCreateProductFromRow(row),
                     onBringToRecord: (rows) => void handleBringToRecord(rows),
@@ -1260,6 +1273,75 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                   </div>
                 </section>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal de selección de columnas adicionales (mobile-friendly) ── */}
+      {extraColsModalOpen && viewing && (
+        <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setExtraColsModalOpen(false) }}>
+          <div className="w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col"
+            style={{ backgroundColor: 'var(--color-surface)', maxHeight: '80vh' }}>
+            {/* Cabecera */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+              <div>
+                <p className="text-[10px] font-semibold text-[var(--color-text-3)] uppercase tracking-wide">Mapeo de columnas</p>
+                <h3 className="text-sm font-bold text-[var(--color-text)]">Columnas adicionales</h3>
+              </div>
+              <button onClick={() => setExtraColsModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-[var(--color-bg)] flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)] transition-colors"
+                aria-label="Cerrar">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {/* Descripción */}
+            <p className="px-4 pt-3 pb-1 text-xs text-[var(--color-text-2)]">
+              Selecciona las columnas que se incluirán como información adicional al traer un producto. Puedes marcar varias.
+            </p>
+            {/* Lista de columnas como checkboxes táctiles */}
+            <div className="overflow-y-auto flex-1 px-3 py-2 space-y-1">
+              {viewing.headers.map((h, i) => {
+                if (i === codeCol || i === descCol) return null
+                const checked = extraCols.includes(i)
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => {
+                      setExtraCols((prev) =>
+                        prev.includes(i) ? prev.filter((c) => c !== i) : [...prev, i]
+                      )
+                    }}
+                    className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl border text-left transition-all ${
+                      checked
+                        ? 'bg-[var(--color-primary-bg)] border-[var(--color-primary)] text-[var(--color-primary)]'
+                        : 'bg-[var(--color-bg)] border-[var(--color-border)] text-[var(--color-text)]'
+                    }`}
+                  >
+                    <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                      checked ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'border-[var(--color-border)]'
+                    }`}>
+                      {checked && (
+                        <svg viewBox="0 0 10 8" className="w-3 h-3 text-white fill-none stroke-current stroke-2">
+                          <polyline points="1,4 3.5,7 9,1" />
+                        </svg>
+                      )}
+                    </div>
+                    <span className="text-sm font-medium truncate">{h || `Columna ${i + 1}`}</span>
+                    {checked && (
+                      <span className="ml-auto text-[10px] font-semibold text-[var(--color-primary)] flex-shrink-0">✓</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            {/* Botón confirmar */}
+            <div className="px-4 py-3 border-t border-[var(--color-border)]">
+              <Button variant="primary" fullWidth onClick={() => setExtraColsModalOpen(false)}>
+                Listo ({extraCols.length} seleccionada{extraCols.length !== 1 ? 's' : ''})
+              </Button>
             </div>
           </div>
         </div>
