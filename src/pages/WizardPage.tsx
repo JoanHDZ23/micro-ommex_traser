@@ -96,6 +96,10 @@ export function WizardPage() {
   const [traySending, setTraySending] = useState(false)
   // Índice de la foto de la bandeja que se está editando con el marcador.
   const [trayEditIdx, setTrayEditIdx] = useState<number | null>(null)
+
+  // Editor de imagen para re-editar una foto ya guardada en el servidor.
+  // Guarda el índice original para eliminar la foto vieja tras confirmar.
+  const [photoEditTarget, setPhotoEditTarget] = useState<{ idx: number; src: string; comment: string } | null>(null)
   const nativeCameraRef = useRef<HTMLInputElement>(null)
 
   // Línea Blanca
@@ -710,6 +714,58 @@ export function WizardPage() {
     }
   }
 
+  // Envía UNA foto individual (por índice) al WhatsApp configurado.
+  const handleSendPhoto = async (photoIndex: number) => {
+    if (!trackingCode) return
+    const tos = await pickDestinations()
+    if (tos === null) return
+    setFeedback('⏳ Enviando foto por WhatsApp…')
+    try {
+      const targets = (tos && tos.length) ? tos : [undefined]
+      let ok = 0
+      for (const to of targets) {
+        try {
+          await apiRequest('/whatsapp-web/send-photo', {
+            method: 'POST',
+            body: { trackingCode, photoIndex, ...(to ? { to } : {}) },
+          })
+          ok++
+        } catch { /* sigue con el siguiente destino */ }
+      }
+      setFeedback(ok > 0 ? `✓ Foto enviada a ${ok} chat(s).` : 'No se pudo enviar la foto.')
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar la foto.')
+    }
+  }
+
+  // Abre el editor de imagen (marcador) con una foto ya guardada para re-editarla.
+  // Al confirmar: sube la versión editada y elimina la original.
+  const openPhotoReEdit = (photoIndex: number) => {
+    const photo = operation?.photos[photoIndex]
+    if (!photo) return
+    const src = directUrl(photo) || (photo.driveUrl && /^https?:\/\//.test(photo.driveUrl) ? photo.driveUrl : null)
+    if (!src) { setFeedback('No se puede editar esta foto (aún no está disponible).'); return }
+    setPhotoEditTarget({ idx: photoIndex, src, comment: photo.comment ?? photo.stepName ?? '' })
+  }
+
+  const handleConfirmPhotoReEdit = async (editedBase64: string) => {
+    if (!photoEditTarget || !trackingCode) return
+    const { idx, comment } = photoEditTarget
+    setPhotoEditTarget(null)
+    setFeedback('⏳ Guardando imagen editada…')
+    try {
+      const b64 = editedBase64.includes(',') ? editedBase64.split(',')[1] : editedBase64
+      // Sube la imagen editada como nueva foto (misma lógica que cámara/galería).
+      await uploadSinglePhoto(b64, comment, false)
+      // Elimina la foto original.
+      await apiRequest(`/photos/${trackingCode}/${idx}`, { method: 'DELETE' })
+      await loadOperation()
+      setFeedback('✓ Imagen actualizada')
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al guardar la imagen editada.')
+    }
+  }
+
   // Envía por WhatsApp SOLO los productos seleccionados en el selector.
   const handleSendSelected = async () => {
     if (!trackingCode) return
@@ -1106,12 +1162,33 @@ export function WizardPage() {
                           {!isCompleted && editingPhotoIdx !== i && (
                             <div className="absolute -top-1 -right-1 flex gap-0.5">
                               <button onClick={() => { setEditingPhotoIdx(i); setEditComment(photo.comment ?? '') }}
-                                className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center">
+                                className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center"
+                                title="Editar comentario">
                                 <Pencil className="w-2.5 h-2.5 text-gray-500" />
                               </button>
+                              {photo.mediaType !== 'audio' && photo.mediaType !== 'document' && (
+                                <button onClick={() => openPhotoReEdit(i)}
+                                  className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center"
+                                  title="Editar imagen">
+                                  <Edit3 className="w-2.5 h-2.5 text-orange-500" />
+                                </button>
+                              )}
                               <button onClick={() => void handleDeletePhoto(i)}
-                                className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center">
+                                className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center"
+                                title="Eliminar">
                                 <Trash2 className="w-2.5 h-2.5 text-red-400" />
+                              </button>
+                            </div>
+                          )}
+                          {/* Botón Enviar individual (siempre visible si la foto ya subió) */}
+                          {photo.fileId !== 'pending' && (
+                            <div className="flex justify-end mt-1">
+                              <button
+                                onClick={() => void handleSendPhoto(i)}
+                                className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#128c7e]/10 text-[#128c7e] text-[10px] font-semibold hover:bg-[#128c7e]/20 transition-colors"
+                                title="Enviar foto por WhatsApp"
+                              >
+                                <Send className="w-2.5 h-2.5" /> Enviar
                               </button>
                             </div>
                           )}
@@ -1572,7 +1649,29 @@ export function WizardPage() {
                 value={chatMessage}
                 onChange={(e) => { setChatMessage(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px' }}
                 onBlur={() => { if (chatMessage.trim().length > 3) { saveTemplate(chatMessage.trim()); setTemplates(getFrequentTemplates()) } }}
-                placeholder="Escribe un comentario..."
+                onPaste={(e) => {
+                  // Si el portapapeles tiene una imagen, cargarla como foto (igual que pegar en WhatsApp).
+                  const items = Array.from(e.clipboardData?.items ?? [])
+                  const imageItem = items.find((item) => item.type.startsWith('image/'))
+                  if (!imageItem) return
+                  e.preventDefault()
+                  const file = imageItem.getAsFile()
+                  if (!file) return
+                  const reader = new FileReader()
+                  reader.onload = (ev) => {
+                    const dataUrl = ev.target?.result as string
+                    if (!dataUrl) return
+                    const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl
+                    if (features.markerEditor) {
+                      setImgEditor({ src: `data:image/jpeg;base64,${base64}`, comment: chatMessage.trim() })
+                    } else {
+                      void uploadSinglePhoto(base64, chatMessage.trim(), false)
+                      setChatMessage('')
+                    }
+                  }
+                  reader.readAsDataURL(file)
+                }}
+                placeholder="Escribe un comentario... (o pega una imagen)"
                 rows={1}
                 className="flex-1 bg-transparent text-gray-800 text-sm placeholder:text-gray-400 resize-none outline-none max-h-[100px]"
                 style={{ height: 'auto' }}
@@ -2017,6 +2116,15 @@ export function WizardPage() {
             void savePhotoGeneral(b64, comment)
           }}
           onCancel={() => setImgEditor(null)}
+        />
+      )}
+
+      {/* Editor de imagen para re-editar una foto ya guardada en el servidor */}
+      {photoEditTarget && (
+        <ImageEditor
+          imageSrc={photoEditTarget.src}
+          onConfirm={(editedBase64) => void handleConfirmPhotoReEdit(editedBase64)}
+          onCancel={() => setPhotoEditTarget(null)}
         />
       )}
 
