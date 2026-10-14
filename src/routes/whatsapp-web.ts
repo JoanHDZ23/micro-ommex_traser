@@ -469,6 +469,63 @@ whatsappWebRouter.post('/send-product', async (req, res) => {
 })
 
 /**
+ * POST /api/whatsapp-web/send-photo
+ * Envía UNA foto individual de la operación (por índice) al destino configurado.
+ * Body: { trackingCode, photoIndex, to? }
+ */
+whatsappWebRouter.post('/send-photo', async (req, res) => {
+  const { trackingCode, photoIndex, to: toOverride } = req.body ?? {}
+  if (!trackingCode || photoIndex === undefined || photoIndex === null) {
+    res.status(400).json({ message: 'trackingCode y photoIndex son requeridos.' }); return
+  }
+  const idx = Number(photoIndex)
+  if (!Number.isFinite(idx) || idx < 0) {
+    res.status(400).json({ message: 'photoIndex debe ser un número entero no negativo.' }); return
+  }
+
+  try {
+    const { getOperationsCollection, getDb } = await import('../lib/mongodb.js')
+    const op = await getOperationsCollection().findOne({ trackingCode })
+    if (!op) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const companyId = (op.companyId as string | undefined) || undefined
+    let to = (toOverride ?? '').trim()
+    if (!to && op.companyId) {
+      const settings = await getDb().collection('company_settings').findOne({ companyId: op.companyId })
+      to = (settings?.whatsappTo as string) ?? ''
+    }
+    if (!to) { res.status(400).json({ message: 'No hay destino de WhatsApp configurado para esta empresa.' }); return }
+
+    type Photo = { driveUrl?: string; comment?: string; stepName?: string; mediaType?: string; mimeType?: string; fileName?: string }
+    const photos = (op.photos as Photo[]) ?? []
+    const photo = photos[idx]
+    if (!photo) { res.status(404).json({ message: `No existe foto en el índice ${idx}.` }); return }
+
+    const url = photo.driveUrl
+    if (!url || url === 'pending-verification' || !/^https?:\/\//.test(url)) {
+      res.status(400).json({ message: 'La foto aún no está disponible para envío (pendiente de subida).' }); return
+    }
+
+    const caption = (photo.comment ?? photo.stepName ?? '').trim() || undefined
+
+    // Audio, documento o imagen — usar el helper adecuado.
+    if (photo.mediaType === 'audio') {
+      const r = await uSendAudio(to, url, companyId, photo.mimeType)
+      res.json({ message: 'Audio enviado a WhatsApp.', to, id: r.id })
+    } else if (photo.mediaType === 'document') {
+      const r = await uSendDocument(to, url, { fileName: photo.fileName, caption, mimetype: photo.mimeType }, companyId)
+      res.json({ message: 'Documento enviado a WhatsApp.', to, id: r.id })
+    } else {
+      const r = await uSendImage(to, url, caption, companyId)
+      res.json({ message: 'Foto enviada a WhatsApp.', to, id: r.id })
+    }
+  } catch (err) {
+    console.error('[whatsapp-web] Error al enviar foto individual:', err)
+    res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo enviar la foto.' })
+  }
+})
+
+/**
  * POST /api/whatsapp-web/send-audio
  * Envía un audio (nota de voz) al destino configurado de la empresa.
  * Body: { trackingCode, audioUrl, to? }
