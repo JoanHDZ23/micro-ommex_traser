@@ -18,11 +18,20 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
   }
 
   let response: Response
+  const doFetch = () => fetch(`${BASE_URL}${endpoint}`, config)
   try {
-    response = await fetch(`${BASE_URL}${endpoint}`, config)
+    response = await doFetch()
   } catch {
-    // Error de red (sin conexión, CORS, servidor caído).
-    throw new Error('No se pudo conectar con el servidor. Revisa tu conexión e inténtalo de nuevo.')
+    // Cold start de Render free: reintenta una vez tras 3 s antes de mostrar error.
+    await new Promise((r) => setTimeout(r, 3000))
+    try {
+      response = await doFetch()
+    } catch {
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
+      throw new Error(isOffline
+        ? 'Sin conexión a internet. Verifica tu red e intenta de nuevo.'
+        : 'El servidor está iniciando, espera unos segundos e intenta de nuevo.')
+    }
   }
 
   // Lee el cuerpo como texto y parsea de forma segura: así una respuesta vacía
