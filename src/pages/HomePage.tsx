@@ -1,14 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Activity, ArrowDown, ArrowRight, ArrowUp, ClipboardList, Database, Inbox, Package, Settings,
+  Activity, ArrowDown, ArrowRight, ArrowUp, ChevronRight, ClipboardList, Database, Inbox, Package, Settings,
   TrendingDown, TrendingUp, Boxes
 } from 'lucide-react'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
-import { Card, EmptyState, LoadingState, SectionHeader } from '../components/ui'
-import { apiRequest } from '../lib/api'
+import { Badge, Card, EmptyState, LoadingState, SectionHeader, operationStatusLabel, operationStatusTone } from '../components/ui'
+import { apiRequest, type Operation, type PaginatedOperations } from '../lib/api'
+import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { useTracerFeatures } from '../lib/tracer-features'
+
+const TYPE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  PRODUCTOS_ENTRANTES: ArrowDown,
+  PRODUCTOS_SALIENTES: ArrowUp,
+  ACTIVIDAD: Activity,
+}
 
 const HOME_GUIDE: GuideStep[] = [
   {
@@ -68,6 +75,21 @@ export function HomePage() {
       .then((r) => setOpTypes(r.all ?? []))
       .catch(() => { /* usa fallback por defecto si falla */ })
   }, [])
+
+  // Operaciones recientes (últimas 5) para mostrar en el Home
+  const [recentOps, setRecentOps] = useState<Operation[]>([])
+  const [loadingRecent, setLoadingRecent] = useState(true)
+  const loadRecent = useCallback(async () => {
+    const companyId = getCompanyId()
+    if (!companyId) { setLoadingRecent(false); return }
+    try {
+      const params = new URLSearchParams({ companyId, page: '1', limit: '5' })
+      const r = await apiRequest<PaginatedOperations>(`/operations?${params.toString()}`)
+      setRecentOps(r.operations ?? [])
+    } catch { /* silencioso */ }
+    finally { setLoadingRecent(false) }
+  }, [])
+  useEffect(() => { void loadRecent() }, [loadRecent])
 
   useEffect(() => {
     const companyId = getCompanyId()
@@ -188,6 +210,68 @@ export function HomePage() {
             </div>
           )}
         </div>
+      </section>
+
+      {/* ── Registros recientes ─────────────────────────── */}
+      <section className="space-y-2">
+        <SectionHeader
+          eyebrow="Registros"
+          title="Operaciones recientes"
+          actions={
+            <button onClick={() => navigate('/history')}
+              className="text-xs font-semibold text-[var(--color-primary)] flex items-center gap-1 hover:opacity-80">
+              Ver todos <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          }
+        />
+        {loadingRecent ? (
+          <LoadingState label="Cargando registros…" />
+        ) : recentOps.length === 0 ? (
+          <Card>
+            <p className="text-sm text-[var(--color-text-2)] text-center py-3">Aún no hay operaciones registradas.</p>
+          </Card>
+        ) : (
+          <div className="space-y-2">
+            {recentOps.map((op) => {
+              const Icon = TYPE_ICONS[op.operationType] ?? Package
+              const date = new Date(op.createdAt)
+              return (
+                <Card
+                  key={op.trackingCode}
+                  as="article"
+                  padding="sm"
+                  interactive
+                  onClick={() => navigate(`/wizard/${op.trackingCode}`)}
+                  className="flex items-center gap-3 text-left"
+                >
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                    op.status === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+                  }`}>
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[var(--color-text)] truncate">{op.trackingCode}</p>
+                    <p className="text-xs text-[var(--color-text-2)] truncate">
+                      {operationTypeLabel(op.operationType, opTypes)} · {op.operatorName}
+                      {op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
+                      {(op.lineaBlanca?.length ?? 0) > 0 ? ` · ${op.lineaBlanca.length} producto(s)` : ''}
+                    </p>
+                    <p className="text-[10px] text-[var(--color-text-3)] mt-0.5">
+                      {date.toLocaleDateString('es-CO')} {date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <Badge tone={operationStatusTone(op.status)}>
+                      {operationStatusLabel(op.status)}
+                    </Badge>
+                    <span className="text-[10px] text-[var(--color-text-3)]">{op.photos.length} fotos</span>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
+                </Card>
+              )
+            })}
+          </div>
+        )}
       </section>
 
       {/* ── Quick actions primarias ─────────────────────────── */}
