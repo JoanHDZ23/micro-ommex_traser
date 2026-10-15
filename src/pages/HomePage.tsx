@@ -84,26 +84,19 @@ export function HomePage() {
     }
 
     void apiRequest<{
-      operations: Array<{ operationType: string }>
-      stats?: { entrantes: number; salientes: number; productos: number; byType?: Record<string, number> }
+      byType: Record<string, number>
+      total: number
+      productos: number
     }>(
-      `/operations/search-for-link?companyId=${encodeURIComponent(companyId)}`
+      `/operations/stats?companyId=${encodeURIComponent(companyId)}`
     )
       .then((r) => {
-        if (r.stats) {
-          setStats({
-            entrantes: r.stats.entrantes,
-            salientes: r.stats.salientes,
-            productos: r.stats.productos,
-            byType: r.stats.byType ?? {},
-          })
-          return
-        }
-        const byType: Record<string, number> = {}
-        ;(r.operations ?? []).forEach((o) => { byType[o.operationType] = (byType[o.operationType] ?? 0) + 1 })
-        const entrantes = byType['PRODUCTOS_ENTRANTES'] ?? 0
-        const salientes = byType['PRODUCTOS_SALIENTES'] ?? 0
-        setStats({ entrantes, salientes, productos: 0, byType })
+        setStats({
+          entrantes: r.byType['PRODUCTOS_ENTRANTES'] ?? 0,
+          salientes: r.byType['PRODUCTOS_SALIENTES'] ?? 0,
+          productos: r.productos,
+          byType: r.byType,
+        })
       })
       .catch(() => {})
       .finally(() => setLoadingStats(false))
