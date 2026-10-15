@@ -52,7 +52,7 @@ const FALLBACK_OPERATION_TYPES: OpTypeDef[] = [
 export function HomePage() {
   const navigate = useNavigate()
   const features = useTracerFeatures()
-  const [stats, setStats] = useState<{ entrantes: number; salientes: number; productos: number }>({ entrantes: 0, salientes: 0, productos: 0 })
+  const [stats, setStats] = useState<{ entrantes: number; salientes: number; productos: number; byType: Record<string, number> }>({ entrantes: 0, salientes: 0, productos: 0, byType: {} })
   const [loadingStats, setLoadingStats] = useState(true)
 
   // Registro de actividades
@@ -79,7 +79,7 @@ export function HomePage() {
 
     void apiRequest<{
       operations: Array<{ operationType: string }>
-      stats?: { entrantes: number; salientes: number; productos: number }
+      stats?: { entrantes: number; salientes: number; productos: number; byType?: Record<string, number> }
     }>(
       `/operations/search-for-link?companyId=${encodeURIComponent(companyId)}`
     )
@@ -89,12 +89,15 @@ export function HomePage() {
             entrantes: r.stats.entrantes,
             salientes: r.stats.salientes,
             productos: r.stats.productos,
+            byType: r.stats.byType ?? {},
           })
           return
         }
-        const entrantes = (r.operations ?? []).filter((o) => o.operationType === 'PRODUCTOS_ENTRANTES').length
-        const salientes = (r.operations ?? []).filter((o) => o.operationType === 'PRODUCTOS_SALIENTES').length
-        setStats({ entrantes, salientes, productos: 0 })
+        const byType: Record<string, number> = {}
+        ;(r.operations ?? []).forEach((o) => { byType[o.operationType] = (byType[o.operationType] ?? 0) + 1 })
+        const entrantes = byType['PRODUCTOS_ENTRANTES'] ?? 0
+        const salientes = byType['PRODUCTOS_SALIENTES'] ?? 0
+        setStats({ entrantes, salientes, productos: 0, byType })
       })
       .catch(() => {})
       .finally(() => setLoadingStats(false))
@@ -147,38 +150,41 @@ export function HomePage() {
             Registro fotográfico de entradas y salidas. Haz clic en una acción para empezar.
           </p>
 
-          {!loadingStats && (stats.entrantes + stats.salientes > 0 || stats.productos > 0) && (
+          {!loadingStats && (stats.entrantes + stats.salientes + stats.productos + Object.values(stats.byType).reduce((a, b) => a + b, 0) > 0) && (
             <div
-              className="grid grid-cols-3 gap-3 mt-4 pt-4"
+              className="mt-4 pt-4 flex flex-wrap gap-x-5 gap-y-3"
               style={{ borderTop: '1px solid var(--hero-accent-ring)' }}
             >
-              <div className="text-center sm:text-left">
-                <div className="flex items-center gap-1.5 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
-                  <TrendingDown className="w-3.5 h-3.5" />
-                  <span className="text-[10px] uppercase font-semibold tracking-wide">Entrantes</span>
+              {/* Un item por cada tipo de operación configurado */}
+              {(opTypes.length ? opTypes : FALLBACK_OPERATION_TYPES).map((t) => {
+                const count = stats.byType[t.id] ?? 0
+                return (
+                  <div key={t.id} className="text-center sm:text-left min-w-[4rem]">
+                    <div className="flex items-center gap-1 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
+                      {t.id === 'PRODUCTOS_ENTRANTES' ? <TrendingDown className="w-3 h-3" />
+                        : t.id === 'PRODUCTOS_SALIENTES' ? <TrendingUp className="w-3 h-3" />
+                        : t.id === 'ACTIVIDAD' ? <Activity className="w-3 h-3" />
+                        : <ClipboardList className="w-3 h-3" />}
+                      <span className="text-[9px] uppercase font-semibold tracking-wide truncate max-w-[80px]">{t.label}</span>
+                    </div>
+                    <div className="text-2xl sm:text-3xl font-bold mt-0.5 tabular-nums" style={{ color: 'var(--hero-text)' }}>
+                      {count}
+                    </div>
+                  </div>
+                )
+              })}
+              {/* Productos (del catálogo) siempre al final */}
+              {stats.productos > 0 && (
+                <div className="text-center sm:text-left min-w-[4rem]">
+                  <div className="flex items-center gap-1 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
+                    <Package className="w-3 h-3" />
+                    <span className="text-[9px] uppercase font-semibold tracking-wide">Productos</span>
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-bold mt-0.5 tabular-nums" style={{ color: 'var(--hero-text)' }}>
+                    {stats.productos}
+                  </div>
                 </div>
-                <div className="text-2xl sm:text-3xl font-bold mt-1 tabular-nums" style={{ color: 'var(--hero-text)' }}>
-                  {stats.entrantes}
-                </div>
-              </div>
-              <div className="text-center sm:text-left">
-                <div className="flex items-center gap-1.5 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
-                  <TrendingUp className="w-3.5 h-3.5" />
-                  <span className="text-[10px] uppercase font-semibold tracking-wide">Salientes</span>
-                </div>
-                <div className="text-2xl sm:text-3xl font-bold mt-1 tabular-nums" style={{ color: 'var(--hero-text)' }}>
-                  {stats.salientes}
-                </div>
-              </div>
-              <div className="text-center sm:text-left">
-                <div className="flex items-center gap-1.5 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
-                  <Package className="w-3.5 h-3.5" />
-                  <span className="text-[10px] uppercase font-semibold tracking-wide">Productos</span>
-                </div>
-                <div className="text-2xl sm:text-3xl font-bold mt-1 tabular-nums" style={{ color: 'var(--hero-text)' }}>
-                  {stats.productos}
-                </div>
-              </div>
+              )}
             </div>
           )}
         </div>
