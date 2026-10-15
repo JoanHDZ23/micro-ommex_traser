@@ -86,6 +86,51 @@ async function cleanupCatalogIfOrphan(companyId: string | undefined, productCode
 }
 
 /**
+ * GET /api/operations/stats?companyId=xxx
+ * Devuelve el conteo de operaciones agrupado por tipo.
+ * Usa un aggregation real sobre TODAS las operaciones de la empresa (sin límite).
+ * Response: { byType: { [operationType]: count }, total: number, productos: number }
+ */
+operationsRouter.get('/stats', async (req, res) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const col = getOperationsCollection()
+    const pipeline = [
+      { $match: { companyId } },
+      {
+        $facet: {
+          byType: [
+            { $group: { _id: '$operationType', count: { $sum: 1 } } },
+          ],
+          total: [{ $count: 'count' }],
+          uniqueProducts: [
+            { $unwind: { path: '$lineaBlanca', preserveNullAndEmptyArrays: false } },
+            { $group: { _id: { $toLower: '$lineaBlanca.productCode' } } },
+            { $count: 'count' },
+          ],
+        },
+      },
+    ]
+    const [result] = await col.aggregate(pipeline).toArray() as Array<{
+      byType: Array<{ _id: string; count: number }>
+      total: Array<{ count: number }>
+      uniqueProducts: Array<{ count: number }>
+    }>
+    const catalog = getProductsCatalogCollection()
+    const catalogCount = await catalog.countDocuments({ companyId, origin: 'catalog' })
+    res.json({
+      byType: Object.fromEntries((result?.byType ?? []).map((b) => [b._id, b.count])),
+      total: result?.total?.[0]?.count ?? 0,
+      productos: (result?.uniqueProducts?.[0]?.count ?? 0) + catalogCount,
+    })
+  } catch (err) {
+    console.error('[operations] Error al obtener stats:', err)
+    res.status(500).json({ message: 'Error al obtener estadísticas.' })
+  }
+})
+
+/**
  * POST /api/operations
  * Crea una nueva operación (Productos Entrantes o Productos Salientes).
  */
