@@ -263,6 +263,8 @@ operationsRouter.get('/search-for-link', async (req, res) => {
       entrantes: faceted?.byType?.find((b) => b._id === 'PRODUCTOS_ENTRANTES')?.count ?? 0,
       salientes: faceted?.byType?.find((b) => b._id === 'PRODUCTOS_SALIENTES')?.count ?? 0,
       productos: (faceted?.uniqueProducts?.[0]?.count ?? 0) + catalogCount,
+      // Conteo por cada tipo (incluye tipos personalizados): { [operationType]: count }
+      byType: Object.fromEntries((faceted?.byType ?? []).map((b) => [b._id, b.count])) as Record<string, number>,
     }
 
     res.json({ operations, stats })
