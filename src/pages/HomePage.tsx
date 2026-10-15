@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Activity, ArrowDown, ArrowRight, ArrowUp, ChevronRight, ClipboardList, Database, Inbox, Package, Settings,
-  TrendingDown, TrendingUp, Boxes
+  Activity, ArrowDown, ArrowRight, ArrowUp, ClipboardList, Database, Inbox, Package, Settings,
+  Boxes
 } from 'lucide-react'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
-import { Badge, Card, EmptyState, LoadingState, SectionHeader, operationStatusLabel, operationStatusTone } from '../components/ui'
-import { apiRequest, type Operation, type PaginatedOperations } from '../lib/api'
-import { operationTypeLabel } from '../lib/constants'
+import { Card, EmptyState, LoadingState, SectionHeader } from '../components/ui'
+import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { useTracerFeatures } from '../lib/tracer-features'
 
@@ -75,21 +74,6 @@ export function HomePage() {
       .then((r) => setOpTypes(r.all ?? []))
       .catch(() => { /* usa fallback por defecto si falla */ })
   }, [])
-
-  // Operaciones recientes (últimas 5) para mostrar en el Home
-  const [recentOps, setRecentOps] = useState<Operation[]>([])
-  const [loadingRecent, setLoadingRecent] = useState(true)
-  const loadRecent = useCallback(async () => {
-    const companyId = getCompanyId()
-    if (!companyId) { setLoadingRecent(false); return }
-    try {
-      const params = new URLSearchParams({ companyId, page: '1', limit: '5' })
-      const r = await apiRequest<PaginatedOperations>(`/operations?${params.toString()}`)
-      setRecentOps(r.operations ?? [])
-    } catch { /* silencioso */ }
-    finally { setLoadingRecent(false) }
-  }, [])
-  useEffect(() => { void loadRecent() }, [loadRecent])
 
   useEffect(() => {
     const companyId = getCompanyId()
@@ -172,30 +156,34 @@ export function HomePage() {
             Registro fotográfico de entradas y salidas. Haz clic en una acción para empezar.
           </p>
 
-          {!loadingStats && (stats.entrantes + stats.salientes + stats.productos + Object.values(stats.byType).reduce((a, b) => a + b, 0) > 0) && (
+          {!loadingStats && (stats.productos > 0 || Object.values(stats.byType).some((v) => v > 0)) && (
             <div
               className="mt-4 pt-4 flex flex-wrap gap-x-5 gap-y-3"
               style={{ borderTop: '1px solid var(--hero-accent-ring)' }}
             >
-              {/* Un item por cada tipo de operación configurado */}
-              {(opTypes.length ? opTypes : FALLBACK_OPERATION_TYPES).map((t) => {
-                const count = stats.byType[t.id] ?? 0
-                return (
-                  <div key={t.id} className="text-center sm:text-left min-w-[4rem]">
-                    <div className="flex items-center gap-1 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
-                      {t.id === 'PRODUCTOS_ENTRANTES' ? <TrendingDown className="w-3 h-3" />
-                        : t.id === 'PRODUCTOS_SALIENTES' ? <TrendingUp className="w-3 h-3" />
-                        : t.id === 'ACTIVIDAD' ? <Activity className="w-3 h-3" />
-                        : <ClipboardList className="w-3 h-3" />}
-                      <span className="text-[9px] uppercase font-semibold tracking-wide truncate max-w-[80px]">{t.label}</span>
+              {/* Un stat por cada tipo que tenga al menos 1 operación.
+                  Combina byType (datos reales) con opTypes (labels legibles).
+                  Si el tipo tiene registros pero no está en opTypes, se muestra igual. */}
+              {Object.entries(stats.byType)
+                .filter(([, count]) => count > 0)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([typeId, count]) => {
+                  const opType = opTypes.find((t) => t.id === typeId)
+                  const label = opType?.label ?? typeId.replace(/_/g, ' ').toLowerCase().replace(/^\w/, c => c.toUpperCase())
+                  const Icon = TYPE_ICONS[typeId] ?? ClipboardList
+                  return (
+                    <div key={typeId} className="text-center sm:text-left min-w-[4rem]">
+                      <div className="flex items-center gap-1 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
+                        <Icon className="w-3 h-3" />
+                        <span className="text-[9px] uppercase font-semibold tracking-wide truncate max-w-[90px]">{label}</span>
+                      </div>
+                      <div className="text-2xl sm:text-3xl font-bold mt-0.5 tabular-nums" style={{ color: 'var(--hero-text)' }}>
+                        {count}
+                      </div>
                     </div>
-                    <div className="text-2xl sm:text-3xl font-bold mt-0.5 tabular-nums" style={{ color: 'var(--hero-text)' }}>
-                      {count}
-                    </div>
-                  </div>
-                )
-              })}
-              {/* Productos (del catálogo) siempre al final */}
+                  )
+                })}
+              {/* Productos del catálogo al final */}
               {stats.productos > 0 && (
                 <div className="text-center sm:text-left min-w-[4rem]">
                   <div className="flex items-center gap-1 justify-center sm:justify-start" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
@@ -210,68 +198,6 @@ export function HomePage() {
             </div>
           )}
         </div>
-      </section>
-
-      {/* ── Registros recientes ─────────────────────────── */}
-      <section className="space-y-2">
-        <SectionHeader
-          eyebrow="Registros"
-          title="Operaciones recientes"
-          actions={
-            <button onClick={() => navigate('/history')}
-              className="text-xs font-semibold text-[var(--color-primary)] flex items-center gap-1 hover:opacity-80">
-              Ver todos <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          }
-        />
-        {loadingRecent ? (
-          <LoadingState label="Cargando registros…" />
-        ) : recentOps.length === 0 ? (
-          <Card>
-            <p className="text-sm text-[var(--color-text-2)] text-center py-3">Aún no hay operaciones registradas.</p>
-          </Card>
-        ) : (
-          <div className="space-y-2">
-            {recentOps.map((op) => {
-              const Icon = TYPE_ICONS[op.operationType] ?? Package
-              const date = new Date(op.createdAt)
-              return (
-                <Card
-                  key={op.trackingCode}
-                  as="article"
-                  padding="sm"
-                  interactive
-                  onClick={() => navigate(`/wizard/${op.trackingCode}`)}
-                  className="flex items-center gap-3 text-left"
-                >
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                    op.status === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
-                  }`}>
-                    <Icon className="w-5 h-5" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-[var(--color-text)] truncate">{op.trackingCode}</p>
-                    <p className="text-xs text-[var(--color-text-2)] truncate">
-                      {operationTypeLabel(op.operationType, opTypes)} · {op.operatorName}
-                      {op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
-                      {(op.lineaBlanca?.length ?? 0) > 0 ? ` · ${op.lineaBlanca.length} producto(s)` : ''}
-                    </p>
-                    <p className="text-[10px] text-[var(--color-text-3)] mt-0.5">
-                      {date.toLocaleDateString('es-CO')} {date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  </div>
-                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                    <Badge tone={operationStatusTone(op.status)}>
-                      {operationStatusLabel(op.status)}
-                    </Badge>
-                    <span className="text-[10px] text-[var(--color-text-3)]">{op.photos.length} fotos</span>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
-                </Card>
-              )
-            })}
-          </div>
-        )}
       </section>
 
       {/* ── Quick actions primarias ─────────────────────────── */}
