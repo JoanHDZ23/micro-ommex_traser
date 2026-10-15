@@ -2190,8 +2190,24 @@ export function WizardPage() {
             </div>
 
             <div className="overflow-y-auto px-4 py-4 space-y-4">
-              {/* Miniaturas */}
-              <div className="grid grid-cols-3 gap-2">
+              {/* Miniaturas + drag & drop zone */}
+              <div
+                className="grid grid-cols-3 gap-2"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
+                  if (files.length === 0) return
+                  files.forEach((file) => {
+                    const reader = new FileReader()
+                    reader.onload = (ev) => {
+                      const dataUrl = ev.target?.result as string
+                      if (dataUrl) setCaptureTray((prev) => [...prev, dataUrl])
+                    }
+                    reader.readAsDataURL(file)
+                  })
+                }}
+              >
                 {captureTray.map((src, i) => (
                   <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
                     <img src={src} className="w-full h-full object-cover" />
@@ -2206,13 +2222,40 @@ export function WizardPage() {
                     </button>
                   </div>
                 ))}
-                {/* Tomar otra foto */}
+                {/* Tomar otra foto (cámara) */}
                 <button onClick={openNativeCamera}
                   className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 text-gray-500 hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]">
                   <Camera className="w-6 h-6" />
                   <span className="text-[10px] font-medium">Otra foto</span>
                 </button>
+                {/* Seleccionar múltiples imágenes desde galería */}
+                <label className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 text-gray-500 hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] cursor-pointer">
+                  <Plus className="w-6 h-6" />
+                  <span className="text-[10px] font-medium">Galería</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files ?? [])
+                      e.target.value = ''
+                      files.forEach((file) => {
+                        const reader = new FileReader()
+                        reader.onload = (ev) => {
+                          const dataUrl = ev.target?.result as string
+                          if (dataUrl) setCaptureTray((prev) => [...prev, dataUrl])
+                        }
+                        reader.readAsDataURL(file)
+                      })
+                    }}
+                  />
+                </label>
               </div>
+              {/* Ayuda: arrastrar o pegar */}
+              <p className="text-[10px] text-gray-400 text-center">
+                Arrastra imágenes aquí · Ctrl+V para pegar · o usa Galería para seleccionar varias
+              </p>
 
               {/* Mensaje (como en WhatsApp) */}
               <div className="space-y-1.5">
