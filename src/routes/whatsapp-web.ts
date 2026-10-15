@@ -469,6 +469,47 @@ whatsappWebRouter.post('/send-product', async (req, res) => {
 })
 
 /**
+ * POST /api/whatsapp-web/send-photo-group
+ * Envía un grupo de fotos (álbum) de la operación al destino configurado.
+ * Body: { trackingCode, photoIndices: number[], to? }
+ */
+whatsappWebRouter.post('/send-photo-group', async (req, res) => {
+  const { trackingCode, photoIndices, to: toOverride } = req.body ?? {}
+  if (!trackingCode || !Array.isArray(photoIndices) || photoIndices.length === 0) {
+    res.status(400).json({ message: 'trackingCode y photoIndices (array) son requeridos.' }); return
+  }
+
+  try {
+    const { getOperationsCollection, getDb } = await import('../lib/mongodb.js')
+    const op = await getOperationsCollection().findOne({ trackingCode })
+    if (!op) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const companyId = (op.companyId as string | undefined) || undefined
+    let to = (toOverride ?? '').trim()
+    if (!to && op.companyId) {
+      const settings = await getDb().collection('company_settings').findOne({ companyId: op.companyId })
+      to = (settings?.whatsappTo as string) ?? ''
+    }
+    if (!to) { res.status(400).json({ message: 'No hay destino de WhatsApp configurado para esta empresa.' }); return }
+
+    type Photo = { driveUrl?: string; comment?: string; stepName?: string }
+    const photos = (op.photos as Photo[]) ?? []
+    const sendable = (photoIndices as number[])
+      .map((idx) => photos[idx])
+      .filter((p) => p && p.driveUrl && p.driveUrl !== 'pending-verification' && /^https?:\/\//.test(p.driveUrl ?? ''))
+    if (sendable.length === 0) { res.status(400).json({ message: 'Ninguna de las fotos seleccionadas está disponible para envío.' }); return }
+
+    const caption = sendable.find((p) => p.comment ?? p.stepName)
+    const captionText = (caption?.comment ?? caption?.stepName ?? '').trim() || undefined
+    const r = await uSendAlbum(to, sendable.map((p) => p.driveUrl as string), captionText, companyId)
+    res.json({ message: `Álbum enviado (${r.count} foto(s)).`, to, sent: r.count })
+  } catch (err) {
+    console.error('[whatsapp-web] Error al enviar álbum:', err)
+    res.status(502).json({ message: err instanceof Error ? err.message : 'No se pudo enviar el álbum.' })
+  }
+})
+
+/**
  * POST /api/whatsapp-web/send-photo
  * Envía UNA foto individual de la operación (por índice) al destino configurado.
  * Body: { trackingCode, photoIndex, to? }
