@@ -253,6 +253,26 @@ export function WizardPage() {
   const [renamingProduct, setRenamingProduct] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
+  // Edit product description (labelData.descripcion)
+  const [editingProductDesc, setEditingProductDesc] = useState<string | null>(null) // productCode
+  const [productDescValue, setProductDescValue] = useState('')
+
+  const handleSaveProductDesc = async (productCode: string) => {
+    if (!trackingCode) return
+    try {
+      await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/label`, {
+        method: 'PATCH',
+        body: { labelData: { descripcion: productDescValue.trim() } },
+      })
+      setFeedback('✓ Descripción actualizada')
+      setEditingProductDesc(null)
+      setProductDescValue('')
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al guardar la descripción.')
+    }
+  }
+
   const handleRenameProduct = async (oldCode: string) => {
     if (!trackingCode || !renameValue.trim() || renameValue.trim() === oldCode) {
       setRenamingProduct(null)
@@ -1467,8 +1487,33 @@ export function WizardPage() {
                       <button onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
                         className="text-left w-full">
                         <span className="text-[13px] font-bold text-[var(--color-primary)]">{product.productCode}</span>
-                        {desc && <span className="text-[12.5px] text-gray-800 block">{desc}</span>}
+                        {desc && editingProductDesc !== product.productCode && (
+                          <span className="text-[12.5px] text-gray-800 block">{desc}</span>
+                        )}
                       </button>
+                      {/* Edición inline de la descripción/comentario del producto */}
+                      {editingProductDesc === product.productCode ? (
+                        <div className="flex items-center gap-1 mt-1">
+                          <input
+                            type="text"
+                            value={productDescValue}
+                            onChange={(e) => setProductDescValue(e.target.value)}
+                            placeholder="Descripción / comentario…"
+                            className="flex-1 text-xs px-2 py-1.5 border border-[var(--color-primary)]/40 rounded bg-white focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') void handleSaveProductDesc(product.productCode)
+                              if (e.key === 'Escape') setEditingProductDesc(null)
+                            }}
+                          />
+                          <button onClick={() => void handleSaveProductDesc(product.productCode)} className="text-emerald-600 flex-shrink-0">
+                            <CheckCircle2 className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => setEditingProductDesc(null)} className="text-gray-400 flex-shrink-0">
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : null}
                       {/* Time + status + toggle para agregar fotos */}
                       <div className="flex items-center justify-between gap-1 mt-0.5">
                         <button onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
@@ -1495,6 +1540,13 @@ export function WizardPage() {
                         title="Editar nombre"
                         className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-gray-600 hover:bg-gray-100">
                         <Pencil className="w-3.5 h-3.5" /> Editar
+                      </button>
+                      {/* Botón editar descripción/comentario */}
+                      <button
+                        onClick={() => { setEditingProductDesc(product.productCode); setProductDescValue(product.labelData?.descripcion ?? '') }}
+                        title="Editar descripción"
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-indigo-600 hover:bg-indigo-50">
+                        <MessageCircle className="w-3.5 h-3.5" /> Comentario
                       </button>
                       <button onClick={async () => {
                         if (!confirm(`¿Quitar "${product.productCode}"?`)) return
@@ -2165,9 +2217,27 @@ export function WizardPage() {
               {/* Mensaje (como en WhatsApp) */}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-gray-600">Mensaje (opcional)</label>
-                <input type="text" value={trayMessage} onChange={(e) => setTrayMessage(e.target.value)}
-                  placeholder="Escribe un comentario para estas fotos..."
-                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                <textarea
+                  value={trayMessage}
+                  onChange={(e) => setTrayMessage(e.target.value)}
+                  onPaste={(e) => {
+                    // Si se pega una imagen desde el portapapeles, añadirla a la bandeja.
+                    const items = Array.from(e.clipboardData?.items ?? [])
+                    const imageItem = items.find((item) => item.type.startsWith('image/'))
+                    if (!imageItem) return
+                    e.preventDefault()
+                    const file = imageItem.getAsFile()
+                    if (!file) return
+                    const reader = new FileReader()
+                    reader.onload = (ev) => {
+                      const dataUrl = ev.target?.result as string
+                      if (dataUrl) setCaptureTray((prev) => [...prev, dataUrl])
+                    }
+                    reader.readAsDataURL(file)
+                  }}
+                  placeholder="Escribe un comentario para estas fotos... (o pega una imagen)"
+                  rows={2}
+                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 resize-none"
                   autoFocus />
               </div>
             </div>
