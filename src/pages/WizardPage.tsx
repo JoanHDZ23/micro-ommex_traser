@@ -113,8 +113,6 @@ export function WizardPage() {
   // Photo editing
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
   const [editComment, setEditComment] = useState('')
-  // Grupo de fotos (álbum) expandido para ver/borrar fotos individuales.
-  const [expandedPhotoGroup, setExpandedPhotoGroup] = useState<string | null>(null)
 
   // Plate editing removed — handled in header
   const [chatMessage, setChatMessage] = useState('')
@@ -717,12 +715,24 @@ export function WizardPage() {
   // Envía UNA foto individual (por índice) al WhatsApp configurado.
   const handleSendPhoto = async (photoIndex: number) => {
     if (!trackingCode) return
-    const tos = await pickDestinations()
-    if (tos === null) return
+    let tos: string[] | null | undefined
+    try {
+      tos = await pickDestinations()
+    } catch {
+      setFeedback('No se pudo cargar los destinos de WhatsApp. Revisa la configuración.')
+      return
+    }
+    if (tos === null) return // usuario canceló el selector
+    // Si no hay destinos configurados, avisamos en lugar de fallar silenciosamente.
+    if (tos !== undefined && tos.length === 0) {
+      setFeedback('No hay destino de WhatsApp configurado. Ve a Configuración para agregarlo.')
+      return
+    }
     setFeedback('⏳ Enviando foto por WhatsApp…')
     try {
-      const targets = (tos && tos.length) ? tos : [undefined]
+      const targets = tos && tos.length ? tos : [null] // null → el backend usa el default guardado
       let ok = 0
+      let lastErr = ''
       for (const to of targets) {
         try {
           await apiRequest('/whatsapp-web/send-photo', {
@@ -730,11 +740,58 @@ export function WizardPage() {
             body: { trackingCode, photoIndex, ...(to ? { to } : {}) },
           })
           ok++
-        } catch { /* sigue con el siguiente destino */ }
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : 'Error al enviar'
+        }
       }
-      setFeedback(ok > 0 ? `✓ Foto enviada a ${ok} chat(s).` : 'No se pudo enviar la foto.')
+      if (ok > 0) {
+        setFeedback(`✓ Foto enviada a ${ok} chat(s).`)
+      } else {
+        setFeedback(lastErr || 'No se pudo enviar la foto.')
+      }
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'No se pudo enviar la foto.')
+    }
+  }
+
+  // Envía un ÁLBUM (grupo de fotos con el mismo groupId) por WhatsApp.
+  const handleSendPhotoGroup = async (groupIndices: number[]) => {
+    if (!trackingCode || groupIndices.length === 0) return
+    let tos: string[] | null | undefined
+    try {
+      tos = await pickDestinations()
+    } catch {
+      setFeedback('No se pudo cargar los destinos de WhatsApp. Revisa la configuración.')
+      return
+    }
+    if (tos === null) return
+    if (tos !== undefined && tos.length === 0) {
+      setFeedback('No hay destino de WhatsApp configurado. Ve a Configuración para agregarlo.')
+      return
+    }
+    setFeedback('⏳ Enviando álbum por WhatsApp…')
+    try {
+      const targets = tos && tos.length ? tos : [null]
+      let ok = 0
+      let lastErr = ''
+      for (const to of targets) {
+        try {
+          await apiRequest('/whatsapp-web/send-photo-group', {
+            method: 'POST',
+            body: { trackingCode, photoIndices: groupIndices, ...(to ? { to } : {}) },
+          })
+          ok++
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : 'Error al enviar'
+        }
+      }
+      if (ok > 0) {
+        setFeedback(`✓ Álbum enviado a ${ok} chat(s).`)
+      } else {
+        setFeedback(lastErr || 'No se pudo enviar el álbum.')
+      }
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar el álbum.')
     }
   }
 
@@ -1017,15 +1074,23 @@ export function WizardPage() {
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-semibold text-gray-800 truncate">{operation.trackingCode}</h2>
-          <button onClick={() => {
-            const newPlate = prompt('Placa del vehículo:', operation.vehiclePlate ?? '')
-            if (newPlate !== null) {
-              void apiRequest(`/operations/${trackingCode}`, { method: 'PATCH', body: { vehiclePlate: newPlate.trim().toUpperCase() } }).then(() => loadOperation())
-            }
-          }} className="text-[11px] text-gray-500 flex items-center gap-1 hover:text-[var(--color-primary)]">
-            {operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''} · {operation.photos.length} fotos · {lbProducts.length} productos
-            <Pencil className="w-2.5 h-2.5 opacity-50" />
-          </button>
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[11px] text-gray-500">{operation.operatorName}</span>
+            <span className="text-[11px] text-gray-400">·</span>
+            <button onClick={() => {
+              const newPlate = prompt('Placa / Detalle:', operation.vehiclePlate ?? '')
+              if (newPlate !== null) {
+                void apiRequest(`/operations/${trackingCode}`, { method: 'PATCH', body: { vehiclePlate: newPlate.trim().toUpperCase() } }).then(() => loadOperation())
+              }
+            }} className="text-[11px] text-gray-500 flex items-center gap-0.5 hover:text-[var(--color-primary)]">
+              {operation.operationType}{operation.vehiclePlate ? ` · ${operation.vehiclePlate}` : ''}
+              <Pencil className="w-2 h-2 opacity-40" />
+            </button>
+            <span className="text-[11px] text-gray-400">·</span>
+            <span className="text-[11px] text-gray-400">
+              {new Date(operation.createdAt ?? Date.now()).toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+            </span>
+          </div>
         </div>
         {/* Sincronizar WhatsApp de la empresa */}
         <button onClick={() => setShowWaSync(true)} title="Sincronizar WhatsApp"
@@ -1139,11 +1204,25 @@ export function WizardPage() {
                             />
                           )}
                           {editingPhotoIdx === i ? (
-                            <div className="flex items-center gap-1">
-                              <input type="text" value={editComment} onChange={(e) => setEditComment(e.target.value)}
-                                className="flex-1 text-xs px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none"
-                                autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void handleEditComment(i); if (e.key === 'Escape') setEditingPhotoIdx(null) }} />
-                              <button onClick={() => void handleEditComment(i)} className="text-emerald-600"><CheckCircle2 className="w-3.5 h-3.5" /></button>
+                            <div className="space-y-1.5 mt-1">
+                              {/* Editar comentario */}
+                              <div className="flex items-center gap-1">
+                                <input type="text" value={editComment} onChange={(e) => setEditComment(e.target.value)}
+                                  className="flex-1 text-xs px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none"
+                                  autoFocus placeholder="Comentario…"
+                                  onKeyDown={(e) => { if (e.key === 'Enter') void handleEditComment(i); if (e.key === 'Escape') setEditingPhotoIdx(null) }} />
+                                <button onClick={() => void handleEditComment(i)} className="text-emerald-600" title="Guardar comentario">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                              {/* Editar imagen (solo si no es audio ni documento) */}
+                              {photo.mediaType !== 'audio' && photo.mediaType !== 'document' && (
+                                <button
+                                  onClick={() => { setEditingPhotoIdx(null); openPhotoReEdit(i) }}
+                                  className="w-full flex items-center justify-center gap-1.5 py-1 rounded-lg border border-orange-200 bg-orange-50 text-orange-600 text-[11px] font-medium hover:bg-orange-100 transition-colors">
+                                  <Edit3 className="w-3 h-3" /> Editar imagen
+                                </button>
+                              )}
                             </div>
                           ) : (
                             <span className="text-xs text-gray-800">{photo.comment || photo.stepName}</span>
@@ -1197,61 +1276,84 @@ export function WizardPage() {
                     )
                   }
 
-                  // Grupo de varias fotos → álbum: muestra SOLO la primera + "+N".
-                  const gid = group[0].photo.groupId as string
+                  // Grupo de varias fotos → tarjeta estilo producto con cuadrícula + acciones.
                   const first = group[0].photo
-                  const extra = group.length - 1
-                  const isExpanded = expandedPhotoGroup === gid
                   const groupComment = group.map((g) => (g.photo.comment ?? '').trim()).find(Boolean) ?? ''
+                  const isEditingGroup = editingPhotoIdx === group[0].idx && group.length > 1
                   return (
                     <div key={`g-${gi}`} className="flex justify-end">
-                      <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
-                        {!isExpanded ? (
-                          <button type="button" onClick={() => setExpandedPhotoGroup(gid)}
-                            className="relative block w-full">
-                            {photoSrc(first, 400) && (
-                              <img src={photoSrc(first, 400)!} alt=""
-                                className="w-full rounded-md mb-1.5 max-h-56 object-cover"
-                                loading="lazy"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                            )}
-                            <span className="absolute top-1.5 left-1.5 text-[10px] bg-black/60 text-white px-1.5 py-0.5 rounded-full">
-                              🖼 {group.length} fotos
-                            </span>
-                            <span className="absolute inset-x-0 bottom-2 flex items-center justify-center">
-                              <span className="text-xs bg-black/55 text-white px-2 py-1 rounded-full">+{extra} más · ver todas</span>
-                            </span>
-                          </button>
-                        ) : (
-                          <div className="grid grid-cols-3 gap-1 mb-1.5">
-                            {group.map(({ photo, idx }) => (
-                              <div key={idx} className="relative aspect-square rounded overflow-hidden bg-gray-200">
-                                {photoSrc(photo, 200) ? (
-                                  <img src={photoSrc(photo, 200)!} className="w-full h-full object-cover" loading="lazy"
-                                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                                ) : (
-                                  <div className="w-full h-full flex items-center justify-center text-gray-400 text-[9px]">🕐</div>
-                                )}
-                                {!isCompleted && (
-                                  <button onClick={() => void handleDeletePhoto(idx)}
-                                    className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/60 flex items-center justify-center">
-                                    <X className="w-3 h-3 text-white" />
-                                  </button>
-                                )}
-                              </div>
-                            ))}
+                      <div className="w-full max-w-[92%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-xl shadow-sm overflow-hidden">
+                        {/* Header de la tarjeta álbum */}
+                        <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-bold text-[var(--color-primary)] uppercase tracking-wide">🖼 {group.length} fotos</span>
                           </div>
-                        )}
-
-                        {groupComment && <span className="text-xs text-gray-800 block">{groupComment}</span>}
-                        <div className="flex items-center justify-between gap-1 mt-0.5">
-                          <button onClick={() => setExpandedPhotoGroup(isExpanded ? null : gid)}
-                            className="text-[10px] font-medium text-[var(--color-primary)]">
-                            {isExpanded ? 'Ocultar' : `Ver ${group.length} fotos`}
-                          </button>
-                          <span className="text-[9px] text-gray-500">
+                          <span className="text-[9px] text-gray-400">
                             {new Date(first.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
                           </span>
+                        </div>
+
+                        {/* Cuadrícula de fotos */}
+                        <div className={`grid gap-0.5 px-2 ${group.length === 2 ? 'grid-cols-2' : group.length === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                          {group.map(({ photo: ph, idx: phIdx }) => (
+                            <div key={phIdx} className="relative aspect-square rounded overflow-hidden bg-gray-200">
+                              {photoSrc(ph, 300) ? (
+                                <img src={photoSrc(ph, 300)!} className="w-full h-full object-cover" loading="lazy"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-gray-400 text-[10px]">🕐</div>
+                              )}
+                              {!isCompleted && (
+                                <div className="absolute top-0.5 right-0.5 flex gap-0.5">
+                                  {ph.mediaType !== 'audio' && ph.mediaType !== 'document' && (
+                                    <button onClick={() => openPhotoReEdit(phIdx)}
+                                      className="w-5 h-5 rounded-full bg-black/60 flex items-center justify-center"
+                                      title="Editar imagen">
+                                      <Edit3 className="w-2.5 h-2.5 text-orange-300" />
+                                    </button>
+                                  )}
+                                  <button onClick={() => void handleDeletePhoto(phIdx)}
+                                    className="w-5 h-5 rounded-full bg-black/60 flex items-center justify-center"
+                                    title="Eliminar foto">
+                                    <X className="w-3 h-3 text-white" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Comentario / edición */}
+                        <div className="px-3 pt-2 pb-1">
+                          {isEditingGroup ? (
+                            <div className="flex items-center gap-1">
+                              <input type="text" value={editComment} onChange={(e) => setEditComment(e.target.value)}
+                                className="flex-1 text-xs px-2 py-1 border border-gray-300 rounded bg-white focus:outline-none"
+                                autoFocus
+                                onKeyDown={(e) => { if (e.key === 'Enter') void handleEditComment(group[0].idx); if (e.key === 'Escape') setEditingPhotoIdx(null) }} />
+                              <button onClick={() => void handleEditComment(group[0].idx)} className="text-emerald-600">
+                                <CheckCircle2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-gray-700">{groupComment}</span>
+                          )}
+                        </div>
+
+                        {/* Barra de acciones */}
+                        <div className="flex items-center gap-1 px-2.5 pb-2.5 pt-1 border-t border-[var(--color-primary)]/10">
+                          {!isCompleted && (
+                            <button
+                              onClick={() => { setEditingPhotoIdx(group[0].idx); setEditComment(groupComment) }}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 text-[11px] font-medium hover:bg-gray-50">
+                              <Pencil className="w-3 h-3" /> Editar
+                            </button>
+                          )}
+                          <button
+                            onClick={() => void handleSendPhotoGroup(group.map((g) => g.idx))}
+                            className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#128c7e] text-white text-[11px] font-semibold hover:bg-[#0f7a6d]">
+                            <Send className="w-3 h-3" /> Enviar
+                          </button>
                         </div>
                       </div>
                     </div>
