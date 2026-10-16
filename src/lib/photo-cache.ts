@@ -9,7 +9,7 @@
 const DB_NAME = 'ommex-photo-cache'
 const STORE_NAME = 'photos'
 const DB_VERSION = 1
-const EXPIRY_MS = 1 * 60 * 60 * 1000 // 1 hora (se borra al subir, esto es solo por si falla)
+const EXPIRY_MS = 7 * 24 * 60 * 60 * 1000 // 7 días — protege fotos capturadas en turnos largos sin conexión
 
 export interface CachedPhoto {
   id: string // trackingCode_stepIndex_timestamp

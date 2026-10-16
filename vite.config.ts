@@ -29,14 +29,17 @@ export default defineConfig({
               cacheableResponse: { statuses: [0, 200] },
             },
           },
-          // Network-first para la API (usa cache solo si hay error de red)
+          // Network-first para la API (usa cache solo si hay error de red).
+          // Matchea tanto la ruta relativa /api (dev) como la URL absoluta de producción.
           {
-            urlPattern: ({ url }) => url.pathname.startsWith('/api'),
+            urlPattern: ({ url }) =>
+              url.pathname.startsWith('/api') ||
+              url.hostname === 'micro-ommex-traser.onrender.com',
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-responses',
               networkTimeoutSeconds: 8,
-              expiration: { maxEntries: 100, maxAgeSeconds: 24 * 60 * 60 },
+              expiration: { maxEntries: 200, maxAgeSeconds: 48 * 60 * 60 },
               cacheableResponse: { statuses: [0, 200] },
             },
           },

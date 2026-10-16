@@ -125,15 +125,11 @@ export type FlushResult = {
 /**
  * Intenta enviar todas las peticiones encoladas en orden.
  * Recibe la función `apiRequest` para evitar dependencias circulares.
- *
- * - Si una petición falla de nuevo (red caída), PARA el flush (la red sigue sin
- *   conexión, no tiene sentido continuar).
- * - Si falla por error HTTP (4xx/5xx), se elimina igualmente (el server la
- *   rechazará siempre; evita loops infinitos) y se loguea.
  */
 export async function flush(
   apiRequest: (endpoint: string, opts: { method: string; body?: unknown }) => Promise<unknown>,
   onProgress?: (sent: number, total: number) => void,
+  onDiscard?: (item: QueuedRequest, error: unknown) => void,
 ): Promise<FlushResult> {
   const queue = await getAll()
   let sent    = 0
@@ -147,15 +143,19 @@ export async function flush(
       await remove(item.id)
       sent++
     } catch (err) {
-      const isNetworkError = !navigator.onLine || String(err).includes('servidor')
+      // Detecta error de red por el tipo de error (TypeError = fetch failed),
+      // no por el contenido del mensaje (que puede cambiar con el idioma).
+      const isNetworkError = err instanceof TypeError || !navigator.onLine
       if (isNetworkError) {
-        // La red se fue de nuevo — no intentar el resto
+        // Red caída de nuevo — parar el flush para no desperdiciar batería
         await incrementRetries(item)
         failed = queue.length - i
         break
       }
-      // Error HTTP: descarta la petición para no bloquear la cola
-      console.warn('[sync-queue] Descartando petición con error HTTP:', item.endpoint, err)
+      // Error HTTP (4xx/5xx): descarta para no bloquear la cola.
+      // Notifica al llamador para que pueda informar al usuario.
+      console.warn('[sync-queue] Descartando petición (error HTTP):', item.endpoint, err)
+      onDiscard?.(item, err)
       await remove(item.id)
       failed++
     }
