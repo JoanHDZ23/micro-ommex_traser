@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2,
   Search, CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
-  Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus,
+  Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
 } from 'lucide-react'
 import { apiRequest, fileToBase64, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
@@ -96,8 +96,11 @@ function saveColumnSelection(companyId: string, sel: SavedColumnSelection) {
 }
 
 function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
-  const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas
+  const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas (filtro global)
   const [filterText, setFilterText] = useState('')
+  // Filtros por columna (estilo Excel): { [colIndex]: texto }. Se aplican con AND.
+  const [columnFilters, setColumnFilters] = useState<Record<number, string>>({})
+  const [showColumnFilters, setShowColumnFilters] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   // Filas "marcadas" (producto ya cogido/listo) → se pintan de color. Persistente.
@@ -118,14 +121,41 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
     persistMarked(next)
   }
 
+  // Lista de filtros de columna activos (con texto no vacío).
+  const activeColumnFilters = useMemo(
+    () => Object.entries(columnFilters)
+      .map(([col, text]) => ({ col: Number(col), text: text.trim().toLowerCase() }))
+      .filter((f) => f.text.length > 0),
+    [columnFilters],
+  )
+
   const filtered = useMemo(() => {
     const q = filterText.trim().toLowerCase()
-    if (!q) return rows
+    // Sin ningún filtro activo → todas las filas
+    if (!q && activeColumnFilters.length === 0) return rows
     return rows.filter((row) => {
-      if (filterCol >= 0) return (row[filterCol] ?? '').toLowerCase().includes(q)
-      return row.some((cell) => (cell ?? '').toLowerCase().includes(q))
+      // 1) Todos los filtros por columna deben cumplirse (AND, estilo Excel)
+      for (const f of activeColumnFilters) {
+        if (!(row[f.col] ?? '').toLowerCase().includes(f.text)) return false
+      }
+      // 2) Filtro de texto global (sobre columna elegida o todas)
+      if (q) {
+        if (filterCol >= 0) return (row[filterCol] ?? '').toLowerCase().includes(q)
+        return row.some((cell) => (cell ?? '').toLowerCase().includes(q))
+      }
+      return true
     })
-  }, [rows, filterText, filterCol])
+  }, [rows, filterText, filterCol, activeColumnFilters])
+
+  const setColumnFilter = (col: number, text: string) => {
+    setColumnFilters((prev) => {
+      const next = { ...prev }
+      if (text) next[col] = text
+      else delete next[col]
+      return next
+    })
+  }
+  const clearAllColumnFilters = () => setColumnFilters({})
 
   const visible = filtered.slice(0, MAX_VISIBLE_ROWS)
   const toggleRow = (globalIdx: number) => {
@@ -259,12 +289,90 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
             </button>
           )}
         </div>
+        {/* Filtros por columna (estilo Excel) */}
+        <Button
+          variant={activeColumnFilters.length > 0 ? 'primary' : 'secondary'}
+          size="md"
+          onClick={() => setShowColumnFilters((v) => !v)}
+          title="Filtrar por varias columnas (estilo Excel)"
+          leftIcon={<Filter className="w-4 h-4" />}
+          className="flex-shrink-0"
+        >
+          <span className="hidden sm:inline">Columnas</span>
+          {activeColumnFilters.length > 0 && (
+            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-white/25 text-[10px] font-bold">
+              {activeColumnFilters.length}
+            </span>
+          )}
+        </Button>
         {/* Filtrar al escanear un código (igual que al agregar producto en registros) */}
         <Button variant="secondary" size="md" onClick={() => setScanning(true)} title="Filtrar escaneando un código"
           leftIcon={<QrCode className="w-4 h-4" />} className="flex-shrink-0">
           <span className="hidden sm:inline">Escanear</span>
         </Button>
       </div>
+
+      {/* Panel de filtros por columna — un input por cada columna (estilo Excel) */}
+      {showColumnFilters && (
+        <div className="p-3 rounded-[var(--radius-lg)] bg-[var(--color-bg)] border border-[var(--color-border)] space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold text-[var(--color-text-2)] uppercase tracking-wide flex items-center gap-1.5">
+              <Filter className="w-3.5 h-3.5 text-[var(--color-primary)]" /> Filtros por columna
+            </span>
+            <div className="flex items-center gap-2">
+              {activeColumnFilters.length > 0 && (
+                <button onClick={clearAllColumnFilters}
+                  className="text-[11px] font-medium text-[var(--color-primary)] hover:underline">
+                  Limpiar todos
+                </button>
+              )}
+              <button onClick={() => setShowColumnFilters(false)} aria-label="Cerrar"
+                className="w-6 h-6 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {headers.map((h, i) => (
+              <label key={i} className="space-y-1 block">
+                <span className="text-[11px] font-medium text-[var(--color-text-2)] truncate block">{h || `Columna ${i + 1}`}</span>
+                <div className="relative">
+                  <input
+                    value={columnFilters[i] ?? ''}
+                    onChange={(e) => setColumnFilter(i, e.target.value)}
+                    placeholder="Filtrar…"
+                    className={`w-full rounded-[var(--radius)] border bg-[var(--color-surface)] px-2.5 py-1.5 pr-7 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-3)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
+                      columnFilters[i] ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'
+                    }`}
+                  />
+                  {columnFilters[i] && (
+                    <button onClick={() => setColumnFilter(i, '')} aria-label="Limpiar"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)]">
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Chips de filtros de columna activos */}
+      {activeColumnFilters.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {activeColumnFilters.map((f) => (
+            <span key={f.col}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[var(--color-primary-bg)] text-[var(--color-primary)] text-[11px] font-medium">
+              <span className="font-semibold">{headers[f.col] || `Col ${f.col + 1}`}:</span>
+              <span className="max-w-[120px] truncate">{columnFilters[f.col]}</span>
+              <button onClick={() => setColumnFilter(f.col, '')} aria-label="Quitar filtro" className="hover:opacity-70">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Tabla */}
       <div className="border border-[var(--color-border)] rounded-[var(--radius-lg)] overflow-hidden bg-[var(--color-surface)] shadow-sm">
