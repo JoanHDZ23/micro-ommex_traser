@@ -1,4 +1,24 @@
+import { enqueue } from './sync-queue'
+
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+/** Métodos que modifican datos y deben encolarse si hay offline. */
+const MUTATION_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE'])
+
+/** Endpoints que NO se deben encolar aunque sean mutations
+ *  (fotos se manejan en photo-cache; login no tiene sentido en cola). */
+const NO_QUEUE_PATTERNS = [
+  /\/photos\/upload/,
+  /\/photos\/upload-batch/,
+  /\/linea-blanca\/.*\/photo$/,
+  /\/auth\/login/,
+  /\/whatsapp-web\//,
+]
+
+function shouldQueue(endpoint: string, method: string): boolean {
+  if (!MUTATION_METHODS.has(method.toUpperCase())) return false
+  return !NO_QUEUE_PATTERNS.some((p) => p.test(endpoint))
+}
 
 interface ApiOptions {
   method?: string
@@ -22,13 +42,26 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
   try {
     response = await doFetch()
   } catch {
+    // Sin red: si es una mutation encolable, guardar para reintento posterior.
+    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
+    if (isOffline && shouldQueue(endpoint, method)) {
+      await enqueue(endpoint, method, body)
+      // Notificar para que el banner actualice el contador
+      window.dispatchEvent(new CustomEvent('sync-queue:enqueued'))
+      throw new Error('Sin conexión. La acción se guardó y se enviará al reconectar.')
+    }
     // Cold start de Render free: reintenta una vez tras 3 s antes de mostrar error.
     await new Promise((r) => setTimeout(r, 3000))
     try {
       response = await doFetch()
     } catch {
-      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
-      throw new Error(isOffline
+      const offline = typeof navigator !== 'undefined' && !navigator.onLine
+      if (offline && shouldQueue(endpoint, method)) {
+        await enqueue(endpoint, method, body)
+        window.dispatchEvent(new CustomEvent('sync-queue:enqueued'))
+        throw new Error('Sin conexión. La acción se guardó y se enviará al reconectar.')
+      }
+      throw new Error(offline
         ? 'Sin conexión a internet. Verifica tu red e intenta de nuevo.'
         : 'El servidor está iniciando, espera unos segundos e intenta de nuevo.')
     }
