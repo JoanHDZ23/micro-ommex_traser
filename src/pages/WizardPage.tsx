@@ -517,11 +517,42 @@ export function WizardPage() {
     setCaptureTray((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  // Agrega uno o varios File de imagen a la bandeja (reutilizable: drop, galería, pegar).
+  const addImageFilesToTray = useCallback((files: File[]) => {
+    const images = files.filter((f) => f.type.startsWith('image/'))
+    if (images.length === 0) return
+    images.forEach((file) => {
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string
+        if (dataUrl) setCaptureTray((prev) => [...prev, dataUrl])
+      }
+      reader.readAsDataURL(file)
+    })
+    setShowCaptureTray(true)
+  }, [])
+
   const cancelCaptureTray = () => {
     setShowCaptureTray(false)
     setCaptureTray([])
     setTrayMessage('')
   }
+
+  // Mientras la bandeja está abierta, pegar (Ctrl+V) una imagen la agrega,
+  // sin importar dónde esté el foco dentro del modal.
+  useEffect(() => {
+    if (!showCaptureTray) return
+    const onPaste = (e: ClipboardEvent) => {
+      const items = Array.from(e.clipboardData?.items ?? [])
+      const imageItems = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      if (imageItems.length === 0) return
+      e.preventDefault()
+      const files = imageItems.map((it) => it.getAsFile()).filter((f): f is File => !!f)
+      addImageFilesToTray(files)
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [showCaptureTray, addImageFilesToTray])
 
   // Envía todas las fotos de la bandeja. Una sola foto → flujo normal.
   // Varias → UNA sola petición batch con el mismo groupId, para que se guarden
@@ -2566,21 +2597,6 @@ export function WizardPage() {
                 <textarea
                   value={trayMessage}
                   onChange={(e) => setTrayMessage(e.target.value)}
-                  onPaste={(e) => {
-                    // Si se pega una imagen desde el portapapeles, añadirla a la bandeja.
-                    const items = Array.from(e.clipboardData?.items ?? [])
-                    const imageItem = items.find((item) => item.type.startsWith('image/'))
-                    if (!imageItem) return
-                    e.preventDefault()
-                    const file = imageItem.getAsFile()
-                    if (!file) return
-                    const reader = new FileReader()
-                    reader.onload = (ev) => {
-                      const dataUrl = ev.target?.result as string
-                      if (dataUrl) setCaptureTray((prev) => [...prev, dataUrl])
-                    }
-                    reader.readAsDataURL(file)
-                  }}
                   placeholder="Escribe un comentario para estas fotos... (o pega una imagen)"
                   rows={2}
                   className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 resize-none"
