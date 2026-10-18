@@ -12,7 +12,11 @@ type Coords = { latitude: number; longitude: number; accuracy?: number } | null
 let _cached: Coords = null
 let _cachedAt = 0
 let _inflight: Promise<Coords> | null = null
-const CACHE_MS = 60_000 // reutiliza la posición hasta 1 minuto
+const CACHE_MS = 20_000 // reutiliza la posición hasta 20 s (antes 60 s)
+// Precisión objetivo: si una lectura llega a este radio (metros), la damos por buena.
+const TARGET_ACCURACY_M = 20
+// Si no alcanzamos el objetivo, igual aceptamos cualquier lectura por debajo de esto.
+const MAX_ACCEPTABLE_M = 65
 
 // Caché de direcciones (geocodificación inversa) por coordenada redondeada.
 const _addrCache = new Map<string, string>()
@@ -20,8 +24,8 @@ let _addrInflight: Promise<string | null> | null = null
 let _addrInflightKey = ''
 
 function addrKey(lat: number, lon: number): string {
-  // Redondea ~11 m para reutilizar la misma dirección en capturas cercanas.
-  return `${lat.toFixed(4)},${lon.toFixed(4)}`
+  // Redondea ~1 m (5 decimales) para no reutilizar la dirección de otro punto.
+  return `${lat.toFixed(5)},${lon.toFixed(5)}`
 }
 
 /**
@@ -65,25 +69,60 @@ export async function getAddress(coords: Coords): Promise<string | null> {
 }
 
 /**
- * Obtiene las coordenadas actuales (cacheadas). No rechaza: devuelve null si no
- * hay permiso/soporte/señal, para no bloquear la captura.
+ * Obtiene las coordenadas actuales con la MEJOR precisión posible. En vez de
+ * aceptar la primera lectura (que suele venir por red/WiFi con 100+ m de
+ * error), abre un watchPosition y va quedándose con la lectura de menor radio
+ * de error hasta que:
+ *   - alcanza la precisión objetivo (TARGET_ACCURACY_M), o
+ *   - se agota el tiempo (timeoutMs).
+ * Devuelve la mejor lectura obtenida (o null si no hay permiso/señal).
+ * No rechaza nunca, para no bloquear la captura.
  */
-export function getCoords(timeoutMs = 8000): Promise<Coords> {
-  if (_cached && Date.now() - _cachedAt < CACHE_MS) return Promise.resolve(_cached)
+export function getCoords(timeoutMs = 10000): Promise<Coords> {
+  // Reutiliza la posición reciente SOLO si ya era precisa.
+  if (_cached && Date.now() - _cachedAt < CACHE_MS && (_cached.accuracy ?? 9999) <= TARGET_ACCURACY_M) {
+    return Promise.resolve(_cached)
+  }
   if (_inflight) return _inflight
   if (typeof navigator === 'undefined' || !navigator.geolocation) return Promise.resolve(null)
 
   _inflight = new Promise<Coords>((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        _cached = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: pos.coords.accuracy }
-        _cachedAt = Date.now()
-        _inflight = null
-        resolve(_cached)
-      },
-      () => { _inflight = null; resolve(null) },
-      { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 30_000 },
-    )
+    let best: Coords = null
+    let settled = false
+    let watchId: number | null = null
+
+    const finish = () => {
+      if (settled) return
+      settled = true
+      if (watchId !== null) { try { navigator.geolocation.clearWatch(watchId) } catch { /* noop */ } }
+      // Solo cachea lecturas aceptables; si fue muy imprecisa, la próxima
+      // captura volverá a intentar en vez de reutilizar un punto malo.
+      if (best && (best.accuracy ?? 9999) <= MAX_ACCEPTABLE_M) { _cached = best; _cachedAt = Date.now() }
+      _inflight = null
+      resolve(best)
+    }
+
+    // Tope de tiempo global: devolvemos la mejor lectura acumulada.
+    const timer = setTimeout(finish, timeoutMs)
+
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const acc = pos.coords.accuracy ?? 9999
+          // Conserva la lectura más precisa vista hasta ahora.
+          if (!best || acc < (best.accuracy ?? 9999)) {
+            best = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: acc }
+          }
+          // Si ya es suficientemente precisa, terminamos antes del timeout.
+          if (acc <= TARGET_ACCURACY_M) { clearTimeout(timer); finish() }
+        },
+        () => { /* ignora errores puntuales; el timer cerrará con lo que haya */ },
+        { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 },
+      )
+    } catch {
+      clearTimeout(timer)
+      finish()
+    }
   })
   return _inflight
 }
@@ -121,12 +160,17 @@ export function buildStampLines(coords: Coords, when = new Date(), address?: str
     `${dia.charAt(0).toUpperCase()}${dia.slice(1)}, ${fecha}`,
     `🕒 ${hora}`,
   ]
+  // Sufijo de precisión (± metros) para dejar constancia de la exactitud GPS.
+  const acc = coords?.accuracy
+  const accTxt = typeof acc === 'number' && isFinite(acc) ? ` (±${Math.round(acc)} m)` : ''
   if (address) {
     const [first, ...rest] = wrap(address)
     lines.push(`📍 ${first}`)
     for (const r of rest) lines.push(`   ${r}`)
+    // Coordenadas exactas + precisión en una línea adicional.
+    if (coords) lines.push(`   ${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}${accTxt}`)
   } else if (coords) {
-    lines.push(`📍 ${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)}`)
+    lines.push(`📍 ${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}${accTxt}`)
   }
   return lines
 }
