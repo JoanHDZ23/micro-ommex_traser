@@ -1,3 +1,6 @@
 node_modules
 dist
 .env
+# Artefacto de compilación de TypeScript (se regenera en cada build)
+tsconfig.tsbuildinfo
+*.tsbuildinfo
