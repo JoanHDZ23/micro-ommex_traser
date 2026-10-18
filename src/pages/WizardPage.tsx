@@ -114,6 +114,14 @@ export function WizardPage() {
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
   const [editComment, setEditComment] = useState('')
 
+  // ── Comentarios de las fotos de un producto (modal estilo IG/Facebook) ──
+  // Guarda el productCode cuyo feed de comentarios se está mostrando.
+  const [commentsProduct, setCommentsProduct] = useState<string | null>(null)
+  // Índice de la foto (dentro del producto) cuyo comentario se está editando.
+  const [prodCommentEditIdx, setProdCommentEditIdx] = useState<number | null>(null)
+  const [prodCommentDraft, setProdCommentDraft] = useState('')
+  const [prodCommentSaving, setProdCommentSaving] = useState(false)
+
   // Plate editing removed — handled in header
   const [chatMessage, setChatMessage] = useState('')
   const [showTemplates, setShowTemplates] = useState(false)
@@ -813,12 +821,35 @@ export function WizardPage() {
   // Envía UN producto (fotos como álbum + título/observaciones) al WhatsApp configurado.
   const handleSendProduct = async (productCode: string) => {
     if (!trackingCode) return
+    // Selecciona a qué chat(s) enviar (no solo el primero).
+    let tos: string[] | null | undefined
+    try {
+      tos = await pickDestinations()
+    } catch {
+      setFeedback('No se pudo cargar los destinos de WhatsApp. Revisa la configuración.')
+      return
+    }
+    if (tos === null) return // el usuario canceló el selector
+    if (tos !== undefined && tos.length === 0) {
+      setFeedback('No hay destino de WhatsApp configurado. Ve a Configuración para agregarlo.')
+      return
+    }
     setFeedback(`⏳ Enviando ${productCode} por WhatsApp…`)
     try {
-      const r = await apiRequest<{ message: string }>('/whatsapp-web/send-product', {
-        method: 'POST', body: { trackingCode, productCode },
-      })
-      setFeedback(`✓ ${r.message}`)
+      const targets = tos && tos.length ? tos : [null] // null → el backend usa el default guardado
+      let ok = 0
+      let lastErr = ''
+      for (const to of targets) {
+        try {
+          await apiRequest('/whatsapp-web/send-product', {
+            method: 'POST', body: { trackingCode, productCode, ...(to ? { to } : {}) },
+          })
+          ok++
+        } catch (e) {
+          lastErr = e instanceof Error ? e.message : 'Error al enviar'
+        }
+      }
+      setFeedback(ok > 0 ? `✓ ${productCode} enviado a ${ok} chat(s).` : (lastErr || 'No se pudo enviar el producto.'))
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'No se pudo enviar el producto.')
     }
@@ -1088,6 +1119,55 @@ export function WizardPage() {
       setFeedback(err instanceof Error ? err.message : 'Error al editar.')
     } finally {
       setUploading(false)
+    }
+  }
+
+  // ── Comentarios de fotos de PRODUCTO (endpoints de linea-blanca) ──
+  // Edita el comentario de una foto de producto (PATCH .../photo/:idx).
+  const handleEditProductComment = async (productCode: string, photoIndex: number, comment: string) => {
+    if (!trackingCode) return
+    setProdCommentSaving(true)
+    try {
+      await apiRequest(
+        `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo/${photoIndex}`,
+        { method: 'PATCH', body: { comment } },
+      )
+      setProdCommentEditIdx(null)
+      setProdCommentDraft('')
+      setFeedback('✓ Comentario actualizado')
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al editar el comentario.')
+    } finally {
+      setProdCommentSaving(false)
+    }
+  }
+
+  // Quita SOLO el texto del comentario (deja la foto): PATCH con comment vacío.
+  const handleClearProductComment = async (productCode: string, photoIndex: number) => {
+    if (!trackingCode) return
+    if (!window.confirm('¿Quitar el comentario de esta foto? La foto se conserva.')) return
+    await handleEditProductComment(productCode, photoIndex, '')
+  }
+
+  // Elimina la foto de producto completa (DELETE .../photo/:idx).
+  const handleDeleteProductPhoto = async (productCode: string, photoIndex: number) => {
+    if (!trackingCode) return
+    if (!window.confirm('¿Eliminar esta foto? Esta acción no se puede deshacer.')) return
+    setProdCommentSaving(true)
+    try {
+      await apiRequest(
+        `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo/${photoIndex}`,
+        { method: 'DELETE' },
+      )
+      setProdCommentEditIdx(null)
+      setProdCommentDraft('')
+      setFeedback('✓ Foto eliminada')
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al eliminar la foto.')
+    } finally {
+      setProdCommentSaving(false)
     }
   }
 
@@ -1685,6 +1765,17 @@ export function WizardPage() {
                         className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-red-500 hover:bg-red-50">
                         <Trash2 className="w-3.5 h-3.5" /> Quitar
                       </button>
+                      {/* Ver/editar/eliminar los comentarios de las fotos (estilo IG) */}
+                      <button onClick={() => { setCommentsProduct(product.productCode); setProdCommentEditIdx(null); setProdCommentDraft('') }}
+                        title="Ver comentarios de las fotos"
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-sky-600 hover:bg-sky-50">
+                        <MessageCircle className="w-3.5 h-3.5" /> Comentarios
+                        {product.photos.some((ph) => (ph.comment ?? '').trim()) && (
+                          <span className="min-w-[14px] h-[14px] px-1 rounded-full bg-sky-500 text-white text-[8px] font-bold flex items-center justify-center">
+                            {product.photos.filter((ph) => (ph.comment ?? '').trim()).length}
+                          </span>
+                        )}
+                      </button>
                       {/* Enviar ESTE producto al WhatsApp configurado (álbum + texto) */}
                       <button onClick={() => void handleSendProduct(product.productCode)}
                         title="Enviar este producto por WhatsApp"
@@ -1802,11 +1893,21 @@ export function WizardPage() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex items-center gap-1 pt-1">
+                  <div className="flex items-center gap-1 pt-1 flex-wrap">
                     {/* Rename */}
                     <button onClick={() => { setRenamingProduct(p.productCode); setRenameValue(p.productCode) }}
                       className="px-2 py-1 rounded text-[10px] text-gray-500 hover:text-[var(--color-primary)] hover:bg-gray-100 flex items-center gap-1">
                       <Pencil className="w-3 h-3" /> Editar nombre
+                    </button>
+                    {/* Comentarios de las fotos (estilo IG) */}
+                    <button onClick={() => { setCommentsProduct(p.productCode); setProdCommentEditIdx(null); setProdCommentDraft('') }}
+                      className="px-2 py-1 rounded text-[10px] text-sky-600 hover:text-sky-700 hover:bg-sky-50 flex items-center gap-1">
+                      <MessageCircle className="w-3 h-3" /> Comentarios
+                      {p.photos.some((ph) => (ph.comment ?? '').trim()) && (
+                        <span className="min-w-[14px] h-[14px] px-1 rounded-full bg-sky-500 text-white text-[8px] font-bold flex items-center justify-center">
+                          {p.photos.filter((ph) => (ph.comment ?? '').trim()).length}
+                        </span>
+                      )}
                     </button>
                     {/* Link */}
                     <button onClick={() => { setLinkProductCode(p.productCode); void searchForLink('') }}
@@ -2689,6 +2790,139 @@ export function WizardPage() {
           </div>
         </div>
       )}
+
+      {/* ── Modal de comentarios de las fotos de un producto (feed estilo IG/Facebook) ── */}
+      {commentsProduct && (() => {
+        const prod = lbProducts.find((p) => p.productCode === commentsProduct)
+        if (!prod) return null
+        const photos = prod.photos ?? []
+        const withComment = photos.filter((ph) => (ph.comment ?? '').trim()).length
+        return (
+          <div className="fixed inset-0 z-[96] bg-black/60 flex items-end sm:items-center justify-center" onClick={() => setCommentsProduct(null)}>
+            <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+              {/* Cabecera */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-gray-800 truncate flex items-center gap-2">
+                    <MessageCircle className="w-4 h-4 text-sky-500 flex-shrink-0" /> Comentarios
+                  </h3>
+                  <p className="text-[11px] text-gray-500 truncate">
+                    {prod.productCode} · {withComment} de {photos.length} foto(s) con comentario
+                  </p>
+                </div>
+                <button onClick={() => setCommentsProduct(null)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+                  <X className="w-4 h-4 text-gray-500" />
+                </button>
+              </div>
+
+              {/* Feed de fotos + comentarios */}
+              <div className="overflow-y-auto p-3 space-y-3 bg-gray-50">
+                {photos.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-8">Este producto aún no tiene fotos.</p>
+                ) : (
+                  photos.map((ph, phIdx) => {
+                    const src = photoSrc(ph, 400)
+                    const isEditing = prodCommentEditIdx === phIdx
+                    const comment = (ph.comment ?? '').trim()
+                    const when = ph.timestamp ? new Date(ph.timestamp) : null
+                    return (
+                      <div key={phIdx} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                        {/* Imagen */}
+                        {src ? (
+                          <a href={src} target="_blank" rel="noopener noreferrer" className="block bg-gray-100">
+                            <img src={src} alt={`Foto ${phIdx + 1}`} loading="lazy"
+                              className="w-full max-h-72 object-contain"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                          </a>
+                        ) : (
+                          <div className="w-full h-40 flex items-center justify-center bg-gray-100 text-gray-400 text-xs">
+                            🕐 Imagen subiendo…
+                          </div>
+                        )}
+
+                        {/* Cuerpo: comentario */}
+                        <div className="p-3 space-y-2">
+                          {when && (
+                            <p className="text-[10px] text-gray-400">
+                              {when.toLocaleString('es-CO', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          )}
+
+                          {isEditing ? (
+                            <div className="space-y-2">
+                              <textarea
+                                value={prodCommentDraft}
+                                onChange={(e) => setProdCommentDraft(e.target.value)}
+                                rows={3}
+                                autoFocus
+                                placeholder="Escribe un comentario…"
+                                className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-sky-400/40"
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => void handleEditProductComment(prod.productCode, phIdx, prodCommentDraft.trim())}
+                                  disabled={prodCommentSaving}
+                                  className="px-3 py-1.5 rounded-lg bg-sky-500 text-white text-xs font-semibold disabled:opacity-50 flex items-center gap-1.5">
+                                  {prodCommentSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                                  Guardar
+                                </button>
+                                <button
+                                  onClick={() => { setProdCommentEditIdx(null); setProdCommentDraft('') }}
+                                  disabled={prodCommentSaving}
+                                  className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 disabled:opacity-50">
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              {comment ? (
+                                <p className="text-sm text-gray-800 whitespace-pre-wrap break-words">{comment}</p>
+                              ) : (
+                                <p className="text-sm text-gray-400 italic">Sin comentario</p>
+                              )}
+                              {/* Barra de acciones estilo red social */}
+                              <div className="flex items-center gap-3 pt-1 border-t border-gray-100">
+                                <button
+                                  onClick={() => { setProdCommentEditIdx(phIdx); setProdCommentDraft(comment) }}
+                                  className="flex items-center gap-1 text-[11px] font-medium text-sky-600 hover:text-sky-700 py-1">
+                                  <Edit3 className="w-3.5 h-3.5" /> {comment ? 'Editar' : 'Agregar'}
+                                </button>
+                                {comment && (
+                                  <button
+                                    onClick={() => void handleClearProductComment(prod.productCode, phIdx)}
+                                    disabled={prodCommentSaving}
+                                    className="flex items-center gap-1 text-[11px] font-medium text-amber-600 hover:text-amber-700 py-1 disabled:opacity-50">
+                                    <X className="w-3.5 h-3.5" /> Quitar comentario
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => void handleDeleteProductPhoto(prod.productCode, phIdx)}
+                                  disabled={prodCommentSaving}
+                                  className="flex items-center gap-1 text-[11px] font-medium text-red-500 hover:text-red-600 py-1 ml-auto disabled:opacity-50">
+                                  <Trash2 className="w-3.5 h-3.5" /> Eliminar foto
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+
+              {/* Pie */}
+              <div className="px-4 py-3 border-t border-gray-200">
+                <button onClick={() => setCommentsProduct(null)}
+                  className="w-full py-2.5 rounded-xl bg-gray-100 text-sm font-medium text-gray-700">
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
