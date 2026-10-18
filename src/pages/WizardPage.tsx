@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, Trash2, X } from 'lucide-react'
 import { apiRequest, fileToBase64, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
@@ -174,6 +174,79 @@ export function WizardPage() {
   const [headerFields, setHeaderFields] = useState<Set<string>>(new Set(ALL_HEADER_FIELDS))
   const toggleHeaderField = (f: string) => {
     setHeaderFields((prev) => { const n = new Set(prev); n.has(f) ? n.delete(f) : n.add(f); return n })
+  }
+
+  // ── Matriz mensaje × chat ────────────────────────────────────────────────
+  // Permite elegir qué PARTE del registro (encabezado, fotos generales, cada
+  // producto) se envía a CADA chat. Clave de selección: `${partId}|${to}`.
+  const [matrixModal, setMatrixModal] = useState<{ open: boolean; dests: WaDest[] }>({ open: false, dests: [] })
+  const [matrixSel, setMatrixSel] = useState<Set<string>>(new Set())
+  const [matrixSending, setMatrixSending] = useState(false)
+
+  type SharePart = { id: string; label: string; kind: 'header' | 'generalPhotos' | 'product'; productCode?: string }
+  const shareParts = useMemo<SharePart[]>(() => {
+    const parts: SharePart[] = [{ id: 'header', label: '📋 Encabezado del registro', kind: 'header' }]
+    const generalImgs = (operation?.photos ?? []).filter((p) => {
+      const u = p.driveUrl
+      return Boolean(u && u !== 'pending-verification' && /^https?:\/\//.test(u)) && (!p.mediaType || p.mediaType === 'image')
+    })
+    if (generalImgs.length) parts.push({ id: 'generalPhotos', label: `🖼️ Fotos generales (${generalImgs.length})`, kind: 'generalPhotos' })
+    for (const p of operation?.lineaBlanca ?? []) {
+      const n = (p.photos ?? []).filter((ph) => ph.driveUrl && ph.driveUrl !== 'pending-verification' && /^https?:\/\//.test(ph.driveUrl)).length
+      parts.push({ id: `prod:${p.productCode}`, label: `📦 ${p.productCode}${n ? ` (${n})` : ''}`, kind: 'product', productCode: p.productCode })
+    }
+    return parts
+  }, [operation])
+
+  const mkey = (partId: string, to: string) => `${partId}|${to}`
+  const toggleMatrix = (partId: string, to: string) => {
+    setMatrixSel((prev) => { const n = new Set(prev); const k = mkey(partId, to); n.has(k) ? n.delete(k) : n.add(k); return n })
+  }
+
+  const openShareMatrix = async () => {
+    const companyId = getCompanyId()
+    if (!companyId) { setFeedback('No se pudo identificar la empresa.'); return }
+    try {
+      const r = await apiRequest<{ destinations?: WaDest[]; whatsappTo?: string }>(`/settings/whatsapp?companyId=${encodeURIComponent(companyId)}`)
+      let dests = (r.destinations ?? []).filter((d) => d?.to)
+      if (!dests.length && r.whatsappTo) dests = [{ id: r.whatsappTo, label: r.whatsappTo, to: r.whatsappTo }]
+      if (!dests.length) { setFeedback('No hay chats de WhatsApp configurados. Ve a Configuración para agregarlos.'); return }
+      // Preselección: todas las partes a todos los chats.
+      const sel = new Set<string>()
+      for (const part of shareParts) for (const d of dests) sel.add(mkey(part.id, d.to))
+      setMatrixSel(sel)
+      setMatrixModal({ open: true, dests })
+    } catch {
+      setFeedback('No se pudieron cargar los chats de WhatsApp.')
+    }
+  }
+
+  // Envía, por cada chat, solo las partes marcadas para ese chat.
+  const sendShareMatrix = async () => {
+    if (!trackingCode || matrixSel.size === 0) return
+    setMatrixSending(true)
+    const generalIdx = (operation?.photos ?? []).map((p, i) => ({ p, i }))
+      .filter(({ p }) => p.driveUrl && p.driveUrl !== 'pending-verification' && /^https?:\/\//.test(p.driveUrl) && (!p.mediaType || p.mediaType === 'image'))
+      .map(({ i }) => i)
+    let ok = 0, fail = 0
+    for (const dest of matrixModal.dests) {
+      for (const part of shareParts) {
+        if (!matrixSel.has(mkey(part.id, dest.to))) continue
+        try {
+          if (part.kind === 'header') {
+            await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to: dest.to, headerFields: [...headerFields], headerOnly: true } })
+          } else if (part.kind === 'generalPhotos') {
+            if (generalIdx.length) await apiRequest('/whatsapp-web/send-photo-group', { method: 'POST', body: { trackingCode, photoIndices: generalIdx, to: dest.to } })
+          } else if (part.kind === 'product' && part.productCode) {
+            await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode, productCode: part.productCode, to: dest.to } })
+          }
+          ok++
+        } catch { fail++ }
+      }
+    }
+    setMatrixSending(false)
+    setMatrixModal({ open: false, dests: [] })
+    setFeedback(fail === 0 ? `✓ Enviado (${ok} envío/s).` : `✓ ${ok} enviado(s), ${fail} fallido(s).`)
   }
 
   const confirmDestinations = () => {
@@ -1182,6 +1255,10 @@ export function WizardPage() {
                 <Mail className="w-3.5 h-3.5" /> Correo
               </button>
             </div>
+            <button onClick={() => void openShareMatrix()} disabled={uploading}
+              className="w-full py-2 rounded-lg border border-[#128c7e] text-[#128c7e] text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
+              <Send className="w-3.5 h-3.5" /> Enviar por partes a cada chat…
+            </button>
           </div>
         )}
 
@@ -2076,6 +2153,52 @@ export function WizardPage() {
             </div>
             <div className="overflow-y-auto p-4">
               <WhatsAppSync syncOnly />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Matriz mensaje × chat — qué parte del registro va a cada chat */}
+      {matrixModal.open && (
+        <div className="fixed inset-0 z-[97] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-lg bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <Send className="w-4 h-4 text-[#128c7e]" /> ¿Qué enviar a cada chat?
+              </h3>
+              <button onClick={() => setMatrixModal({ open: false, dests: [] })} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4 space-y-3">
+              <p className="text-[11px] text-gray-500">Marca qué parte del registro se envía a cada chat. Puedes enviar cosas distintas a cada uno.</p>
+              {shareParts.map((part) => (
+                <div key={part.id} className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-sm font-medium text-gray-800 mb-2">{part.label}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {matrixModal.dests.map((d) => {
+                      const on = matrixSel.has(mkey(part.id, d.to))
+                      return (
+                        <button
+                          key={d.id}
+                          type="button"
+                          onClick={() => toggleMatrix(part.id, d.to)}
+                          className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors flex items-center gap-1 ${on ? 'bg-[#128c7e] border-[#128c7e] text-white' : 'bg-white border-gray-200 text-gray-500'}`}
+                        >
+                          {on && <CheckCircle2 className="w-3 h-3" />}{d.label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200">
+              <button onClick={() => setMatrixModal({ open: false, dests: [] })} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600">Cancelar</button>
+              <button onClick={() => void sendShareMatrix()} disabled={matrixSel.size === 0 || matrixSending}
+                className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+                <Send className="w-4 h-4" /> {matrixSending ? 'Enviando…' : `Enviar (${matrixSel.size})`}
+              </button>
             </div>
           </div>
         </div>
