@@ -564,7 +564,19 @@ whatsappWebRouter.post('/send-photo', async (req, res) => {
     if (!photo) { res.status(404).json({ message: `No existe foto en el índice ${idx}.` }); return }
 
     const url = photo.driveUrl
-    if (!url || url === 'pending-verification' || !/^https?:\/\//.test(url)) {
+    const isNote = (photo as { fileId?: string }).fileId === 'note' || photo.stepName === 'Nota'
+    const noImage = !url || url === 'pending-verification' || !/^https?:\/\//.test(url)
+
+    // Nota de solo texto (sin imagen) → se envía como mensaje de texto.
+    if (isNote || (noImage && !photo.mediaType)) {
+      const text = (photo.comment ?? '').trim()
+      if (!text) { res.status(400).json({ message: 'La nota no tiene texto para enviar.' }); return }
+      const r = await uSendText(to, text, companyId)
+      res.json({ message: 'Mensaje enviado a WhatsApp.', to, id: r.id })
+      return
+    }
+
+    if (noImage) {
       res.status(400).json({ message: 'La foto aún no está disponible para envío (pendiente de subida).' }); return
     }
 
