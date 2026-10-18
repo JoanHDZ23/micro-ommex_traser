@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, Trash2, X } from 'lucide-react'
 import { apiRequest, fileToBase64, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
@@ -539,6 +539,36 @@ export function WizardPage() {
     setCaptureTray([])
     setTrayMessage('')
   }
+
+  // Pega imagen(es) desde el portapapeles usando la Clipboard API (funciona en
+  // móvil, donde el evento 'paste' no se dispara). Requiere un gesto del usuario
+  // (tocar el botón) y permiso del portapapeles.
+  const pasteImageFromClipboard = useCallback(async () => {
+    // Navegadores sin soporte de lectura del portapapeles (p. ej. Firefox móvil).
+    if (typeof navigator === 'undefined' || !navigator.clipboard || !('read' in navigator.clipboard)) {
+      setFeedback('Este navegador no permite pegar desde el portapapeles. Usa Galería.')
+      return
+    }
+    try {
+      const items = await navigator.clipboard.read()
+      const files: File[] = []
+      for (const item of items) {
+        const imageType = item.types.find((t) => t.startsWith('image/'))
+        if (!imageType) continue
+        const blob = await item.getType(imageType)
+        const ext = imageType.split('/')[1] || 'png'
+        files.push(new File([blob], `pegada-${Date.now()}.${ext}`, { type: imageType }))
+      }
+      if (files.length === 0) {
+        setFeedback('No hay ninguna imagen en el portapapeles. Copia una imagen primero.')
+        return
+      }
+      await addImageFilesToTray(files) // estampa marca de agua + abre la bandeja
+    } catch {
+      // Permiso denegado o portapapeles vacío/no accesible.
+      setFeedback('No se pudo leer el portapapeles. Revisa los permisos o usa Galería.')
+    }
+  }, [addImageFilesToTray])
 
   // Mientras la bandeja está abierta, pegar (Ctrl+V) una imagen la agrega,
   // sin importar dónde esté el foco dentro del modal.
@@ -1992,6 +2022,10 @@ export function WizardPage() {
                 <Camera className="w-4 h-4 text-emerald-500" /> Seleccionar imagen
                 <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { setShowPlusMenu(false); void handleNativeCapture(e, false) }} />
               </label>
+              <button onClick={() => { setShowPlusMenu(false); void pasteImageFromClipboard() }}
+                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                <ClipboardPaste className="w-4 h-4 text-sky-600" /> Pegar imagen
+              </button>
               {features.whatsappAudio && (
                 <button onClick={() => { setShowPlusMenu(false); setShowAudioRecorder(true) }}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
@@ -2567,6 +2601,12 @@ export function WizardPage() {
                     }}
                   />
                 </label>
+                {/* Pegar imagen del portapapeles (funciona en móvil) */}
+                <button type="button" onClick={() => void pasteImageFromClipboard()}
+                  className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 text-gray-500 hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]">
+                  <ClipboardPaste className="w-6 h-6" />
+                  <span className="text-[10px] font-medium">Pegar</span>
+                </button>
               </div>
               {/* Ayuda: arrastrar o pegar */}
               <p className="text-[10px] text-gray-400 text-center">
