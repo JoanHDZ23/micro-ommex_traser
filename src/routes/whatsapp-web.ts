@@ -339,6 +339,9 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
     if (includeField('fecha')) {
       headerLines.push(fin ? `🕒 Inicio: ${inicio}\n✅ Finalizado: ${fin}` : `🕒 ${inicio}`)
     }
+    // Fallback: si se deseleccionaron todos los campos, incluye al menos el
+    // operador para que el encabezado no quede solo con el código.
+    if (headerLines.length === 1) headerLines.push(`👤 ${op.operatorName}`)
     await uSendText(to, headerLines.join('\n'), companyId); sent++
     await delay(PAUSE)
 
