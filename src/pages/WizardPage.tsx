@@ -1591,7 +1591,8 @@ export function WizardPage() {
                           </div>
                           {!isCompleted && editingPhotoIdx !== i && (
                             <div className="absolute -top-1 -right-1 flex gap-0.5">
-                              {photo.mediaType !== 'audio' && photo.mediaType !== 'document' ? (
+                              {/* Foto con imagen → bandeja (foto + mensaje). Nota/audio/documento → edición inline del comentario. */}
+                              {photo.fileId !== 'note' && photo.mediaType !== 'audio' && photo.mediaType !== 'document' ? (
                                 <button onClick={() => openEditInTray(i)}
                                   className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center"
                                   title="Editar (foto y mensaje)">
@@ -1600,7 +1601,7 @@ export function WizardPage() {
                               ) : (
                                 <button onClick={() => { setEditingPhotoIdx(i); setEditComment(photo.comment ?? '') }}
                                   className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center"
-                                  title="Editar comentario">
+                                  title="Editar mensaje">
                                   <Pencil className="w-2.5 h-2.5 text-gray-500" />
                                 </button>
                               )}
@@ -1611,13 +1612,13 @@ export function WizardPage() {
                               </button>
                             </div>
                           )}
-                          {/* Botón Enviar individual (siempre visible si la foto ya subió) */}
+                          {/* Botón Enviar individual (foto, audio, documento o nota de texto) */}
                           {photo.fileId !== 'pending' && (
                             <div className="flex justify-end mt-1">
                               <button
                                 onClick={() => void handleSendPhoto(i)}
                                 className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#128c7e]/10 text-[#128c7e] text-[10px] font-semibold hover:bg-[#128c7e]/20 transition-colors"
-                                title="Enviar foto por WhatsApp"
+                                title={photo.fileId === 'note' ? 'Enviar mensaje por WhatsApp' : 'Enviar por WhatsApp'}
                               >
                                 <Send className="w-2.5 h-2.5" /> Enviar
                               </button>
