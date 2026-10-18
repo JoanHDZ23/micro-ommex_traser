@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, ArrowRight, Camera, Check, Loader2, Package, Pencil, Plus, QrCode, Search, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowRight, CalendarDays, Camera, Check, Loader2, Package, Pencil, Plus, QrCode, Search, Trash2, X } from 'lucide-react'
 import { apiRequest, type Operation } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { BarcodeScanner } from '../components/BarcodeScanner'
@@ -27,6 +27,32 @@ interface CatalogProduct {
   assignments: Assignment[]
 }
 
+/** Clave de día (YYYY-MM-DD) en horario local a partir de un ISO. */
+function dayKey(iso?: string): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return null
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Etiqueta legible de un día (ej: "mar 14 oct 2026"). */
+function dayLabel(key: string): string {
+  const [y, m, d] = key.split('-').map(Number)
+  const date = new Date(y, m - 1, d)
+  return date.toLocaleDateString('es-CO', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+interface DayGroup {
+  key: string            // 'YYYY-MM-DD' o '__none__'
+  label: string
+  products: CatalogProduct[]
+  totalRegistros: number
+  totalPhotos: number
+}
+
 export function ProductsCatalogPage() {
   const navigate = useNavigate()
   const companyId = getCompanyId()
@@ -36,6 +62,10 @@ export function ProductsCatalogPage() {
   const [search, setSearch] = useState('')
   const [showRegister, setShowRegister] = useState(false)
   const [detailProduct, setDetailProduct] = useState<CatalogProduct | null>(null)
+  // Vista: 'dias' agrupa los productos por día de registro; 'todos' muestra la lista completa.
+  const [view, setView] = useState<'dias' | 'todos'>('dias')
+  // Día abierto (su key). Al entrar a un grupo se ven solo los productos de ese día.
+  const [openDay, setOpenDay] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -63,19 +93,113 @@ export function ProductsCatalogPage() {
     )
   }, [products, search])
 
+  // Agrupa los productos por DÍA de registro. Un producto aparece en cada día
+  // en el que tenga al menos un registro (assignment). Los que están solo en el
+  // catálogo (sin registro) van a un grupo aparte "Sin registro".
+  const NONE_KEY = '__none__'
+  const dayGroups = useMemo<DayGroup[]>(() => {
+    const map = new Map<string, DayGroup>()
+    for (const p of filtered) {
+      if (p.assignments.length === 0) {
+        // Producto solo en catálogo, sin fecha de registro.
+        let g = map.get(NONE_KEY)
+        if (!g) { g = { key: NONE_KEY, label: 'Sin registro (solo catálogo)', products: [], totalRegistros: 0, totalPhotos: 0 }; map.set(NONE_KEY, g) }
+        g.products.push(p)
+        continue
+      }
+      // Días únicos en los que este producto tiene registros.
+      const days = new Set<string>()
+      for (const a of p.assignments) {
+        const k = dayKey(a.createdAt)
+        days.add(k ?? NONE_KEY)
+      }
+      for (const k of days) {
+        let g = map.get(k)
+        if (!g) {
+          g = { key: k, label: k === NONE_KEY ? 'Sin fecha' : dayLabel(k), products: [], totalRegistros: 0, totalPhotos: 0 }
+          map.set(k, g)
+        }
+        g.products.push(p)
+        const dayAssigns = p.assignments.filter((a) => (dayKey(a.createdAt) ?? NONE_KEY) === k)
+        g.totalRegistros += dayAssigns.length
+        g.totalPhotos += dayAssigns.reduce((s, a) => s + a.photosCount, 0)
+      }
+    }
+    // Orden: días más recientes primero; "sin registro" al final.
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.key === NONE_KEY) return 1
+      if (b.key === NONE_KEY) return -1
+      return b.key.localeCompare(a.key)
+    })
+  }, [filtered])
+
+  // Productos del día abierto (para la sub-vista "dentro del grupo").
+  const openDayGroup = useMemo(
+    () => (openDay ? dayGroups.find((g) => g.key === openDay) ?? null : null),
+    [openDay, dayGroups],
+  )
+
+  // Tarjeta de producto reutilizable (lista general y dentro de un día).
+  const renderProductCard = (p: CatalogProduct) => (
+    <Card
+      key={p.productCode}
+      as="article"
+      padding="sm"
+      interactive
+      role="button"
+      tabIndex={0}
+      onClick={() => setDetailProduct(p)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailProduct(p) }
+      }}
+      className="flex items-center gap-3 text-left focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:outline-none"
+    >
+      <div className="w-10 h-10 rounded-lg bg-[var(--color-primary-bg)] flex items-center justify-center flex-shrink-0">
+        <Package className="w-5 h-5 text-[var(--color-primary)]" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-[var(--color-text)] truncate">{p.productCode}</p>
+        {p.descripcion && <p className="text-xs text-[var(--color-text-2)] truncate">{p.descripcion}</p>}
+        <p className="text-[10px] text-[var(--color-text-3)] mt-0.5">
+          {p.registrosCount === 0
+            ? 'Solo en catálogo · sin registro'
+            : `${p.registrosCount} registro(s) · ${p.totalPhotos} foto(s)`}
+        </p>
+      </div>
+      {p.registrosCount === 0 && (
+        <Badge tone="neutral">catálogo</Badge>
+      )}
+      <ArrowRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
+    </Card>
+  )
+
   return (
     <div className="p-4 space-y-4">
       {/* Header */}
       <SectionHeader
         title="Productos"
         subtitle={`${products.length} producto(s) registrado(s)`}
-        onBack={() => navigate('/')}
+        onBack={() => (openDay ? setOpenDay(null) : navigate('/'))}
         actions={
           <Button size="sm" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowRegister(true)}>
             Registrar
           </Button>
         }
       />
+
+      {/* Toggle de vista: por día / todos (oculto cuando estás dentro de un día) */}
+      {!openDay && (
+        <div className="flex items-center gap-1 p-1 rounded-[var(--radius)] bg-[var(--color-surface-2,#f1f5f9)] w-fit">
+          <button onClick={() => setView('dias')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${view === 'dias' ? 'bg-white text-[var(--color-primary)] shadow-sm' : 'text-[var(--color-text-3)]'}`}>
+            <CalendarDays className="w-3.5 h-3.5" /> Por día
+          </button>
+          <button onClick={() => setView('todos')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${view === 'todos' ? 'bg-white text-[var(--color-primary)] shadow-sm' : 'text-[var(--color-text-3)]'}`}>
+            <Package className="w-3.5 h-3.5" /> Todos
+          </button>
+        </div>
+      )}
 
       {/* Search */}
       <div className="relative">
@@ -85,7 +209,7 @@ export function ProductsCatalogPage() {
           className="w-full pl-9 pr-3 py-2.5 rounded-[var(--radius)] border border-[var(--color-border)] text-sm uppercase focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30" />
       </div>
 
-      {/* List */}
+      {/* Contenido */}
       {loading ? (
         <LoadingState label="Cargando productos…" />
       ) : error ? (
@@ -96,40 +220,66 @@ export function ProductsCatalogPage() {
           title="No hay productos registrados"
           description={search.trim() ? 'Prueba con otro código o nombre.' : undefined}
         />
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {filtered.map((p) => (
+      ) : openDay ? (
+        // ── Dentro de un día: productos registrados ese día ──
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <button onClick={() => setOpenDay(null)}
+              className="flex items-center gap-1 text-xs font-medium text-[var(--color-primary)]">
+              <ArrowRight className="w-3.5 h-3.5 rotate-180" /> Volver a los días
+            </button>
+          </div>
+          {openDayGroup ? (
+            <>
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-[var(--color-primary)]" />
+                <h3 className="text-sm font-bold text-[var(--color-text)] capitalize">{openDayGroup.label}</h3>
+                <span className="text-[11px] text-[var(--color-text-3)]">
+                  · {openDayGroup.products.length} producto(s) · {openDayGroup.totalPhotos} foto(s)
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {openDayGroup.products.map(renderProductCard)}
+              </div>
+            </>
+          ) : (
+            <EmptyState icon={<Package className="w-10 h-10" />} title="No hay productos en este día" />
+          )}
+        </div>
+      ) : view === 'dias' ? (
+        // ── Vista por día: tarjetas de grupo ──
+        <div className="space-y-2">
+          {dayGroups.map((g) => (
             <Card
-              key={p.productCode}
+              key={g.key}
               as="article"
               padding="sm"
               interactive
               role="button"
               tabIndex={0}
-              onClick={() => setDetailProduct(p)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailProduct(p) }
-              }}
+              onClick={() => setOpenDay(g.key)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(g.key) } }}
               className="flex items-center gap-3 text-left focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:outline-none"
             >
               <div className="w-10 h-10 rounded-lg bg-[var(--color-primary-bg)] flex items-center justify-center flex-shrink-0">
-                <Package className="w-5 h-5 text-[var(--color-primary)]" />
+                <CalendarDays className="w-5 h-5 text-[var(--color-primary)]" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-[var(--color-text)] truncate">{p.productCode}</p>
-                {p.descripcion && <p className="text-xs text-[var(--color-text-2)] truncate">{p.descripcion}</p>}
+                <p className="text-sm font-semibold text-[var(--color-text)] truncate capitalize">{g.label}</p>
                 <p className="text-[10px] text-[var(--color-text-3)] mt-0.5">
-                  {p.registrosCount === 0
-                    ? 'Solo en catálogo · sin registro'
-                    : `${p.registrosCount} registro(s) · ${p.totalPhotos} foto(s)`}
+                  {g.products.length} producto(s)
+                  {g.key !== NONE_KEY && ` · ${g.totalRegistros} registro(s) · ${g.totalPhotos} foto(s)`}
                 </p>
               </div>
-              {p.registrosCount === 0 && (
-                <Badge tone="neutral">catálogo</Badge>
-              )}
+              <Badge tone="neutral">{g.products.length}</Badge>
               <ArrowRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
             </Card>
           ))}
+        </div>
+      ) : (
+        // ── Vista "todos": lista completa de productos ──
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {filtered.map(renderProductCard)}
         </div>
       )}
 
