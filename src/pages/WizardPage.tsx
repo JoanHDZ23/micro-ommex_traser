@@ -114,6 +114,11 @@ export function WizardPage() {
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
   const [editComment, setEditComment] = useState('')
 
+  // Edición de una foto general existente desde la bandeja de revisión.
+  // Si está definido, al enviar la bandeja se ACTUALIZA esa foto (comentario +
+  // imagen) en vez de crear fotos nuevas.
+  const [trayEditingPhotoIdx, setTrayEditingPhotoIdx] = useState<number | null>(null)
+
   // ── Comentarios de las fotos de un producto (modal estilo IG/Facebook) ──
   // Guarda el productCode cuyo feed de comentarios se está mostrando.
   const [commentsProduct, setCommentsProduct] = useState<string | null>(null)
@@ -538,6 +543,7 @@ export function WizardPage() {
     setShowCaptureTray(false)
     setCaptureTray([])
     setTrayMessage('')
+    setTrayEditingPhotoIdx(null)
   }
 
   // Pega imagen(es) desde el portapapeles usando la Clipboard API (funciona en
@@ -595,11 +601,44 @@ export function WizardPage() {
     setTraySending(true)
     const message = trayMessage.trim()
     const photos = [...captureTray]
+    const editingIdx = trayEditingPhotoIdx
 
     // Cerramos el modal de inmediato; la subida sigue en segundo plano.
     setShowCaptureTray(false)
     setCaptureTray([])
     setTrayMessage('')
+    setTrayEditingPhotoIdx(null)
+
+    // ── Modo EDICIÓN de una foto existente ──
+    if (editingIdx !== null) {
+      try {
+        // ¿La primera imagen es nueva (dataURL base64) o la original del servidor (URL)?
+        const first = photos[0] ?? ''
+        const imageChanged = first.startsWith('data:')
+        const extras = photos.slice(1).filter((p) => p.startsWith('data:')) // fotos añadidas
+
+        if (imageChanged) {
+          // Imagen reemplazada: sube la nueva con el comentario y borra la original.
+          const base64 = first.split(',')[1] ?? ''
+          await uploadSinglePhoto(base64, message, false)
+          await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'DELETE' })
+        } else {
+          // Solo cambió el comentario: PATCH, sin re-subir la imagen.
+          await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'PATCH', body: { comment: message } })
+        }
+        // Si además agregó más imágenes en la bandeja, súbelas como fotos nuevas.
+        for (const p of extras) {
+          await uploadSinglePhoto(p.split(',')[1] ?? '', '', false)
+        }
+        await loadOperation()
+        setFeedback('✓ Foto actualizada')
+      } catch (err) {
+        setFeedback(err instanceof Error ? err.message : 'Error al actualizar la foto')
+      } finally {
+        setTraySending(false)
+      }
+      return
+    }
 
     try {
       if (photos.length === 1) {
@@ -1022,6 +1061,21 @@ export function WizardPage() {
     const src = directUrl(photo) || (photo.driveUrl && /^https?:\/\//.test(photo.driveUrl) ? photo.driveUrl : null)
     if (!src) { setFeedback('No se puede editar esta foto (aún no está disponible).'); return }
     setPhotoEditTarget({ idx: photoIndex, src, comment: photo.comment ?? photo.stepName ?? '' })
+  }
+
+  // Edita una foto general en la misma bandeja de revisión donde se registró
+  // (foto + campo de mensaje). Al enviar se ACTUALIZA esa foto en vez de crear
+  // una nueva (ver sendCaptureTray con trayEditingPhotoIdx).
+  const openEditInTray = (photoIndex: number) => {
+    const photo = operation?.photos[photoIndex]
+    if (!photo) return
+    const src = directUrl(photo) || (photo.driveUrl && /^https?:\/\//.test(photo.driveUrl) ? photo.driveUrl : null)
+    if (!src) { setFeedback('No se puede editar esta foto (aún no está disponible).'); return }
+    setTrayEditingPhotoIdx(photoIndex)
+    setCaptureTray([src])
+    setTrayMessage(photo.comment ?? '')
+    setEditingPhotoIdx(null)
+    setShowCaptureTray(true)
   }
 
   const handleConfirmPhotoReEdit = async (editedBase64: string) => {
@@ -1537,16 +1591,17 @@ export function WizardPage() {
                           </div>
                           {!isCompleted && editingPhotoIdx !== i && (
                             <div className="absolute -top-1 -right-1 flex gap-0.5">
-                              <button onClick={() => { setEditingPhotoIdx(i); setEditComment(photo.comment ?? '') }}
-                                className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center"
-                                title="Editar comentario">
-                                <Pencil className="w-2.5 h-2.5 text-gray-500" />
-                              </button>
-                              {photo.mediaType !== 'audio' && photo.mediaType !== 'document' && (
-                                <button onClick={() => openPhotoReEdit(i)}
+                              {photo.mediaType !== 'audio' && photo.mediaType !== 'document' ? (
+                                <button onClick={() => openEditInTray(i)}
                                   className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center"
-                                  title="Editar imagen">
-                                  <Edit3 className="w-2.5 h-2.5 text-orange-500" />
+                                  title="Editar (foto y mensaje)">
+                                  <Pencil className="w-2.5 h-2.5 text-gray-500" />
+                                </button>
+                              ) : (
+                                <button onClick={() => { setEditingPhotoIdx(i); setEditComment(photo.comment ?? '') }}
+                                  className="w-5 h-5 rounded-full bg-white shadow flex items-center justify-center"
+                                  title="Editar comentario">
+                                  <Pencil className="w-2.5 h-2.5 text-gray-500" />
                                 </button>
                               )}
                               <button onClick={() => void handleDeletePhoto(i)}
@@ -2546,7 +2601,9 @@ export function WizardPage() {
           <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
               <h3 className="text-sm font-bold text-gray-800">
-                {captureTray.length} foto{captureTray.length === 1 ? '' : 's'}
+                {trayEditingPhotoIdx !== null
+                  ? 'Editar foto'
+                  : `${captureTray.length} foto${captureTray.length === 1 ? '' : 's'}`}
               </h3>
               <button onClick={cancelCaptureTray} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
                 <X className="w-4 h-4 text-gray-500" />
@@ -2633,8 +2690,10 @@ export function WizardPage() {
               </button>
               <button onClick={() => void sendCaptureTray()} disabled={traySending || captureTray.length === 0}
                 className="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-                {traySending ? <LoadingState inline size="sm" label="Enviando…" /> : <Send className="w-4 h-4" />}
-                Enviar {captureTray.length > 0 ? `(${captureTray.length})` : ''}
+                {traySending
+                  ? <LoadingState inline size="sm" label={trayEditingPhotoIdx !== null ? 'Guardando…' : 'Enviando…'} />
+                  : (trayEditingPhotoIdx !== null ? <CheckCircle2 className="w-4 h-4" /> : <Send className="w-4 h-4" />)}
+                {trayEditingPhotoIdx !== null ? 'Guardar' : `Enviar ${captureTray.length > 0 ? `(${captureTray.length})` : ''}`}
               </button>
             </div>
           </div>
