@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Flashlight, FlashlightOff, MessageSquare, Pencil, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
 import { ErrorState, LoadingState } from './ui'
 import { ImageEditor } from './ImageEditor'
-import { drawStampOnCanvas, getCoords, primeCoords } from '../lib/photo-stamp'
+import { drawStampOnCanvas, getAddress, getCoords, primeCoords } from '../lib/photo-stamp'
 
 interface CameraCaptureProps {
   stepName: string
@@ -94,7 +94,8 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
     // Estampa fecha/día/hora/ubicación en la foto (marca de agua grabada).
     try {
       const coords = await getCoords()
-      drawStampOnCanvas(ctx, canvas.width, canvas.height, coords)
+      const address = await getAddress(coords)
+      drawStampOnCanvas(ctx, canvas.width, canvas.height, coords, new Date(), address)
     } catch { /* si falla la marca, se guarda la foto igual */ }
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
     setPreview(dataUrl)

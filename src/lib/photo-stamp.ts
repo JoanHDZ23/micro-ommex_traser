@@ -14,6 +14,56 @@ let _cachedAt = 0
 let _inflight: Promise<Coords> | null = null
 const CACHE_MS = 60_000 // reutiliza la posición hasta 1 minuto
 
+// Caché de direcciones (geocodificación inversa) por coordenada redondeada.
+const _addrCache = new Map<string, string>()
+let _addrInflight: Promise<string | null> | null = null
+let _addrInflightKey = ''
+
+function addrKey(lat: number, lon: number): string {
+  // Redondea ~11 m para reutilizar la misma dirección en capturas cercanas.
+  return `${lat.toFixed(4)},${lon.toFixed(4)}`
+}
+
+/**
+ * Geocodificación inversa: convierte lat/long en una dirección legible y corta
+ * (ej. "Cra 7 #12-34, Bogotá") usando Nominatim (OpenStreetMap). Tolerante a
+ * fallos: devuelve null si no hay red o el servicio no responde a tiempo.
+ */
+export async function getAddress(coords: Coords): Promise<string | null> {
+  if (!coords) return null
+  const key = addrKey(coords.latitude, coords.longitude)
+  if (_addrCache.has(key)) return _addrCache.get(key)!
+  if (_addrInflight && _addrInflightKey === key) return _addrInflight
+
+  _addrInflightKey = key
+  _addrInflight = (async () => {
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${coords.latitude}&lon=${coords.longitude}&zoom=18&addressdetails=1&accept-language=es`
+      const resp = await fetch(url, {
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(6000),
+      })
+      if (!resp.ok) return null
+      const data = (await resp.json()) as { address?: Record<string, string>; display_name?: string }
+      const a = data.address ?? {}
+      // Arma una dirección corta: vía + número, barrio/localidad, ciudad.
+      const via = [a.road, a.house_number].filter(Boolean).join(' ')
+      const zona = a.neighbourhood || a.suburb || a.city_district || ''
+      const ciudad = a.city || a.town || a.village || a.municipality || a.state || ''
+      const short = [via, zona, ciudad].filter(Boolean).join(', ')
+      const addr = short || data.display_name || null
+      if (addr) _addrCache.set(key, addr)
+      return addr
+    } catch {
+      return null
+    } finally {
+      _addrInflight = null
+      _addrInflightKey = ''
+    }
+  })()
+  return _addrInflight
+}
+
 /**
  * Obtiene las coordenadas actuales (cacheadas). No rechaza: devuelve null si no
  * hay permiso/soporte/señal, para no bloquear la captura.
@@ -38,16 +88,32 @@ export function getCoords(timeoutMs = 8000): Promise<Coords> {
   return _inflight
 }
 
-/** Pide permiso/posición de forma anticipada (p. ej. al abrir la cámara). */
+/** Pide permiso/posición y precalienta la dirección (p. ej. al abrir la cámara). */
 export function primeCoords(): void {
-  void getCoords()
+  void getCoords().then((c) => { if (c) void getAddress(c) })
 }
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
 
-/** Construye las líneas de la marca (fecha, día, hora, ubicación). */
-export function buildStampLines(coords: Coords, when = new Date()): string[] {
+/** Parte un texto largo en varias líneas de ~máx caracteres (para la dirección). */
+function wrap(text: string, max = 42): string[] {
+  const words = text.split(/\s+/)
+  const out: string[] = []
+  let line = ''
+  for (const w of words) {
+    if ((line + ' ' + w).trim().length > max) { if (line) out.push(line); line = w }
+    else line = (line ? line + ' ' : '') + w
+  }
+  if (line) out.push(line)
+  return out
+}
+
+/**
+ * Construye las líneas de la marca (fecha, día, hora, ubicación).
+ * Si `address` viene, se muestra la dirección legible; si no, las coordenadas.
+ */
+export function buildStampLines(coords: Coords, when = new Date(), address?: string | null): string[] {
   const dia = DIAS[when.getDay()]
   const fecha = `${String(when.getDate()).padStart(2, '0')} ${MESES[when.getMonth()]} ${when.getFullYear()}`
   const hora = `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}:${String(when.getSeconds()).padStart(2, '0')}`
@@ -55,7 +121,11 @@ export function buildStampLines(coords: Coords, when = new Date()): string[] {
     `${dia.charAt(0).toUpperCase()}${dia.slice(1)}, ${fecha}`,
     `🕒 ${hora}`,
   ]
-  if (coords) {
+  if (address) {
+    const [first, ...rest] = wrap(address)
+    lines.push(`📍 ${first}`)
+    for (const r of rest) lines.push(`   ${r}`)
+  } else if (coords) {
     lines.push(`📍 ${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)}`)
   }
   return lines
@@ -71,8 +141,9 @@ export function drawStampOnCanvas(
   height: number,
   coords: Coords,
   when = new Date(),
+  address?: string | null,
 ): void {
-  const lines = buildStampLines(coords, when)
+  const lines = buildStampLines(coords, when, address)
   const pad = Math.round(width * 0.022)
   const fontSize = Math.max(14, Math.round(width * 0.028))
   const lineHeight = Math.round(fontSize * 1.35)
@@ -120,6 +191,7 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
 export async function stampImageBase64(base64OrDataUrl: string, when = new Date()): Promise<string> {
   const dataUrl = base64OrDataUrl.startsWith('data:') ? base64OrDataUrl : `data:image/jpeg;base64,${base64OrDataUrl}`
   const coords = await getCoords()
+  const address = await getAddress(coords)
   try {
     const img = await loadImage(dataUrl)
     const canvas = document.createElement('canvas')
@@ -128,7 +200,7 @@ export async function stampImageBase64(base64OrDataUrl: string, when = new Date(
     const ctx = canvas.getContext('2d')
     if (!ctx) return base64OrDataUrl.includes(',') ? base64OrDataUrl.split(',')[1] : base64OrDataUrl
     ctx.drawImage(img, 0, 0)
-    drawStampOnCanvas(ctx, canvas.width, canvas.height, coords, when)
+    drawStampOnCanvas(ctx, canvas.width, canvas.height, coords, when, address)
     return canvas.toDataURL('image/jpeg', 0.85).split(',')[1] ?? ''
   } catch {
     return base64OrDataUrl.includes(',') ? base64OrDataUrl.split(',')[1] : base64OrDataUrl

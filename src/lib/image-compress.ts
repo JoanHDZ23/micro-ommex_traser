@@ -1,4 +1,4 @@
-import { drawStampOnCanvas, getCoords } from './photo-stamp'
+import { drawStampOnCanvas, getAddress, getCoords } from './photo-stamp'
 
 /**
  * Comprime y redimensiona una imagen en el navegador antes de subirla.
@@ -52,7 +52,8 @@ export async function compressImageToBase64(
     if (stamp) {
       try {
         const coords = await getCoords()
-        drawStampOnCanvas(ctx, width, height, coords)
+        const address = await getAddress(coords)
+        drawStampOnCanvas(ctx, width, height, coords, new Date(), address)
       } catch { /* si falla la marca, se guarda la foto igual */ }
     }
 
