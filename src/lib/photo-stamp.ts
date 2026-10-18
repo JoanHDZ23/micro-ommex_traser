@@ -9,14 +9,14 @@
 
 type Coords = { latitude: number; longitude: number; accuracy?: number } | null
 
+// Mejor posición conocida, mantenida en vivo por un watch en segundo plano.
+// La captura de fotos NUNCA espera por el GPS: usa lo que haya en este momento.
 let _cached: Coords = null
 let _cachedAt = 0
-let _inflight: Promise<Coords> | null = null
-const CACHE_MS = 20_000 // reutiliza la posición hasta 20 s (antes 60 s)
-// Precisión objetivo: si una lectura llega a este radio (metros), la damos por buena.
-const TARGET_ACCURACY_M = 20
-// Si no alcanzamos el objetivo, igual aceptamos cualquier lectura por debajo de esto.
-const MAX_ACCEPTABLE_M = 65
+let _watchId: number | null = null
+// Si la última lectura es más vieja que esto, dejamos de considerarla fresca
+// (pero igual se puede usar como "última conocida" si no hay nada mejor).
+const FRESH_MS = 60_000
 
 // Caché de direcciones (geocodificación inversa) por coordenada redondeada.
 const _addrCache = new Map<string, string>()
@@ -33,6 +33,12 @@ function addrKey(lat: number, lon: number): string {
  * (ej. "Cra 7 #12-34, Bogotá") usando Nominatim (OpenStreetMap). Tolerante a
  * fallos: devuelve null si no hay red o el servicio no responde a tiempo.
  */
+/** Dirección YA cacheada para estas coords, sin disparar ninguna petición. */
+export function getAddressNow(coords: Coords): string | null {
+  if (!coords) return null
+  return _addrCache.get(addrKey(coords.latitude, coords.longitude)) ?? null
+}
+
 export async function getAddress(coords: Coords): Promise<string | null> {
   if (!coords) return null
   const key = addrKey(coords.latitude, coords.longitude)
@@ -69,67 +75,51 @@ export async function getAddress(coords: Coords): Promise<string | null> {
 }
 
 /**
- * Obtiene las coordenadas actuales con la MEJOR precisión posible. En vez de
- * aceptar la primera lectura (que suele venir por red/WiFi con 100+ m de
- * error), abre un watchPosition y va quedándose con la lectura de menor radio
- * de error hasta que:
- *   - alcanza la precisión objetivo (TARGET_ACCURACY_M), o
- *   - se agota el tiempo (timeoutMs).
- * Devuelve la mejor lectura obtenida (o null si no hay permiso/señal).
- * No rechaza nunca, para no bloquear la captura.
+ * Arranca (una sola vez) un watch de posición en segundo plano que mantiene
+ * `_cached` con la MEJOR lectura reciente. No bloquea nada: la captura solo
+ * lee la última posición conocida vía getCoordsNow().
  */
-export function getCoords(timeoutMs = 10000): Promise<Coords> {
-  // Reutiliza la posición reciente SOLO si ya era precisa.
-  if (_cached && Date.now() - _cachedAt < CACHE_MS && (_cached.accuracy ?? 9999) <= TARGET_ACCURACY_M) {
-    return Promise.resolve(_cached)
-  }
-  if (_inflight) return _inflight
-  if (typeof navigator === 'undefined' || !navigator.geolocation) return Promise.resolve(null)
-
-  _inflight = new Promise<Coords>((resolve) => {
-    let best: Coords = null
-    let settled = false
-    let watchId: number | null = null
-
-    const finish = () => {
-      if (settled) return
-      settled = true
-      if (watchId !== null) { try { navigator.geolocation.clearWatch(watchId) } catch { /* noop */ } }
-      // Solo cachea lecturas aceptables; si fue muy imprecisa, la próxima
-      // captura volverá a intentar en vez de reutilizar un punto malo.
-      if (best && (best.accuracy ?? 9999) <= MAX_ACCEPTABLE_M) { _cached = best; _cachedAt = Date.now() }
-      _inflight = null
-      resolve(best)
-    }
-
-    // Tope de tiempo global: devolvemos la mejor lectura acumulada.
-    const timer = setTimeout(finish, timeoutMs)
-
-    try {
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          const acc = pos.coords.accuracy ?? 9999
-          // Conserva la lectura más precisa vista hasta ahora.
-          if (!best || acc < (best.accuracy ?? 9999)) {
-            best = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: acc }
-          }
-          // Si ya es suficientemente precisa, terminamos antes del timeout.
-          if (acc <= TARGET_ACCURACY_M) { clearTimeout(timer); finish() }
-        },
-        () => { /* ignora errores puntuales; el timer cerrará con lo que haya */ },
-        { enableHighAccuracy: true, timeout: timeoutMs, maximumAge: 0 },
-      )
-    } catch {
-      clearTimeout(timer)
-      finish()
-    }
-  })
-  return _inflight
+export function startLocationWatch(): void {
+  if (_watchId !== null) return
+  if (typeof navigator === 'undefined' || !navigator.geolocation) return
+  try {
+    _watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const acc = pos.coords.accuracy ?? 9999
+        const fresh = Date.now() - _cachedAt > FRESH_MS
+        // Actualiza si no hay nada, si lo que hay ya no es fresco, o si esta
+        // lectura es igual o más precisa que la cacheada.
+        if (!_cached || fresh || acc <= (_cached.accuracy ?? 9999)) {
+          _cached = { latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracy: acc }
+          _cachedAt = Date.now()
+        }
+      },
+      () => { /* permiso denegado / sin señal: se queda sin ubicación */ },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    )
+  } catch { /* sin geolocalización */ }
 }
 
-/** Pide permiso/posición y precalienta la dirección (p. ej. al abrir la cámara). */
+/** Última posición conocida AHORA MISMO, sin esperar (puede ser null). */
+export function getCoordsNow(): Coords {
+  return _cached
+}
+
+/**
+ * Compatibilidad: devuelve de inmediato la última posición conocida. Dispara el
+ * watch en segundo plano si aún no estaba activo, pero NO espera por él, para
+ * que la captura sea instantánea.
+ */
+export function getCoords(): Promise<Coords> {
+  startLocationWatch()
+  return Promise.resolve(_cached)
+}
+
+/** Arranca el watch de ubicación y precalienta la dirección de lo que ya haya. */
 export function primeCoords(): void {
-  void getCoords().then((c) => { if (c) void getAddress(c) })
+  startLocationWatch()
+  const c = _cached
+  if (c) void getAddress(c)
 }
 
 const DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
@@ -234,8 +224,11 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
  */
 export async function stampImageBase64(base64OrDataUrl: string, when = new Date()): Promise<string> {
   const dataUrl = base64OrDataUrl.startsWith('data:') ? base64OrDataUrl : `data:image/jpeg;base64,${base64OrDataUrl}`
-  const coords = await getCoords()
-  const address = await getAddress(coords)
+  // Sin bloquear: usa la última posición/dirección conocidas.
+  startLocationWatch()
+  const coords = getCoordsNow()
+  const address = getAddressNow(coords)
+  if (coords && !address) void getAddress(coords)
   try {
     const img = await loadImage(dataUrl)
     const canvas = document.createElement('canvas')

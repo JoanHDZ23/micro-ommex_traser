@@ -79,8 +79,8 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
       const cached = readGetCache(endpoint)
       if (cached !== undefined) return cached as T
     }
-    // Cold start de Render free: reintenta una vez tras 3 s antes de mostrar error.
-    await new Promise((r) => setTimeout(r, 3000))
+    // Cold start de Render free: reintenta una vez tras una espera corta.
+    await new Promise((r) => setTimeout(r, 1200))
     try {
       response = await doFetch()
     } catch {

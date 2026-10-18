@@ -1,4 +1,4 @@
-import { drawStampOnCanvas, getAddress, getCoords } from './photo-stamp'
+import { drawStampOnCanvas, getAddress, getAddressNow, getCoordsNow, startLocationWatch } from './photo-stamp'
 
 /**
  * Comprime y redimensiona una imagen en el navegador antes de subirla.
@@ -48,12 +48,17 @@ export async function compressImageToBase64(
 
     ctx.drawImage(img, 0, 0, width, height)
 
-    // Estampa fecha/día/hora/ubicación en la imagen (marca de agua grabada).
+    // Estampa fecha/día/hora/ubicación SIN bloquear: usa la última posición y
+    // dirección ya conocidas (mantenidas por un watch en segundo plano). Si aún
+    // no hay dirección cacheada, se estampa solo con coordenadas y se precarga
+    // la dirección para las próximas fotos.
     if (stamp) {
       try {
-        const coords = await getCoords()
-        const address = await getAddress(coords)
+        startLocationWatch()
+        const coords = getCoordsNow()
+        const address = getAddressNow(coords)
         drawStampOnCanvas(ctx, width, height, coords, new Date(), address)
+        if (coords && !address) void getAddress(coords) // precarga para la próxima
       } catch { /* si falla la marca, se guarda la foto igual */ }
     }
 

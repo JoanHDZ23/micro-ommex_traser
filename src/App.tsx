@@ -1,20 +1,25 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { useEffect } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { Layout } from './components/Layout'
 import { HomePage } from './pages/HomePage'
-import { NewOperationPage } from './pages/NewOperationPage'
-import { WizardPage } from './pages/WizardPage'
-import { HistoryPage } from './pages/HistoryPage'
-import { OperationDetailPage } from './pages/OperationDetailPage'
-import { SharePage } from './pages/SharePage'
-import { SettingsPage } from './pages/SettingsPage'
-import { ProductsCatalogPage } from './pages/ProductsCatalogPage'
-import { RecoveryPage } from './pages/RecoveryPage'
-import { DocumentsPage } from './pages/DocumentsPage'
-import { PhotoUploadPage } from './pages/PhotoUploadPage'
+import { LoadingState } from './components/ui'
 import { invalidateTracerFeaturesCache } from './lib/tracer-features'
 import { apiRequest } from './lib/api'
 import { getCompanyId } from './lib/context'
+
+// Code-splitting por ruta: cada pantalla se descarga solo cuando se visita, así
+// el arranque es más rápido y la primera vista (Home) carga menos JS. Las libs
+// pesadas (xlsx, pdf, barcode, OCR) viajan en los chunks de sus páginas.
+const NewOperationPage = lazy(() => import('./pages/NewOperationPage').then((m) => ({ default: m.NewOperationPage })))
+const WizardPage = lazy(() => import('./pages/WizardPage').then((m) => ({ default: m.WizardPage })))
+const HistoryPage = lazy(() => import('./pages/HistoryPage').then((m) => ({ default: m.HistoryPage })))
+const OperationDetailPage = lazy(() => import('./pages/OperationDetailPage').then((m) => ({ default: m.OperationDetailPage })))
+const SharePage = lazy(() => import('./pages/SharePage').then((m) => ({ default: m.SharePage })))
+const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
+const ProductsCatalogPage = lazy(() => import('./pages/ProductsCatalogPage').then((m) => ({ default: m.ProductsCatalogPage })))
+const RecoveryPage = lazy(() => import('./pages/RecoveryPage').then((m) => ({ default: m.RecoveryPage })))
+const DocumentsPage = lazy(() => import('./pages/DocumentsPage').then((m) => ({ default: m.DocumentsPage })))
+const PhotoUploadPage = lazy(() => import('./pages/PhotoUploadPage').then((m) => ({ default: m.PhotoUploadPage })))
 
 export default function App() {
   useEffect(() => {
@@ -42,24 +47,26 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      <Routes>
-        {/* Public share route — no auth needed */}
-        <Route path="/share/:trackingCode" element={<SharePage />} />
+      <Suspense fallback={<div className="flex-1 flex items-center justify-center p-8"><LoadingState label="Cargando…" /></div>}>
+        <Routes>
+          {/* Public share route — no auth needed */}
+          <Route path="/share/:trackingCode" element={<SharePage />} />
 
-        <Route element={<Layout />}>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/new" element={<NewOperationPage />} />
-          <Route path="/wizard/:trackingCode" element={<WizardPage />} />
-          <Route path="/history" element={<HistoryPage />} />
-          <Route path="/products" element={<ProductsCatalogPage />} />
-          <Route path="/documentos" element={<DocumentsPage />} />
-          <Route path="/foto" element={<PhotoUploadPage />} />
-          <Route path="/recovery" element={<RecoveryPage />} />
-          <Route path="/operation/:trackingCode" element={<OperationDetailPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
+          <Route element={<Layout />}>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/new" element={<NewOperationPage />} />
+            <Route path="/wizard/:trackingCode" element={<WizardPage />} />
+            <Route path="/history" element={<HistoryPage />} />
+            <Route path="/products" element={<ProductsCatalogPage />} />
+            <Route path="/documentos" element={<DocumentsPage />} />
+            <Route path="/foto" element={<PhotoUploadPage />} />
+            <Route path="/recovery" element={<RecoveryPage />} />
+            <Route path="/operation/:trackingCode" element={<OperationDetailPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   )
 }

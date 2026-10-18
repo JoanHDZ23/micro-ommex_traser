@@ -125,8 +125,11 @@ export function HistoryPage() {
     }
   }, [page, filterType, filterDate, filterOperator, filterProduct])
 
+  // Debounce: evita disparar una petición por cada tecla en los filtros de
+  // texto (operador/producto). Espera 350 ms de inactividad antes de recargar.
   useEffect(() => {
-    void load()
+    const t = setTimeout(() => { void load() }, 350)
+    return () => clearTimeout(t)
   }, [load])
 
   return (

@@ -3,9 +3,14 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import './index.css'
 import { getCompanyId } from './lib/context'
+import { startLocationWatch } from './lib/photo-stamp'
 
 // Initialize context (captures companyId from URL before router changes it)
 getCompanyId()
+
+// Arranca el seguimiento de ubicación en segundo plano desde el inicio, para
+// que al capturar una foto el sello GPS esté listo sin que la captura espere.
+startLocationWatch()
 
 // ── Service Worker ─────────────────────────────────────────────────────────
 // vite-plugin-pwa genera /sw.js en el build. Solo lo registramos en producción
