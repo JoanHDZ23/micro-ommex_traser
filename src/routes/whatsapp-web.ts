@@ -282,8 +282,12 @@ whatsappWebRouter.post('/send-github', async (req, res) => {
  * mensajes se intercala una pausa para reducir el riesgo de bloqueo.
  */
 whatsappWebRouter.post('/send-operation', async (req, res) => {
-  const { trackingCode, to: toOverride } = req.body ?? {}
+  const { trackingCode, to: toOverride, headerFields } = req.body ?? {}
   if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
+  // Campos de cabecera a incluir en el mensaje de encabezado. Si no se envía,
+  // se incluyen todos (compatibilidad). Valores: 'tipo','placa','operador','fecha'.
+  const hf: string[] | null = Array.isArray(headerFields) ? headerFields.map(String) : null
+  const includeField = (f: string) => !hf || hf.includes(f)
 
   try {
     const { getOperationsCollection, getDb } = await import('../lib/mongodb.js')
@@ -322,12 +326,18 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
 
     let sent = 0
 
-    // 1. Encabezado — muestra la hora de inicio y, si está completado, la de finalización.
-    const horaLinea = fin
-      ? `🕒 Inicio: ${inicio}\n✅ Finalizado: ${fin}`
-      : `🕒 ${inicio}`
-    const header = `📋 *Registro ${op.trackingCode}*\n${op.operationType}${op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}\n👤 ${op.operatorName}\n${horaLinea}`
-    await uSendText(to, header, companyId); sent++
+    // 1. Encabezado — se arma con solo los campos seleccionados por el usuario.
+    const headerLines: string[] = [`📋 *Registro ${op.trackingCode}*`]
+    const tipoLinea = [
+      includeField('tipo') ? String(op.operationType) : '',
+      includeField('placa') && op.vehiclePlate ? String(op.vehiclePlate) : '',
+    ].filter(Boolean).join(' · ')
+    if (tipoLinea) headerLines.push(tipoLinea)
+    if (includeField('operador')) headerLines.push(`👤 ${op.operatorName}`)
+    if (includeField('fecha')) {
+      headerLines.push(fin ? `🕒 Inicio: ${inicio}\n✅ Finalizado: ${fin}` : `🕒 ${inicio}`)
+    }
+    await uSendText(to, headerLines.join('\n'), companyId); sent++
     await delay(PAUSE)
 
     // 2. Fotos generales y NOTAS de texto, en el orden del registro.
