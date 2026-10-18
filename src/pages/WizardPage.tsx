@@ -173,7 +173,17 @@ export function WizardPage() {
   const ALL_HEADER_FIELDS = ['tipo', 'placa', 'operador', 'fecha'] as const
   const [headerFields, setHeaderFields] = useState<Set<string>>(new Set(ALL_HEADER_FIELDS))
   const toggleHeaderField = (f: string) => {
-    setHeaderFields((prev) => { const n = new Set(prev); n.has(f) ? n.delete(f) : n.add(f); return n })
+    setHeaderFields((prev) => {
+      const n = new Set(prev)
+      if (n.has(f)) {
+        // No permitir quedarse sin ningún campo (encabezado vacío).
+        if (n.size <= 1) return prev
+        n.delete(f)
+      } else {
+        n.add(f)
+      }
+      return n
+    })
   }
 
   // ── Matriz mensaje × chat ────────────────────────────────────────────────
@@ -192,6 +202,7 @@ export function WizardPage() {
     })
     if (generalImgs.length) parts.push({ id: 'generalPhotos', label: `🖼️ Fotos generales (${generalImgs.length})`, kind: 'generalPhotos' })
     for (const p of operation?.lineaBlanca ?? []) {
+      // Cuenta igual que el backend (isSendable): cualquier adjunto con URL válida.
       const n = (p.photos ?? []).filter((ph) => ph.driveUrl && ph.driveUrl !== 'pending-verification' && /^https?:\/\//.test(ph.driveUrl)).length
       parts.push({ id: `prod:${p.productCode}`, label: `📦 ${p.productCode}${n ? ` (${n})` : ''}`, kind: 'product', productCode: p.productCode })
     }
@@ -1118,7 +1129,8 @@ export function WizardPage() {
     setFeedback('🔍 Leyendo texto de la foto...')
     try {
       const { extractTextFromLabel } = await import('../lib/ocr-scanner')
-      const base64 = await compressImageToBase64(file, { maxDimension: 2000, quality: 0.9 })
+      // OCR: sin marca de agua (no debe tapar el texto de la etiqueta ni llamar a Nominatim).
+      const base64 = await compressImageToBase64(file, { maxDimension: 2000, quality: 0.9, stamp: false })
       const raw = await extractTextFromLabel(base64)
       // Limpia el texto: quita líneas vacías y espacios sobrantes, une en una sola cadena
       const text = raw

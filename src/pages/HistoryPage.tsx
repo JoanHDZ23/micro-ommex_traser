@@ -100,7 +100,9 @@ export function HistoryPage() {
   }, [])
 
   const load = useCallback(async () => {
-    setLoading(true)
+    // Solo mostrar el spinner si aún no hay datos; en refrescos/filtros se
+    // actualiza en silencio para evitar parpadeo (la lista previa se mantiene).
+    setOperations((prev) => { if (prev.length === 0) setLoading(true); return prev })
     setError(null)
     try {
       const params = new URLSearchParams()

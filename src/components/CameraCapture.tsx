@@ -22,6 +22,8 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
   const [torchOn, setTorchOn] = useState(false)
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment')
   const [editing, setEditing] = useState(false)
+  // True mientras se dibuja la marca de agua (fecha/hora/ubicación) en segundo plano.
+  const [stamping, setStamping] = useState(false)
 
   const startCamera = useCallback(async (facing?: 'environment' | 'user') => {
     try {
@@ -80,7 +82,7 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
     void startCamera(newFacing)
   }
 
-  const captureFrame = async () => {
+  const captureFrame = () => {
     const video = videoRef.current
     if (!video) return
 
@@ -90,17 +92,25 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
+    // 1. Captura el frame y muestra la vista previa AL INSTANTE (sin esperar GPS/red).
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
-    // Estampa fecha/día/hora/ubicación en la foto (marca de agua grabada).
-    try {
-      const coords = await getCoords()
-      const address = await getAddress(coords)
-      drawStampOnCanvas(ctx, canvas.width, canvas.height, coords, new Date(), address)
-    } catch { /* si falla la marca, se guarda la foto igual */ }
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
-    setPreview(dataUrl)
+    const when = new Date()
+    setPreview(canvas.toDataURL('image/jpeg', 0.85))
     setShowCommentInput(true)
     stopCamera()
+
+    // 2. Estampa fecha/día/hora/ubicación en SEGUNDO PLANO y actualiza la
+    //    vista previa cuando la marca esté lista. No bloquea la interacción.
+    setStamping(true)
+    void (async () => {
+      try {
+        const coords = await getCoords()
+        const address = await getAddress(coords)
+        drawStampOnCanvas(ctx, canvas.width, canvas.height, coords, when, address)
+        setPreview(canvas.toDataURL('image/jpeg', 0.85))
+      } catch { /* si falla la marca, se conserva la foto sin sello */ }
+      finally { setStamping(false) }
+    })()
   }
 
   const retake = () => {
@@ -240,10 +250,13 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
                 <button
                   type="button"
                   onClick={confirm}
-                  aria-label={comment.trim() ? 'Enviar captura con comentario' : 'Confirmar captura'}
-                  className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                  disabled={stamping}
+                  aria-label={stamping ? 'Procesando marca de la foto' : comment.trim() ? 'Enviar captura con comentario' : 'Confirmar captura'}
+                  className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-60"
                 >
-                  {comment.trim() ? (
+                  {stamping ? (
+                    <RefreshCw className="w-6 h-6 text-white animate-spin" />
+                  ) : comment.trim() ? (
                     <Send className="w-6 h-6 text-white" />
                   ) : (
                     <Check className="w-7 h-7 text-white" />

@@ -20,6 +20,29 @@ function shouldQueue(endpoint: string, method: string): boolean {
   return !NO_QUEUE_PATTERNS.some((p) => p.test(endpoint))
 }
 
+// ── Caché de lectura (GET) para modo offline ───────────────────────────────
+// Guarda la última respuesta exitosa de cada GET de datos de la app para poder
+// MOSTRARLA sin conexión. No cachea binarios ni endpoints de estado volátil.
+const GET_CACHE_PREFIX = 'ommex_get_cache:'
+const GET_CACHE_PATTERNS = [
+  /^\/operations(\?|$)/,          // historial de operaciones
+  /^\/operations\/[^/?]+(\?|$)/,  // una operación por trackingCode
+  /^\/settings\//,                // config (whatsapp, operation-types, plates…)
+  /^\/products-catalog(\?|$)/,    // catálogo de productos
+]
+function shouldCacheGet(endpoint: string): boolean {
+  return GET_CACHE_PATTERNS.some((p) => p.test(endpoint))
+}
+function readGetCache(endpoint: string): unknown | undefined {
+  try {
+    const raw = localStorage.getItem(GET_CACHE_PREFIX + endpoint)
+    return raw ? JSON.parse(raw) : undefined
+  } catch { return undefined }
+}
+function writeGetCache(endpoint: string, data: unknown): void {
+  try { localStorage.setItem(GET_CACHE_PREFIX + endpoint, JSON.stringify(data)) } catch { /* cuota llena */ }
+}
+
 interface ApiOptions {
   method?: string
   body?: unknown
@@ -37,6 +60,7 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
     config.body = JSON.stringify(body)
   }
 
+  const isGet = method.toUpperCase() === 'GET'
   let response: Response
   const doFetch = () => fetch(`${BASE_URL}${endpoint}`, config)
   try {
@@ -50,6 +74,11 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
       window.dispatchEvent(new CustomEvent('sync-queue:enqueued'))
       throw new Error('Sin conexión. La acción se guardó y se enviará al reconectar.')
     }
+    // GET sin red: devuelve la última copia cacheada si existe (lectura offline).
+    if (isGet && shouldCacheGet(endpoint)) {
+      const cached = readGetCache(endpoint)
+      if (cached !== undefined) return cached as T
+    }
     // Cold start de Render free: reintenta una vez tras 3 s antes de mostrar error.
     await new Promise((r) => setTimeout(r, 3000))
     try {
@@ -60,6 +89,10 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
         await enqueue(endpoint, method, body)
         window.dispatchEvent(new CustomEvent('sync-queue:enqueued'))
         throw new Error('Sin conexión. La acción se guardó y se enviará al reconectar.')
+      }
+      if (isGet && shouldCacheGet(endpoint)) {
+        const cached = readGetCache(endpoint)
+        if (cached !== undefined) return cached as T
       }
       throw new Error(offline
         ? 'Sin conexión a internet. Verifica tu red e intenta de nuevo.'
@@ -80,8 +113,19 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
   }
 
   if (!response.ok) {
+    // Si el servidor responde error pero hay copia cacheada de un GET, úsala
+    // como respaldo (p. ej. 502/503 de cold start) en vez de romper la vista.
+    if (isGet && shouldCacheGet(endpoint)) {
+      const cached = readGetCache(endpoint)
+      if (cached !== undefined) return cached as T
+    }
     const msg = (data as { message?: string } | null)?.message
     throw new Error(msg || `Error ${response.status}${response.statusText ? ` · ${response.statusText}` : ''}`)
+  }
+
+  // Guarda la respuesta exitosa de GET para lectura offline posterior.
+  if (isGet && shouldCacheGet(endpoint) && data !== null) {
+    writeGetCache(endpoint, data)
   }
 
   return (data ?? null) as T

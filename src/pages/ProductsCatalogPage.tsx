@@ -175,7 +175,8 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
     setOcrRunning(true)
     try {
       const { extractTextFromLabel } = await import('../lib/ocr-scanner')
-      const base64 = await compressImageToBase64(file, { maxDimension: 2000, quality: 0.9 })
+      // OCR: sin marca de agua (no debe tapar el texto de la etiqueta ni llamar a Nominatim).
+      const base64 = await compressImageToBase64(file, { maxDimension: 2000, quality: 0.9, stamp: false })
       const raw = await extractTextFromLabel(base64)
       const text = raw.split('\n').map((l) => l.trim()).filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toUpperCase()
       if (text) setDescripcion((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
