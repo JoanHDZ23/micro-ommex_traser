@@ -518,18 +518,20 @@ export function WizardPage() {
   }
 
   // Agrega uno o varios File de imagen a la bandeja (reutilizable: drop, galería, pegar).
-  const addImageFilesToTray = useCallback((files: File[]) => {
+  // Cada imagen se comprime y se le graba la marca de agua (fecha/hora/ubicación),
+  // igual que las fotos tomadas con la cámara.
+  const addImageFilesToTray = useCallback(async (files: File[]) => {
     const images = files.filter((f) => f.type.startsWith('image/'))
     if (images.length === 0) return
-    images.forEach((file) => {
-      const reader = new FileReader()
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string
-        if (dataUrl) setCaptureTray((prev) => [...prev, dataUrl])
-      }
-      reader.readAsDataURL(file)
-    })
     setShowCaptureTray(true)
+    for (const file of images) {
+      try {
+        const base64 = await compressImageToBase64(file) // estampa marca de agua
+        setCaptureTray((prev) => [...prev, `data:image/jpeg;base64,${base64}`])
+      } catch {
+        setFeedback('No se pudo procesar una imagen')
+      }
+    }
   }, [])
 
   const cancelCaptureTray = () => {
@@ -548,7 +550,7 @@ export function WizardPage() {
       if (imageItems.length === 0) return
       e.preventDefault()
       const files = imageItems.map((it) => it.getAsFile()).filter((f): f is File => !!f)
-      addImageFilesToTray(files)
+      void addImageFilesToTray(files)
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
@@ -2063,26 +2065,20 @@ export function WizardPage() {
                 onChange={(e) => { setChatMessage(e.target.value); e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 100) + 'px' }}
                 onBlur={() => { if (chatMessage.trim().length > 3) { saveTemplate(chatMessage.trim()); setTemplates(getFrequentTemplates()) } }}
                 onPaste={(e) => {
-                  // Si el portapapeles tiene una imagen, cargarla como foto (igual que pegar en WhatsApp).
+                  // Al pegar imagen(es) se abren en la bandeja de revisión: ahí se
+                  // puede escribir un comentario, agregar más fotos y enviar.
+                  // Las imágenes pegadas se estampan con fecha/hora/ubicación.
                   const items = Array.from(e.clipboardData?.items ?? [])
-                  const imageItem = items.find((item) => item.type.startsWith('image/'))
-                  if (!imageItem) return
+                  const imageFiles = items
+                    .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+                    .map((it) => it.getAsFile())
+                    .filter((f): f is File => !!f)
+                  if (imageFiles.length === 0) return
                   e.preventDefault()
-                  const file = imageItem.getAsFile()
-                  if (!file) return
-                  const reader = new FileReader()
-                  reader.onload = (ev) => {
-                    const dataUrl = ev.target?.result as string
-                    if (!dataUrl) return
-                    const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl
-                    if (features.markerEditor) {
-                      setImgEditor({ src: `data:image/jpeg;base64,${base64}`, comment: chatMessage.trim() })
-                    } else {
-                      void uploadSinglePhoto(base64, chatMessage.trim(), false)
-                      setChatMessage('')
-                    }
-                  }
-                  reader.readAsDataURL(file)
+                  // Si ya había texto en el input, pásalo como comentario de la bandeja.
+                  const pending = chatMessage.trim()
+                  if (pending) { setTrayMessage((prev) => (prev ? prev : pending)); setChatMessage('') }
+                  void addImageFilesToTray(imageFiles)
                 }}
                 placeholder="Escribe un comentario... (o pega una imagen)"
                 rows={1}
@@ -2532,14 +2528,7 @@ export function WizardPage() {
                   e.preventDefault()
                   const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
                   if (files.length === 0) return
-                  files.forEach((file) => {
-                    const reader = new FileReader()
-                    reader.onload = (ev) => {
-                      const dataUrl = ev.target?.result as string
-                      if (dataUrl) setCaptureTray((prev) => [...prev, dataUrl])
-                    }
-                    reader.readAsDataURL(file)
-                  })
+                  void addImageFilesToTray(files) // estampa marca de agua
                 }}
               >
                 {captureTray.map((src, i) => (
@@ -2574,14 +2563,7 @@ export function WizardPage() {
                     onChange={(e) => {
                       const files = Array.from(e.target.files ?? [])
                       e.target.value = ''
-                      files.forEach((file) => {
-                        const reader = new FileReader()
-                        reader.onload = (ev) => {
-                          const dataUrl = ev.target?.result as string
-                          if (dataUrl) setCaptureTray((prev) => [...prev, dataUrl])
-                        }
-                        reader.readAsDataURL(file)
-                      })
+                      void addImageFilesToTray(files) // estampa marca de agua
                     }}
                   />
                 </label>
