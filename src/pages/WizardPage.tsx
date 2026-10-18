@@ -168,6 +168,14 @@ export function WizardPage() {
     }
   }
 
+  // Campos de cabecera que se incluirán en el mensaje de WhatsApp al compartir
+  // el registro completo. Por defecto, todos.
+  const ALL_HEADER_FIELDS = ['tipo', 'placa', 'operador', 'fecha'] as const
+  const [headerFields, setHeaderFields] = useState<Set<string>>(new Set(ALL_HEADER_FIELDS))
+  const toggleHeaderField = (f: string) => {
+    setHeaderFields((prev) => { const n = new Set(prev); n.has(f) ? n.delete(f) : n.add(f); return n })
+  }
+
   const confirmDestinations = () => {
     destModal.resolve?.([...destSelected])
     setDestModal({ open: false, options: [], resolve: null })
@@ -938,12 +946,12 @@ export function WizardPage() {
     setFeedback('⏳ Enviando registro a WhatsApp…')
     try {
       if (!tos || tos.length === 0) {
-        const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode } })
+        const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, headerFields: [...headerFields] } })
         setFeedback(`✓ ${r.message}`)
       } else {
         let ok = 0
         for (const to of tos) {
-          try { await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to } }); ok++ } catch { /* sigue */ }
+          try { await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to, headerFields: [...headerFields] } }); ok++ } catch { /* sigue */ }
         }
         setFeedback(ok === tos.length ? `✓ Registro enviado a ${ok} chat(s).` : `✓ Enviado a ${ok} de ${tos.length} chat(s).`)
       }
@@ -1139,6 +1147,30 @@ export function WizardPage() {
                 Finalizado el {new Date(operation.completedAt).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </div>
             )}
+            {/* Datos a incluir en el mensaje de WhatsApp */}
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1.5">Datos a enviar al chat</p>
+              <div className="flex flex-wrap gap-1.5">
+                {([
+                  { key: 'tipo', label: 'Tipo' },
+                  { key: 'placa', label: 'Placa/Detalle' },
+                  { key: 'operador', label: 'Operador' },
+                  { key: 'fecha', label: 'Fecha y hora' },
+                ] as const).map((f) => {
+                  const on = headerFields.has(f.key)
+                  return (
+                    <button
+                      key={f.key}
+                      type="button"
+                      onClick={() => toggleHeaderField(f.key)}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors flex items-center gap-1 ${on ? 'bg-[#128c7e] border-[#128c7e] text-white' : 'bg-white border-gray-200 text-gray-500'}`}
+                    >
+                      {on && <CheckCircle2 className="w-3 h-3" />}{f.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
             <div className="flex gap-2">
               <button onClick={() => void handleReopen()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-white text-gray-600 text-xs font-medium flex items-center justify-center gap-1.5 border border-gray-200">
                 <Edit3 className="w-3.5 h-3.5" /> Editar

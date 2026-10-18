@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Flashlight, FlashlightOff, MessageSquare, Pencil, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
 import { ErrorState, LoadingState } from './ui'
 import { ImageEditor } from './ImageEditor'
+import { drawStampOnCanvas, getCoords, primeCoords } from '../lib/photo-stamp'
 
 interface CameraCaptureProps {
   stepName: string
@@ -57,6 +58,8 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
 
   useEffect(() => {
     void startCamera()
+    // Pide la ubicación de forma anticipada para estampar la foto al capturar.
+    primeCoords()
     return () => stopCamera()
   }, [startCamera, stopCamera])
 
@@ -77,7 +80,7 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
     void startCamera(newFacing)
   }
 
-  const captureFrame = () => {
+  const captureFrame = async () => {
     const video = videoRef.current
     if (!video) return
 
@@ -88,6 +91,11 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
     if (!ctx) return
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    // Estampa fecha/día/hora/ubicación en la foto (marca de agua grabada).
+    try {
+      const coords = await getCoords()
+      drawStampOnCanvas(ctx, canvas.width, canvas.height, coords)
+    } catch { /* si falla la marca, se guarda la foto igual */ }
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
     setPreview(dataUrl)
     setShowCommentInput(true)
@@ -245,7 +253,7 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
           ) : (
             <button
               type="button"
-              onClick={captureFrame}
+              onClick={() => void captureFrame()}
               aria-label="Capturar foto"
               className="capture-btn"
             >

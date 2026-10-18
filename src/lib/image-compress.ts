@@ -1,16 +1,21 @@
+import { drawStampOnCanvas, getCoords } from './photo-stamp'
+
 /**
  * Comprime y redimensiona una imagen en el navegador antes de subirla.
  * Reduce drásticamente el tamaño (una foto de móvil de 4-8MB pasa a ~200-500KB),
  * lo que acelera mucho la subida a Drive sin perder calidad útil para trazabilidad.
  *
+ * Si `stamp` es true (default), graba en la imagen la fecha/día/hora/ubicación.
+ *
  * @returns base64 SIN el prefijo `data:image/...;base64,`
  */
 export async function compressImageToBase64(
   file: File,
-  opts: { maxDimension?: number; quality?: number } = {},
+  opts: { maxDimension?: number; quality?: number; stamp?: boolean } = {},
 ): Promise<string> {
   const maxDimension = opts.maxDimension ?? 1600
   const quality = opts.quality ?? 0.75
+  const stamp = opts.stamp ?? true
 
   // Lee el archivo como dataURL
   const dataUrl = await readFileAsDataURL(file)
@@ -42,6 +47,14 @@ export async function compressImageToBase64(
     if (!ctx) return dataUrl.split(',')[1] ?? ''
 
     ctx.drawImage(img, 0, 0, width, height)
+
+    // Estampa fecha/día/hora/ubicación en la imagen (marca de agua grabada).
+    if (stamp) {
+      try {
+        const coords = await getCoords()
+        drawStampOnCanvas(ctx, width, height, coords)
+      } catch { /* si falla la marca, se guarda la foto igual */ }
+    }
 
     // Re-encode a JPEG comprimido
     const compressed = canvas.toDataURL('image/jpeg', quality)

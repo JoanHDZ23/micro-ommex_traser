@@ -13,6 +13,8 @@ import { RecoveryPage } from './pages/RecoveryPage'
 import { DocumentsPage } from './pages/DocumentsPage'
 import { PhotoUploadPage } from './pages/PhotoUploadPage'
 import { invalidateTracerFeaturesCache } from './lib/tracer-features'
+import { apiRequest } from './lib/api'
+import { getCompanyId } from './lib/context'
 
 export default function App() {
   useEffect(() => {
@@ -25,6 +27,17 @@ export default function App() {
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
+  }, [])
+
+  // Auto-sincroniza WhatsApp al iniciar la app: si ya hay sesión guardada,
+  // reconecta sin pedir QR. Se omite en la ruta pública /share y falla en
+  // silencio si el módulo de WhatsApp Web está deshabilitado (404).
+  useEffect(() => {
+    if (window.location.pathname.startsWith('/share/')) return
+    const companyId = getCompanyId()
+    if (!companyId) return
+    void apiRequest('/whatsapp-web/start', { method: 'POST', body: { companyId } })
+      .catch(() => { /* módulo deshabilitado o sin red: se ignora */ })
   }, [])
 
   return (

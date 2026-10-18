@@ -25,6 +25,31 @@ const TYPE_ICONS: Record<DefaultOperationType, React.ComponentType<{ className?:
   ACTIVIDAD: Activity,
 }
 
+/** Agrupa las operaciones por día (clave YYYY-MM-DD local), preservando el orden recibido. */
+function groupOperationsByDay(ops: Operation[]): Array<{ key: string; label: string; items: Operation[] }> {
+  const groups = new Map<string, Operation[]>()
+  for (const op of ops) {
+    const d = new Date(op.createdAt)
+    // Clave local estable por día
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)!.push(op)
+  }
+  const hoy = new Date()
+  const keyOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const todayKey = keyOf(hoy)
+  const ayer = new Date(hoy); ayer.setDate(ayer.getDate() - 1)
+  const yesterdayKey = keyOf(ayer)
+  return [...groups.entries()].map(([key, items]) => {
+    const d = new Date(`${key}T12:00:00`)
+    let label: string
+    if (key === todayKey) label = 'Hoy'
+    else if (key === yesterdayKey) label = 'Ayer'
+    else label = d.toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+    return { key, label, items }
+  })
+}
+
 const HISTORY_GUIDE: GuideStep[] = [
   {
     emoji: '📋',
@@ -187,8 +212,18 @@ export function HistoryPage() {
           title="No se encontraron operaciones"
         />
       ) : (
-        <div className="space-y-2">
-          {operations.map((op) => {
+        <div className="space-y-4">
+          {groupOperationsByDay(operations).map((group) => (
+            <section key={group.key} className="space-y-2">
+              <div className="flex items-center gap-2 px-1 sticky top-0 z-[1] py-1 bg-[var(--color-bg)]/90 backdrop-blur">
+                <Calendar className="w-3.5 h-3.5 text-[var(--color-text-3)]" />
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-2)] first-letter:uppercase">
+                  {group.label}
+                </h3>
+                <span className="text-[10px] text-[var(--color-text-3)]">· {group.items.length}</span>
+                <div className="flex-1 h-px bg-[var(--color-border)]" />
+              </div>
+              {group.items.map((op) => {
             const Icon = (TYPE_ICONS as Record<string, React.ComponentType<{ className?: string }>>)[op.operationType] ?? Package
             const date = new Date(op.createdAt)
             return (
@@ -237,7 +272,9 @@ export function HistoryPage() {
                 <ChevronRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
               </Card>
             )
-          })}
+              })}
+            </section>
+          ))}
         </div>
       )}
 
