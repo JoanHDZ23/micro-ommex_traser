@@ -282,12 +282,14 @@ whatsappWebRouter.post('/send-github', async (req, res) => {
  * mensajes se intercala una pausa para reducir el riesgo de bloqueo.
  */
 whatsappWebRouter.post('/send-operation', async (req, res) => {
-  const { trackingCode, to: toOverride, headerFields } = req.body ?? {}
+  const { trackingCode, to: toOverride, headerFields, headerOnly } = req.body ?? {}
   if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
   // Campos de cabecera a incluir en el mensaje de encabezado. Si no se envía,
   // se incluyen todos (compatibilidad). Valores: 'tipo','placa','operador','fecha'.
   const hf: string[] | null = Array.isArray(headerFields) ? headerFields.map(String) : null
   const includeField = (f: string) => !hf || hf.includes(f)
+  // Si headerOnly=true, envía SOLO el encabezado (para la matriz mensaje×chat).
+  const onlyHeader = headerOnly === true
 
   try {
     const { getOperationsCollection, getDb } = await import('../lib/mongodb.js')
@@ -339,6 +341,12 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
     }
     await uSendText(to, headerLines.join('\n'), companyId); sent++
     await delay(PAUSE)
+
+    // Si solo se pidió el encabezado, termina aquí (matriz mensaje×chat).
+    if (onlyHeader) {
+      res.json({ message: 'Encabezado enviado.', to, sent })
+      return
+    }
 
     // 2. Fotos generales y NOTAS de texto, en el orden del registro.
     //    Las fotos tomadas juntas (mismo groupId) se envían como UN solo álbum.
