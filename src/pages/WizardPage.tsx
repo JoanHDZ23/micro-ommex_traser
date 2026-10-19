@@ -5,6 +5,7 @@ import { apiRequest, fileToBase64, type LabelData, type Operation, type Operatio
 import { CameraCapture } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
+import { WhatsAppSendButton } from '../components/WhatsAppSendButton'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { CatalogPicker } from '../components/CatalogPicker'
 import { ImageEditor } from '../components/ImageEditor'
@@ -114,6 +115,53 @@ export function WizardPage() {
   // Photo editing
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
   const [editComment, setEditComment] = useState('')
+
+  // ── Selección de mensajes estilo WhatsApp ──
+  // selectMode activa los checkboxes; selectedPhotos guarda los índices reales
+  // (en operation.photos) de los mensajes marcados.
+  const [selectMode, setSelectMode] = useState(false)
+  const [selectedPhotos, setSelectedPhotos] = useState<Set<number>>(new Set())
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const exitSelectMode = () => { setSelectMode(false); setSelectedPhotos(new Set()) }
+  // Elimina los mensajes seleccionados (de mayor a menor índice para no desplazarlos).
+  const deleteSelectedPhotos = async () => {
+    if (!trackingCode || selectedPhotos.size === 0) return
+    if (!window.confirm(`¿Eliminar ${selectedPhotos.size} mensaje(s)? Esta acción no se puede deshacer.`)) return
+    const idxs = Array.from(selectedPhotos).sort((a, b) => b - a)
+    setUploading(true)
+    try {
+      for (const idx of idxs) {
+        await apiRequest(`/photos/${trackingCode}/${idx}`, { method: 'DELETE' })
+      }
+      setFeedback(`✓ ${idxs.length} mensaje(s) eliminado(s)`)
+      exitSelectMode()
+      await loadOperation()
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al eliminar.')
+    } finally {
+      setUploading(false)
+    }
+  }
+  const toggleSelectPhoto = (idx: number) => {
+    setSelectedPhotos((prev) => {
+      const n = new Set(prev)
+      n.has(idx) ? n.delete(idx) : n.add(idx)
+      return n
+    })
+  }
+  // Pulsación larga sobre una burbuja → entra en modo selección y la marca.
+  const startLongPress = (idx: number) => {
+    if (selectMode) return
+    if (longPressTimer.current) clearTimeout(longPressTimer.current)
+    longPressTimer.current = setTimeout(() => {
+      setSelectMode(true)
+      setSelectedPhotos(new Set([idx]))
+    }, 450)
+  }
+  const cancelLongPress = () => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null }
+  }
 
   // ── Ajustes POR REGISTRO (marca de agua, etc.) — locales del dispositivo ──
   const [showRecordSettings, setShowRecordSettings] = useState(false)
@@ -962,125 +1010,8 @@ export function WizardPage() {
     }
   }
 
-  // Envía UN producto (fotos como álbum + título/observaciones) al WhatsApp configurado.
-  const handleSendProduct = async (productCode: string) => {
-    if (!trackingCode) return
-    // Selecciona a qué chat(s) enviar (no solo el primero).
-    let tos: string[] | null | undefined
-    try {
-      tos = await pickDestinations()
-    } catch {
-      setFeedback('No se pudo cargar los destinos de WhatsApp. Revisa la configuración.')
-      return
-    }
-    if (tos === null) return // el usuario canceló el selector
-    if (tos !== undefined && tos.length === 0) {
-      setFeedback('No hay destino de WhatsApp configurado. Ve a Configuración para agregarlo.')
-      return
-    }
-    setFeedback(`⏳ Enviando ${productCode} por WhatsApp…`)
-    try {
-      const targets = tos && tos.length ? tos : [null] // null → el backend usa el default guardado
-      let ok = 0
-      let lastErr = ''
-      for (const to of targets) {
-        try {
-          await apiRequest('/whatsapp-web/send-product', {
-            method: 'POST', body: { trackingCode, productCode, ...(to ? { to } : {}) },
-          })
-          ok++
-        } catch (e) {
-          lastErr = e instanceof Error ? e.message : 'Error al enviar'
-        }
-      }
-      setFeedback(ok > 0 ? `✓ ${productCode} enviado a ${ok} chat(s).` : (lastErr || 'No se pudo enviar el producto.'))
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar el producto.')
-    }
-  }
-
-  // Envía UNA foto individual (por índice) al WhatsApp configurado.
-  const handleSendPhoto = async (photoIndex: number) => {
-    if (!trackingCode) return
-    let tos: string[] | null | undefined
-    try {
-      tos = await pickDestinations()
-    } catch {
-      setFeedback('No se pudo cargar los destinos de WhatsApp. Revisa la configuración.')
-      return
-    }
-    if (tos === null) return // usuario canceló el selector
-    // Si no hay destinos configurados, avisamos en lugar de fallar silenciosamente.
-    if (tos !== undefined && tos.length === 0) {
-      setFeedback('No hay destino de WhatsApp configurado. Ve a Configuración para agregarlo.')
-      return
-    }
-    setFeedback('⏳ Enviando foto por WhatsApp…')
-    try {
-      const targets = tos && tos.length ? tos : [null] // null → el backend usa el default guardado
-      let ok = 0
-      let lastErr = ''
-      for (const to of targets) {
-        try {
-          await apiRequest('/whatsapp-web/send-photo', {
-            method: 'POST',
-            body: { trackingCode, photoIndex, ...(to ? { to } : {}) },
-          })
-          ok++
-        } catch (e) {
-          lastErr = e instanceof Error ? e.message : 'Error al enviar'
-        }
-      }
-      if (ok > 0) {
-        setFeedback(`✓ Foto enviada a ${ok} chat(s).`)
-      } else {
-        setFeedback(lastErr || 'No se pudo enviar la foto.')
-      }
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar la foto.')
-    }
-  }
-
-  // Envía un ÁLBUM (grupo de fotos con el mismo groupId) por WhatsApp.
-  const handleSendPhotoGroup = async (groupIndices: number[]) => {
-    if (!trackingCode || groupIndices.length === 0) return
-    let tos: string[] | null | undefined
-    try {
-      tos = await pickDestinations()
-    } catch {
-      setFeedback('No se pudo cargar los destinos de WhatsApp. Revisa la configuración.')
-      return
-    }
-    if (tos === null) return
-    if (tos !== undefined && tos.length === 0) {
-      setFeedback('No hay destino de WhatsApp configurado. Ve a Configuración para agregarlo.')
-      return
-    }
-    setFeedback('⏳ Enviando álbum por WhatsApp…')
-    try {
-      const targets = tos && tos.length ? tos : [null]
-      let ok = 0
-      let lastErr = ''
-      for (const to of targets) {
-        try {
-          await apiRequest('/whatsapp-web/send-photo-group', {
-            method: 'POST',
-            body: { trackingCode, photoIndices: groupIndices, ...(to ? { to } : {}) },
-          })
-          ok++
-        } catch (e) {
-          lastErr = e instanceof Error ? e.message : 'Error al enviar'
-        }
-      }
-      if (ok > 0) {
-        setFeedback(`✓ Álbum enviado a ${ok} chat(s).`)
-      } else {
-        setFeedback(lastErr || 'No se pudo enviar el álbum.')
-      }
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar el álbum.')
-    }
-  }
+  // (El envío por WhatsApp de foto, álbum y producto ahora lo maneja el módulo
+  // reutilizable WhatsAppSendButton, que resuelve destinos y endpoints.)
 
   // Abre el editor de imagen (marcador) con una foto ya guardada para re-editarla.
   // Al confirmar: sube la versión editada y elimina la original.
@@ -1467,6 +1398,42 @@ export function WizardPage() {
         )}
       </div>
 
+      {/* Barra de acciones del modo selección (estilo WhatsApp) */}
+      {selectMode && (
+        <div className="flex-shrink-0 z-30 bg-[var(--color-primary)] text-white px-3 py-2 flex items-center gap-2 shadow-md">
+          <button onClick={exitSelectMode} className="w-8 h-8 flex items-center justify-center" aria-label="Cerrar selección">
+            <X className="w-5 h-5" />
+          </button>
+          <span className="flex-1 text-sm font-semibold">{selectedPhotos.size} seleccionado(s)</span>
+          <button
+            onClick={() => setSelectedPhotos(new Set((operation.photos ?? []).map((_, i) => i)))}
+            className="text-xs font-medium px-2 py-1 rounded hover:bg-white/15" title="Seleccionar todo">
+            Todo
+          </button>
+          {/* Enviar seleccionados — módulo reutilizable (elige chats) */}
+          {trackingCode && selectedPhotos.size > 0 && (
+            <WhatsAppSendButton
+              target={{ kind: 'photos', trackingCode, photoIndices: Array.from(selectedPhotos).sort((a, b) => a - b) }}
+              onResult={setFeedback}
+              onSent={exitSelectMode}
+              title="Enviar seleccionados por WhatsApp"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-semibold"
+            >
+              Enviar
+            </WhatsAppSendButton>
+          )}
+          {!isCompleted && (
+            <button
+              onClick={() => void deleteSelectedPhotos()}
+              disabled={selectedPhotos.size === 0}
+              className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-40"
+              title="Eliminar seleccionados">
+              <Trash2 className="w-5 h-5" />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Chat body */}
       <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 bg-gray-50">
 
@@ -1534,6 +1501,13 @@ export function WizardPage() {
           <section className="space-y-2">
             <div className="flex items-center justify-between">
               <h4 className="text-[10px] font-semibold text-gray-500 uppercase">Fotos ({operation.photos.length})</h4>
+              {!selectMode && operation.photos.length > 0 && (
+                <button onClick={() => { setSelectMode(true); setSelectedPhotos(new Set()) }}
+                  className="text-[10px] font-medium text-[var(--color-primary)] flex items-center gap-1 px-2 py-0.5 rounded hover:bg-[var(--color-primary)]/10"
+                  title="Seleccionar mensajes">
+                  <CheckCircle2 className="w-3 h-3" /> Seleccionar
+                </button>
+              )}
             </div>
             <div className="space-y-2 rounded-xl p-3">
               {(() => {
@@ -1556,9 +1530,19 @@ export function WizardPage() {
                   if (group.length === 1) {
                     const { photo, idx: i } = group[0]
                     const attUrl = directUrl(photo) || (photo.driveUrl && /^https?:\/\//.test(photo.driveUrl) ? photo.driveUrl : null)
+                    const sel = selectedPhotos.has(i)
                     return (
-                      <div key={`s-${i}`} className="flex justify-end">
-                        <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
+                      <div key={`s-${i}`} className={`flex justify-end items-center gap-2 ${selectMode ? 'cursor-pointer select-none' : ''}`}
+                        onClick={selectMode ? () => toggleSelectPhoto(i) : undefined}
+                        onPointerDown={!selectMode ? () => startLongPress(i) : undefined}
+                        onPointerUp={cancelLongPress}
+                        onPointerLeave={cancelLongPress}>
+                        {selectMode && (
+                          <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${sel ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'border-gray-300 bg-white'}`}>
+                            {sel && <CheckCircle2 className="w-4 h-4 text-white" />}
+                          </span>
+                        )}
+                        <div className={`max-w-[85%] bg-[var(--color-primary-bg)] border rounded-lg rounded-tr-none p-2 shadow-sm relative ${sel ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30' : 'border-[var(--color-primary)]/20'}`}>
                           {/* Audio: reproductor */}
                           {photo.mediaType === 'audio' ? (
                             <div className="flex items-center gap-2 mb-1.5">
@@ -1626,7 +1610,7 @@ export function WizardPage() {
                               <CheckCircle2 className="w-2.5 h-2.5 text-[var(--color-primary)]" />
                             )}
                           </div>
-                          {!isCompleted && editingPhotoIdx !== i && (
+                          {!isCompleted && !selectMode && editingPhotoIdx !== i && (
                             <div className="absolute -top-1 -right-1 flex gap-0.5">
                               {/* Foto con imagen → bandeja (foto + mensaje). Nota/audio/documento → edición inline del comentario. */}
                               {photo.fileId !== 'note' && photo.mediaType !== 'audio' && photo.mediaType !== 'document' ? (
@@ -1650,15 +1634,16 @@ export function WizardPage() {
                             </div>
                           )}
                           {/* Botón Enviar individual (foto, audio, documento o nota de texto) */}
-                          {photo.fileId !== 'pending' && (
+                          {photo.fileId !== 'pending' && !selectMode && trackingCode && (
                             <div className="flex justify-end mt-1">
-                              <button
-                                onClick={() => void handleSendPhoto(i)}
-                                className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#128c7e]/10 text-[#128c7e] text-[10px] font-semibold hover:bg-[#128c7e]/20 transition-colors"
+                              <WhatsAppSendButton
+                                target={{ kind: 'photo', trackingCode, photoIndex: i }}
+                                onResult={setFeedback}
                                 title={photo.fileId === 'note' ? 'Enviar mensaje por WhatsApp' : 'Enviar por WhatsApp'}
+                                className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#128c7e]/10 text-[#128c7e] text-[10px] font-semibold hover:bg-[#128c7e]/20 transition-colors disabled:opacity-50"
                               >
-                                <Send className="w-2.5 h-2.5" /> Enviar
-                              </button>
+                                Enviar
+                              </WhatsAppSendButton>
                             </div>
                           )}
                         </div>
@@ -1670,9 +1655,26 @@ export function WizardPage() {
                   const first = group[0].photo
                   const groupComment = group.map((g) => (g.photo.comment ?? '').trim()).find(Boolean) ?? ''
                   const isEditingGroup = editingPhotoIdx === group[0].idx && group.length > 1
+                  const groupIdxs = group.map((g) => g.idx)
+                  const groupSel = groupIdxs.every((gx) => selectedPhotos.has(gx))
+                  const toggleGroupSel = () => setSelectedPhotos((prev) => {
+                    const n = new Set(prev)
+                    const allSel = groupIdxs.every((gx) => n.has(gx))
+                    groupIdxs.forEach((gx) => { allSel ? n.delete(gx) : n.add(gx) })
+                    return n
+                  })
                   return (
-                    <div key={`g-${gi}`} className="flex justify-end">
-                      <div className="w-full max-w-[92%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-xl shadow-sm overflow-hidden">
+                    <div key={`g-${gi}`} className={`flex justify-end items-center gap-2 ${selectMode ? 'cursor-pointer select-none' : ''}`}
+                      onClick={selectMode ? toggleGroupSel : undefined}
+                      onPointerDown={!selectMode ? () => startLongPress(group[0].idx) : undefined}
+                      onPointerUp={cancelLongPress}
+                      onPointerLeave={cancelLongPress}>
+                      {selectMode && (
+                        <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${groupSel ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'border-gray-300 bg-white'}`}>
+                          {groupSel && <CheckCircle2 className="w-4 h-4 text-white" />}
+                        </span>
+                      )}
+                      <div className={`w-full max-w-[92%] bg-[var(--color-primary-bg)] border rounded-xl shadow-sm overflow-hidden ${groupSel ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30' : 'border-[var(--color-primary)]/20'}`}>
                         {/* Header de la tarjeta álbum */}
                         <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
                           <div className="flex items-center gap-1.5">
@@ -1693,7 +1695,7 @@ export function WizardPage() {
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center text-gray-400 text-[10px]">🕐</div>
                               )}
-                              {!isCompleted && (
+                              {!isCompleted && !selectMode && (
                                 <div className="absolute top-0.5 right-0.5 flex gap-0.5">
                                   {ph.mediaType !== 'audio' && ph.mediaType !== 'document' && (
                                     <button onClick={() => openPhotoReEdit(phIdx)}
@@ -1730,21 +1732,27 @@ export function WizardPage() {
                           )}
                         </div>
 
-                        {/* Barra de acciones */}
-                        <div className="flex items-center gap-1 px-2.5 pb-2.5 pt-1 border-t border-[var(--color-primary)]/10">
-                          {!isCompleted && (
-                            <button
-                              onClick={() => { setEditingPhotoIdx(group[0].idx); setEditComment(groupComment) }}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 text-[11px] font-medium hover:bg-gray-50">
-                              <Pencil className="w-3 h-3" /> Editar
-                            </button>
-                          )}
-                          <button
-                            onClick={() => void handleSendPhotoGroup(group.map((g) => g.idx))}
-                            className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#128c7e] text-white text-[11px] font-semibold hover:bg-[#0f7a6d]">
-                            <Send className="w-3 h-3" /> Enviar
-                          </button>
-                        </div>
+                        {/* Barra de acciones (oculta en modo selección) */}
+                        {!selectMode && (
+                          <div className="flex items-center gap-1 px-2.5 pb-2.5 pt-1 border-t border-[var(--color-primary)]/10">
+                            {!isCompleted && (
+                              <button
+                                onClick={() => { setEditingPhotoIdx(group[0].idx); setEditComment(groupComment) }}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-gray-200 bg-white text-gray-600 text-[11px] font-medium hover:bg-gray-50">
+                                <Pencil className="w-3 h-3" /> Editar
+                              </button>
+                            )}
+                            {trackingCode && (
+                              <WhatsAppSendButton
+                                target={{ kind: 'album', trackingCode, photoIndices: group.map((g) => g.idx) }}
+                                onResult={setFeedback}
+                                className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#128c7e] text-white text-[11px] font-semibold hover:bg-[#0f7a6d] disabled:opacity-50"
+                              >
+                                Enviar
+                              </WhatsAppSendButton>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )
@@ -1912,11 +1920,16 @@ export function WizardPage() {
                         <Pencil className="w-3.5 h-3.5" /> Editar
                       </button>
                       {/* Enviar ESTE producto por WhatsApp (elige el/los chats) */}
-                      <button onClick={() => void handleSendProduct(product.productCode)}
-                        title="Enviar este producto por WhatsApp"
-                        className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-white bg-[#128c7e] hover:bg-[#0f7a6e]">
-                        <Send className="w-3.5 h-3.5" /> Enviar
-                      </button>
+                      {trackingCode && (
+                        <WhatsAppSendButton
+                          target={{ kind: 'product', trackingCode, productCode: product.productCode }}
+                          onResult={setFeedback}
+                          title="Enviar este producto por WhatsApp"
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-white bg-[#128c7e] hover:bg-[#0f7a6e] disabled:opacity-50"
+                        >
+                          Enviar
+                        </WhatsAppSendButton>
+                      )}
                       <button onClick={async () => {
                         if (!confirm(`¿Quitar "${product.productCode}"?`)) return
                         try {
