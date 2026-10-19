@@ -121,9 +121,14 @@ export function WizardPage() {
   // (en operation.photos) de los mensajes marcados.
   const [selectMode, setSelectMode] = useState(false)
   const [selectedPhotos, setSelectedPhotos] = useState<Set<number>>(new Set())
+  // Productos seleccionados (por productCode) en el modo selección.
+  const [selectedProducts, setSelectedProducts] = useState<Set<string>>(new Set())
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const exitSelectMode = () => { setSelectMode(false); setSelectedPhotos(new Set()) }
+  const exitSelectMode = () => { setSelectMode(false); setSelectedPhotos(new Set()); setSelectedProducts(new Set()) }
+  const toggleSelectProduct = (code: string) => {
+    setSelectedProducts((prev) => { const n = new Set(prev); n.has(code) ? n.delete(code) : n.add(code); return n })
+  }
   // Elimina los mensajes seleccionados (de mayor a menor índice para no desplazarlos).
   const deleteSelectedPhotos = async () => {
     if (!trackingCode || selectedPhotos.size === 0) return
@@ -161,6 +166,15 @@ export function WizardPage() {
   }
   const cancelLongPress = () => {
     if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null }
+  }
+  // Pulsación larga sobre una tarjeta de producto → entra en selección marcándolo.
+  const startLongPressProduct = (code: string) => {
+    if (selectMode) return
+    if (longPressTimer.current) clearTimeout(longPressTimer.current)
+    longPressTimer.current = setTimeout(() => {
+      setSelectMode(true)
+      setSelectedProducts(new Set([code]))
+    }, 450)
   }
 
   // ── Ajustes POR REGISTRO (marca de agua, etc.) — locales del dispositivo ──
@@ -1404,16 +1418,24 @@ export function WizardPage() {
           <button onClick={exitSelectMode} className="w-8 h-8 flex items-center justify-center" aria-label="Cerrar selección">
             <X className="w-5 h-5" />
           </button>
-          <span className="flex-1 text-sm font-semibold">{selectedPhotos.size} seleccionado(s)</span>
+          <span className="flex-1 text-sm font-semibold">{selectedPhotos.size + selectedProducts.size} seleccionado(s)</span>
           <button
-            onClick={() => setSelectedPhotos(new Set((operation.photos ?? []).map((_, i) => i)))}
+            onClick={() => {
+              setSelectedPhotos(new Set((operation.photos ?? []).map((_, i) => i)))
+              setSelectedProducts(new Set(lbProducts.map((p) => p.productCode)))
+            }}
             className="text-xs font-medium px-2 py-1 rounded hover:bg-white/15" title="Seleccionar todo">
             Todo
           </button>
-          {/* Enviar seleccionados — módulo reutilizable (elige chats) */}
-          {trackingCode && selectedPhotos.size > 0 && (
+          {/* Enviar seleccionados (fotos + productos) — módulo reutilizable (elige chats) */}
+          {trackingCode && (selectedPhotos.size > 0 || selectedProducts.size > 0) && (
             <WhatsAppSendButton
-              target={{ kind: 'photos', trackingCode, photoIndices: Array.from(selectedPhotos).sort((a, b) => a - b) }}
+              target={{
+                kind: 'mixed',
+                trackingCode,
+                photoIndices: Array.from(selectedPhotos).sort((a, b) => a - b),
+                productCodes: Array.from(selectedProducts),
+              }}
               onResult={setFeedback}
               onSent={exitSelectMode}
               title="Enviar seleccionados por WhatsApp"
@@ -1427,7 +1449,7 @@ export function WizardPage() {
               onClick={() => void deleteSelectedPhotos()}
               disabled={selectedPhotos.size === 0}
               className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white/15 disabled:opacity-40"
-              title="Eliminar seleccionados">
+              title="Eliminar fotos seleccionadas">
               <Trash2 className="w-5 h-5" />
             </button>
           )}
@@ -1809,9 +1831,19 @@ export function WizardPage() {
               const desc = product.labelData?.descripcion ?? ''
               const createdTime = product.createdAt ? new Date(product.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''
 
+              const prodSel = selectedProducts.has(product.productCode)
               return (
-                <div key={product.productCode} className="flex justify-end">
-                  <div className="w-[92%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none shadow-sm overflow-hidden relative">
+                <div key={product.productCode} className={`flex justify-end items-center gap-2 ${selectMode ? 'cursor-pointer select-none' : ''}`}
+                  onClick={selectMode ? () => toggleSelectProduct(product.productCode) : undefined}
+                  onPointerDown={!selectMode ? () => startLongPressProduct(product.productCode) : undefined}
+                  onPointerUp={cancelLongPress}
+                  onPointerLeave={cancelLongPress}>
+                  {selectMode && (
+                    <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${prodSel ? 'bg-[var(--color-primary)] border-[var(--color-primary)]' : 'border-gray-300 bg-white'}`}>
+                      {prodSel && <CheckCircle2 className="w-4 h-4 text-white" />}
+                    </span>
+                  )}
+                  <div className={`w-[92%] bg-[var(--color-primary-bg)] border rounded-lg rounded-tr-none shadow-sm overflow-hidden relative ${prodSel ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30' : 'border-[var(--color-primary)]/20'} ${selectMode ? 'pointer-events-none' : ''}`}>
                     {/* Photo grid */}
                     {/* Fotos tomadas pendientes de subir (storage temporal → GitHub) */}
                     {pendingLocal.length > 0 && (

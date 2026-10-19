@@ -62,7 +62,16 @@ export function AudioRecorder({ open, onClose, onSend, sending }: AudioRecorderP
       }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
       streamRef.current = stream
-      const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
+      // Preferir OGG/Opus (lo que WhatsApp reproduce como nota de voz sin
+      // transcodificar). Si el navegador no lo soporta, caer a webm/opus o mp4.
+      const pick = [
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+      ].find((t) => MediaRecorder.isTypeSupported(t))
+      const mime = pick || 'audio/webm'
       const recorder = new MediaRecorder(stream, { mimeType: mime })
       mediaRecorderRef.current = recorder
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
@@ -102,7 +111,8 @@ export function AudioRecorder({ open, onClose, onSend, sending }: AudioRecorderP
 
   const handleSend = () => {
     if (!audioBlob) return
-    const ext = audioBlob.type.includes('mp4') ? 'm4a' : 'webm'
+    const t = audioBlob.type.toLowerCase()
+    const ext = t.includes('ogg') ? 'ogg' : t.includes('mp4') ? 'm4a' : 'webm'
     const file = new File([audioBlob], `audio-${Date.now()}.${ext}`, { type: audioBlob.type })
     onSend(file)
   }

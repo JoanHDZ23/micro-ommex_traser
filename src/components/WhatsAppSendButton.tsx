@@ -21,6 +21,8 @@ export type SendTarget =
   | { kind: 'album'; trackingCode: string; photoIndices: number[] }
   | { kind: 'product'; trackingCode: string; productCode: string }
   | { kind: 'photos'; trackingCode: string; photoIndices: number[] }
+  // Selección mixta: varios mensajes (por índice) y/o varios productos (por code).
+  | { kind: 'mixed'; trackingCode: string; photoIndices: number[]; productCodes: string[] }
 
 interface WaDest { id: string; label: string; to: string }
 
@@ -94,6 +96,13 @@ export function WhatsAppSendButton({ target, children, className, title, disable
     } else if (t.kind === 'photos') {
       for (const idx of t.photoIndices) {
         await apiRequest('/whatsapp-web/send-photo', { method: 'POST', body: { trackingCode: t.trackingCode, photoIndex: idx, ...toBody } })
+      }
+    } else if (t.kind === 'mixed') {
+      for (const idx of t.photoIndices) {
+        await apiRequest('/whatsapp-web/send-photo', { method: 'POST', body: { trackingCode: t.trackingCode, photoIndex: idx, ...toBody } })
+      }
+      for (const code of t.productCodes) {
+        await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode: t.trackingCode, productCode: code, ...toBody } })
       }
     } else {
       await apiRequest('/whatsapp-web/send-photo', { method: 'POST', body: { trackingCode: t.trackingCode, photoIndex: t.photoIndex, ...toBody } })
@@ -184,7 +193,14 @@ export function WhatsAppSendButton({ target, children, className, title, disable
                 <input type="tel" inputMode="numeric" value={manual}
                   onChange={(e) => setManual(e.target.value.replace(/[^\d]/g, ''))}
                   placeholder="Ej: 573001234567 (con indicativo)"
-                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#128c7e]/30" />
+                  className="w-full px-3 py-2.5 rounded-lg border border-dashed border-amber-400 bg-amber-50/40 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/40" />
+                {manualDigits && (
+                  <div className="mt-2 flex items-center gap-2 p-2 rounded-lg border border-dashed border-amber-400 bg-amber-50">
+                    <span className="text-[10px] font-bold uppercase text-amber-700 bg-amber-200 px-1.5 py-0.5 rounded">Nuevo</span>
+                    <span className="text-sm font-medium text-amber-900 truncate">{manualDigits}</span>
+                    <span className="ml-auto text-[10px] text-amber-600">sin guardar</span>
+                  </div>
+                )}
                 <p className="text-[10px] text-gray-400 mt-1">Solo números, con código de país. No se guarda en la configuración.</p>
               </div>
             </div>
