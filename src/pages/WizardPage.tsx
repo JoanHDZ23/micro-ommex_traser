@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { apiRequest, fileToBase64, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
@@ -17,6 +17,7 @@ import { BarcodeScanner } from '../components/BarcodeScanner'
 import type { PhotoRecord } from '../lib/api'
 import { useTracerFeatures } from '../lib/tracer-features'
 import { getCompanyId } from '../lib/context'
+import { getRecordSettings, setRecordSettings, DEFAULT_RECORD_SETTINGS, type RecordSettings } from '../lib/record-settings'
 
 /** URL directa de R2: driveUrl http(s) que no es de Google. */
 function directUrl(photo: Pick<PhotoRecord, 'driveUrl'>): string | null {
@@ -113,6 +114,33 @@ export function WizardPage() {
   // Photo editing
   const [editingPhotoIdx, setEditingPhotoIdx] = useState<number | null>(null)
   const [editComment, setEditComment] = useState('')
+
+  // ── Ajustes POR REGISTRO (marca de agua, etc.) — locales del dispositivo ──
+  const [showRecordSettings, setShowRecordSettings] = useState(false)
+  const [recordSettings, setRecordSettingsState] = useState<RecordSettings>(DEFAULT_RECORD_SETTINGS)
+  // Carga los ajustes guardados de este registro.
+  useEffect(() => { if (trackingCode) setRecordSettingsState(getRecordSettings(trackingCode)) }, [trackingCode])
+  // Guarda un cambio de ajuste (persistente por registro).
+  const updateRecordSetting = (patch: Partial<RecordSettings>) => {
+    setRecordSettingsState((prev) => {
+      const next = { ...prev, ...patch }
+      if (trackingCode) setRecordSettings(trackingCode, next)
+      return next
+    })
+  }
+  // Opciones de estampado que respetan los ajustes del registro, para pasar a
+  // compressImageToBase64 y a la cámara.
+  const stampOpts = useMemo(() => ({
+    stamp: recordSettings.watermark,
+    stampParts: {
+      date: recordSettings.watermarkDate,
+      time: recordSettings.watermarkTime,
+      location: recordSettings.watermarkLocation,
+    },
+  }), [recordSettings])
+  // Ref siempre actualizado, para usarlo dentro de callbacks memorizados.
+  const stampOptsRef = useRef(stampOpts)
+  useEffect(() => { stampOptsRef.current = stampOpts }, [stampOpts])
 
   // Edición de una foto general existente desde la bandeja de revisión.
   // Si está definido, al enviar la bandeja se ACTUALIZA esa foto (comentario +
@@ -466,7 +494,7 @@ export function WizardPage() {
       try {
         const dataUrls: string[] = []
         for (const f of files) {
-          const base64 = await compressImageToBase64(f)
+          const base64 = await compressImageToBase64(f, stampOpts)
           dataUrls.push(`data:image/jpeg;base64,${base64}`)
         }
         setCaptureTray((prev) => [...prev, ...dataUrls])
@@ -484,7 +512,7 @@ export function WizardPage() {
     for (let i = 0; i < files.length; i++) {
       try {
         // Comprime/redimensiona en el cliente para que la subida sea mucho más rápida
-        const base64 = await compressImageToBase64(files[i])
+        const base64 = await compressImageToBase64(files[i], stampOpts)
         // El comentario solo se aplica a la primera foto
         await uploadSinglePhoto(base64, i === 0 ? comment : '', isProduct, targetProduct)
       } catch {
@@ -509,7 +537,7 @@ export function WizardPage() {
     if (!file) return
     try {
       // Comprime/redimensiona para subida rápida y para mostrar la miniatura.
-      const base64 = await compressImageToBase64(file)
+      const base64 = await compressImageToBase64(file, stampOpts)
       const dataUrl = `data:image/jpeg;base64,${base64}`
       setCaptureTray((prev) => [...prev, dataUrl])
       setShowCaptureTray(true)
@@ -531,7 +559,8 @@ export function WizardPage() {
     setShowCaptureTray(true)
     for (const file of images) {
       try {
-        const base64 = await compressImageToBase64(file) // estampa marca de agua
+        // Respeta el ajuste de marca de agua del registro (vía ref siempre actual).
+        const base64 = await compressImageToBase64(file, stampOptsRef.current)
         setCaptureTray((prev) => [...prev, `data:image/jpeg;base64,${base64}`])
       } catch {
         setFeedback('No se pudo procesar una imagen')
@@ -1415,6 +1444,14 @@ export function WizardPage() {
             </span>
           </div>
         </div>
+        {/* Ajustes de este registro (marca de agua, etc.) */}
+        <button onClick={() => setShowRecordSettings(true)} title="Ajustes del registro"
+          className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0 relative">
+          <SlidersHorizontal className="w-4 h-4 text-gray-600" />
+          {!recordSettings.watermark && (
+            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-400 border border-white" title="Marca de agua desactivada" />
+          )}
+        </button>
         {/* Sincronizar WhatsApp de la empresa */}
         <button onClick={() => setShowWaSync(true)} title="Sincronizar WhatsApp"
           className="w-8 h-8 rounded-full bg-[#128c7e]/10 flex items-center justify-center flex-shrink-0">
@@ -2394,6 +2431,67 @@ export function WizardPage() {
         </div>
       )}
 
+      {/* Ajustes de ESTE registro (marca de agua y partes del sello) */}
+      {showRecordSettings && (
+        <div className="fixed inset-0 z-[96] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setShowRecordSettings(false)}>
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-gray-600" /> Ajustes del registro
+              </h3>
+              <button onClick={() => setShowRecordSettings(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4 space-y-4">
+              <p className="text-[11px] text-gray-500">
+                Estos ajustes aplican a las fotos que tomes o agregues en este registro, en este dispositivo.
+              </p>
+
+              {/* Marca de agua ON/OFF */}
+              <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-gray-200">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-800">Marca de agua</p>
+                  <p className="text-[11px] text-gray-500">Estampar fecha, hora y ubicación en las fotos.</p>
+                </div>
+                <input type="checkbox" checked={recordSettings.watermark}
+                  onChange={(e) => updateRecordSetting({ watermark: e.target.checked })}
+                  className="w-5 h-5 accent-[var(--color-primary)] flex-shrink-0" />
+              </label>
+
+              {/* Partes del sello (solo si la marca está activa) */}
+              {recordSettings.watermark && (
+                <div className="space-y-2 pl-1">
+                  <p className="text-[11px] font-semibold text-gray-500 uppercase">Qué incluir en el sello</p>
+                  {([
+                    { key: 'watermarkDate', label: 'Fecha' },
+                    { key: 'watermarkTime', label: 'Hora' },
+                    { key: 'watermarkLocation', label: 'Ubicación (dirección y coordenadas)' },
+                  ] as const).map((row) => (
+                    <label key={row.key} className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-gray-100">
+                      <span className="text-sm text-gray-700">{row.label}</span>
+                      <input type="checkbox" checked={recordSettings[row.key]}
+                        onChange={(e) => updateRecordSetting({ [row.key]: e.target.checked } as Partial<RecordSettings>)}
+                        className="w-5 h-5 accent-[var(--color-primary)] flex-shrink-0" />
+                    </label>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-[10px] text-gray-400">
+                Nota: el sello se graba al momento de capturar/agregar la foto. Las fotos ya guardadas no cambian.
+              </p>
+            </div>
+            <div className="px-4 py-3 border-t border-gray-200">
+              <button onClick={() => setShowRecordSettings(false)}
+                className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-semibold">
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Matriz mensaje × chat — qué parte del registro va a cada chat */}
       {matrixModal.open && (
         <div className="fixed inset-0 z-[97] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -2717,6 +2815,7 @@ export function WizardPage() {
       {/* Camera for general photos */}
       {showCamera && (
         <CameraCapture stepName="Registro fotográfico" stepIndex={0}
+          stamp={stampOpts.stamp} stampParts={stampOpts.stampParts}
           onCapture={(b64, cmt) => { void handlePhotoCapture(b64, cmt || chatMessage); setChatMessage('') }}
           onCancel={() => setShowCamera(false)} />
       )}
@@ -2747,6 +2846,7 @@ export function WizardPage() {
       {/* Camera for Línea Blanca */}
       {lbCameraOpen && activeLbProduct && (
         <CameraCapture stepName={`Foto de ${activeLbProduct}`} stepIndex={activeLbData?.photos.length ?? 0}
+          stamp={stampOpts.stamp} stampParts={stampOpts.stampParts}
           onCapture={(b64, cmt) => void handleLbCapture(b64, cmt)}
           onCancel={() => setLbCameraOpen(false)} />
       )}

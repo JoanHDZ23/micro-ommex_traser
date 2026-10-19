@@ -9,9 +9,13 @@ interface CameraCaptureProps {
   stepIndex: number
   onCapture: (base64: string, comment: string) => void
   onCancel: () => void
+  /** Estampar marca de agua (fecha/hora/ubicación). Por defecto true. */
+  stamp?: boolean
+  /** Qué partes de la marca mostrar. */
+  stampParts?: { date?: boolean; time?: boolean; location?: boolean }
 }
 
-export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: CameraCaptureProps) {
+export function CameraCapture({ stepName, stepIndex, onCapture, onCancel, stamp = true, stampParts }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
@@ -95,12 +99,14 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel }: Came
     // plano). Nunca espera por el GPS, así la foto queda lista de inmediato.
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
     const when = new Date()
-    try {
-      const coords = getCoordsNow()
-      const address = getAddressNow(coords)
-      drawStampOnCanvas(ctx, canvas.width, canvas.height, coords, when, address)
-      if (coords && !address) void getAddress(coords) // precarga para la próxima
-    } catch { /* si falla la marca, se conserva la foto sin sello */ }
+    if (stamp) {
+      try {
+        const coords = getCoordsNow()
+        const address = getAddressNow(coords)
+        drawStampOnCanvas(ctx, canvas.width, canvas.height, coords, when, address, stampParts)
+        if (coords && !address) void getAddress(coords) // precarga para la próxima
+      } catch { /* si falla la marca, se conserva la foto sin sello */ }
+    }
     setPreview(canvas.toDataURL('image/jpeg', 0.85))
     setShowCommentInput(true)
     stopCamera()

@@ -142,25 +142,35 @@ function wrap(text: string, max = 42): string[] {
  * Construye las líneas de la marca (fecha, día, hora, ubicación).
  * Si `address` viene, se muestra la dirección legible; si no, las coordenadas.
  */
-export function buildStampLines(coords: Coords, when = new Date(), address?: string | null): string[] {
+/** Qué partes de la marca mostrar (por defecto, todas). */
+export interface StampParts {
+  date?: boolean
+  time?: boolean
+  location?: boolean
+}
+
+export function buildStampLines(coords: Coords, when = new Date(), address?: string | null, parts?: StampParts): string[] {
+  const showDate = parts?.date ?? true
+  const showTime = parts?.time ?? true
+  const showLoc = parts?.location ?? true
   const dia = DIAS[when.getDay()]
   const fecha = `${String(when.getDate()).padStart(2, '0')} ${MESES[when.getMonth()]} ${when.getFullYear()}`
   const hora = `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}:${String(when.getSeconds()).padStart(2, '0')}`
-  const lines = [
-    `${dia.charAt(0).toUpperCase()}${dia.slice(1)}, ${fecha}`,
-    `🕒 ${hora}`,
-  ]
-  // Sufijo de precisión (± metros) para dejar constancia de la exactitud GPS.
-  const acc = coords?.accuracy
-  const accTxt = typeof acc === 'number' && isFinite(acc) ? ` (±${Math.round(acc)} m)` : ''
-  if (address) {
-    const [first, ...rest] = wrap(address)
-    lines.push(`📍 ${first}`)
-    for (const r of rest) lines.push(`   ${r}`)
-    // Coordenadas exactas + precisión en una línea adicional.
-    if (coords) lines.push(`   ${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}${accTxt}`)
-  } else if (coords) {
-    lines.push(`📍 ${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}${accTxt}`)
+  const lines: string[] = []
+  if (showDate) lines.push(`${dia.charAt(0).toUpperCase()}${dia.slice(1)}, ${fecha}`)
+  if (showTime) lines.push(`🕒 ${hora}`)
+  if (showLoc) {
+    // Sufijo de precisión (± metros) para dejar constancia de la exactitud GPS.
+    const acc = coords?.accuracy
+    const accTxt = typeof acc === 'number' && isFinite(acc) ? ` (±${Math.round(acc)} m)` : ''
+    if (address) {
+      const [first, ...rest] = wrap(address)
+      lines.push(`📍 ${first}`)
+      for (const r of rest) lines.push(`   ${r}`)
+      if (coords) lines.push(`   ${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}${accTxt}`)
+    } else if (coords) {
+      lines.push(`📍 ${coords.latitude.toFixed(6)}, ${coords.longitude.toFixed(6)}${accTxt}`)
+    }
   }
   return lines
 }
@@ -176,8 +186,10 @@ export function drawStampOnCanvas(
   coords: Coords,
   when = new Date(),
   address?: string | null,
+  parts?: StampParts,
 ): void {
-  const lines = buildStampLines(coords, when, address)
+  const lines = buildStampLines(coords, when, address, parts)
+  if (lines.length === 0) return
   const pad = Math.round(width * 0.022)
   const fontSize = Math.max(14, Math.round(width * 0.028))
   const lineHeight = Math.round(fontSize * 1.35)

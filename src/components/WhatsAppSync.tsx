@@ -303,8 +303,9 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
           </>
           )}
 
-          <div className="flex items-center gap-2">
-            {!syncOnly && (
+          {/* En el flujo de solo-sincronización no se muestra "Desvincular". */}
+          {!syncOnly && (
+            <div className="flex items-center gap-2">
               <Button
                 onClick={() => void saveDestino()}
                 disabled={savingTo}
@@ -315,17 +316,16 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
               >
                 Guardar destinos
               </Button>
-            )}
-            <Button
-              onClick={() => void logout()}
-              disabled={loading}
-              variant="danger"
-              fullWidth={syncOnly}
-              leftIcon={<LogOut className="w-4 h-4" />}
-            >
-              Desvincular
-            </Button>
-          </div>
+              <Button
+                onClick={() => void logout()}
+                disabled={loading}
+                variant="danger"
+                leftIcon={<LogOut className="w-4 h-4" />}
+              >
+                Desvincular
+              </Button>
+            </div>
+          )}
         </>
       )}
 

@@ -11,11 +11,12 @@ import { drawStampOnCanvas, getAddress, getAddressNow, getCoordsNow, startLocati
  */
 export async function compressImageToBase64(
   file: File,
-  opts: { maxDimension?: number; quality?: number; stamp?: boolean } = {},
+  opts: { maxDimension?: number; quality?: number; stamp?: boolean; stampParts?: { date?: boolean; time?: boolean; location?: boolean } } = {},
 ): Promise<string> {
   const maxDimension = opts.maxDimension ?? 1600
   const quality = opts.quality ?? 0.75
   const stamp = opts.stamp ?? true
+  const stampParts = opts.stampParts
 
   // Lee el archivo como dataURL
   const dataUrl = await readFileAsDataURL(file)
@@ -57,7 +58,7 @@ export async function compressImageToBase64(
         startLocationWatch()
         const coords = getCoordsNow()
         const address = getAddressNow(coords)
-        drawStampOnCanvas(ctx, width, height, coords, new Date(), address)
+        drawStampOnCanvas(ctx, width, height, coords, new Date(), address, stampParts)
         if (coords && !address) void getAddress(coords) // precarga para la próxima
       } catch { /* si falla la marca, se guarda la foto igual */ }
     }
