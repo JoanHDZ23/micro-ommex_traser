@@ -184,13 +184,38 @@ export async function sendImage(to: string, image: Buffer | string, caption?: st
 export async function sendAudio(to: string, audio: Buffer | string, companyId?: string, mimetype?: string): Promise<{ id: string | null }> {
   const sock = ensureOpen(companyId)
   const aud = typeof audio === 'string' ? { url: audio } : audio
-  // WhatsApp sólo reproduce notas de voz opus (ogg) o mp4; el webm/opus de
-  // Chrome se declara como audio/ogg; codecs=opus para que no salga como archivo.
+  const jid = toJid(to)
   const m = (mimetype || '').toLowerCase()
-  const finalMime = (!m || m.includes('webm') || m.includes('ogg') || m.includes('opus'))
-    ? 'audio/ogg; codecs=opus'
-    : (m.includes('mp4') || m.includes('m4a') ? 'audio/mp4' : mimetype!)
-  const res = await sock.sendMessage(toJid(to), { audio: aud, mimetype: finalMime, ptt: true })
+  const url = typeof audio === 'string' ? audio : ''
+
+  // WhatsApp reproduce como NOTA DE VOZ sólo contenedores ogg/opus o mp4/m4a.
+  // El webm/opus de Chrome NO lo reproduce (aunque se declare como ogg: el
+  // contenedor es distinto y llega "dañado"). Detectamos el formato real por
+  // el mimetype o por la extensión de la URL subida.
+  const looksOgg = m.includes('ogg') || m.includes('opus') || /\.ogg(\?|$)/i.test(url)
+  const looksMp4 = m.includes('mp4') || m.includes('m4a') || /\.(m4a|mp4)(\?|$)/i.test(url)
+  const looksWebm = m.includes('webm') || /\.webm(\?|$)/i.test(url)
+
+  if (looksOgg || looksMp4) {
+    const finalMime = looksMp4 ? 'audio/mp4' : 'audio/ogg; codecs=opus'
+    const res = await sock.sendMessage(jid, { audio: aud, mimetype: finalMime, ptt: true })
+    return { id: res?.key?.id ?? null }
+  }
+
+  // webm u otro contenedor no reproducible como nota de voz: se envía como
+  // DOCUMENTO para que llegue íntegro y se pueda abrir/descargar (no corrupto).
+  if (looksWebm || !looksOgg) {
+    const fileName = `audio.${looksWebm ? 'webm' : 'bin'}`
+    const res = await sock.sendMessage(jid, {
+      document: aud,
+      fileName,
+      mimetype: m || 'audio/webm',
+      caption: '🎤 Audio',
+    } as never)
+    return { id: res?.key?.id ?? null }
+  }
+
+  const res = await sock.sendMessage(jid, { audio: aud, mimetype: 'audio/ogg; codecs=opus', ptt: true })
   return { id: res?.key?.id ?? null }
 }
 
