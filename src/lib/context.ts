@@ -15,6 +15,7 @@
 let _companyId = ''
 let _user = ''
 let _role = ''
+let _mfeConfig: Record<string, unknown> = {}
 let _initialized = false
 /** True si la identidad se restauró del último usuario guardado (no vino por URL). */
 let _restoredFromCache = false
@@ -76,6 +77,11 @@ function initFromUrl() {
   _companyId = params.get('companyId') ?? ''
   _user = params.get('user') ?? ''
   _role = params.get('role') ?? ''
+  // Config del MFE definida por el Host (/root-panel) para esta compañía.
+  const rawCfg = params.get('mfeConfig')
+  if (rawCfg) {
+    try { _mfeConfig = JSON.parse(rawCfg) as Record<string, unknown> } catch { _mfeConfig = {} }
+  }
 
   // Fallback al hash (por si se usa HashRouter).
   if (!_companyId && window.location.hash) {
@@ -136,6 +142,21 @@ export function getUserRole(): string {
 export function isAdmin(): boolean {
   initFromUrl()
   return _role === 'admin'
+}
+
+/**
+ * Configuración del MFE para esta compañía, enviada por el Host (/root-panel)
+ * vía el query param `mfeConfig`. Permite aplicar ajustes (marca de agua,
+ * correo, etc.) desde el entorno de la app sin tocar su código.
+ */
+export function getMfeConfig(): Record<string, unknown> {
+  initFromUrl()
+  return _mfeConfig
+}
+/** Lee un valor de la config del MFE con fallback. */
+export function getMfeConfigValue<T>(key: string, fallback: T): T {
+  initFromUrl()
+  return (key in _mfeConfig ? (_mfeConfig[key] as T) : fallback)
 }
 
 /** True si la identidad se restauró del último usuario guardado (sin params/red). */
