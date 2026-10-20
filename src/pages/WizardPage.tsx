@@ -9,7 +9,7 @@ import { WhatsAppSendButton } from '../components/WhatsAppSendButton'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { CatalogPicker } from '../components/CatalogPicker'
 import { ImageEditor } from '../components/ImageEditor'
-import { Button, ErrorState, LoadingState } from '../components/ui'
+import { Button, ErrorState, LoadingState, Modal } from '../components/ui'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
@@ -2458,84 +2458,65 @@ export function WizardPage() {
       )}
 
       {/* Sincronizar WhatsApp de la empresa desde el registro */}
-      {showWaSync && (
-        <div className="fixed inset-0 z-[95] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[92vh] flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                <MessageCircle className="w-4 h-4 text-[#128c7e]" /> Sincronizar WhatsApp
-              </h3>
-              <button onClick={() => setShowWaSync(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-            <div className="overflow-y-auto p-4">
-              <WhatsAppSync syncOnly />
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal open={showWaSync} onClose={() => setShowWaSync(false)} z={95}
+        title="Sincronizar WhatsApp" icon={<MessageCircle className="w-4 h-4 text-[#128c7e]" />}>
+        <WhatsAppSync syncOnly />
+      </Modal>
 
       {/* Ajustes de ESTE registro (marca de agua y partes del sello) */}
-      {showRecordSettings && (
-        <div className="fixed inset-0 z-[96] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setShowRecordSettings(false)}>
-          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                <SlidersHorizontal className="w-4 h-4 text-gray-600" /> Ajustes del registro
-              </h3>
-              <button onClick={() => setShowRecordSettings(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-            <div className="overflow-y-auto p-4 space-y-4">
-              <p className="text-[11px] text-gray-500">
-                Estos ajustes aplican a las fotos que tomes o agregues en este registro, en este dispositivo.
-              </p>
+      <Modal
+        open={showRecordSettings}
+        onClose={() => setShowRecordSettings(false)}
+        z={96}
+        title="Ajustes del registro"
+        icon={<SlidersHorizontal className="w-4 h-4 text-gray-600" />}
+        footer={
+          <button onClick={() => setShowRecordSettings(false)}
+            className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-semibold">
+            Listo
+          </button>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-[11px] text-gray-500">
+            Estos ajustes aplican a las fotos que tomes o agregues en este registro, en este dispositivo.
+          </p>
 
-              {/* Marca de agua ON/OFF */}
-              <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-gray-200">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-800">Marca de agua</p>
-                  <p className="text-[11px] text-gray-500">Estampar fecha, hora y ubicación en las fotos.</p>
-                </div>
-                <input type="checkbox" checked={recordSettings.watermark}
-                  onChange={(e) => updateRecordSetting({ watermark: e.target.checked })}
-                  className="w-5 h-5 accent-[var(--color-primary)] flex-shrink-0" />
-              </label>
-
-              {/* Partes del sello (solo si la marca está activa) */}
-              {recordSettings.watermark && (
-                <div className="space-y-2 pl-1">
-                  <p className="text-[11px] font-semibold text-gray-500 uppercase">Qué incluir en el sello</p>
-                  {([
-                    { key: 'watermarkDate', label: 'Fecha' },
-                    { key: 'watermarkTime', label: 'Hora' },
-                    { key: 'watermarkLocation', label: 'Ubicación (dirección y coordenadas)' },
-                  ] as const).map((row) => (
-                    <label key={row.key} className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-gray-100">
-                      <span className="text-sm text-gray-700">{row.label}</span>
-                      <input type="checkbox" checked={recordSettings[row.key]}
-                        onChange={(e) => updateRecordSetting({ [row.key]: e.target.checked } as Partial<RecordSettings>)}
-                        className="w-5 h-5 accent-[var(--color-primary)] flex-shrink-0" />
-                    </label>
-                  ))}
-                </div>
-              )}
-
-              <p className="text-[10px] text-gray-400">
-                Nota: el sello se graba al momento de capturar/agregar la foto. Las fotos ya guardadas no cambian.
-              </p>
+          {/* Marca de agua ON/OFF */}
+          <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-gray-200">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-800">Marca de agua</p>
+              <p className="text-[11px] text-gray-500">Estampar fecha, hora y ubicación en las fotos.</p>
             </div>
-            <div className="px-4 py-3 border-t border-gray-200">
-              <button onClick={() => setShowRecordSettings(false)}
-                className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-semibold">
-                Listo
-              </button>
+            <input type="checkbox" checked={recordSettings.watermark}
+              onChange={(e) => updateRecordSetting({ watermark: e.target.checked })}
+              className="w-5 h-5 accent-[var(--color-primary)] flex-shrink-0" />
+          </label>
+
+          {/* Partes del sello (solo si la marca está activa) */}
+          {recordSettings.watermark && (
+            <div className="space-y-2 pl-1">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase">Qué incluir en el sello</p>
+              {([
+                { key: 'watermarkDate', label: 'Fecha' },
+                { key: 'watermarkTime', label: 'Hora' },
+                { key: 'watermarkLocation', label: 'Ubicación (dirección y coordenadas)' },
+              ] as const).map((row) => (
+                <label key={row.key} className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-gray-100">
+                  <span className="text-sm text-gray-700">{row.label}</span>
+                  <input type="checkbox" checked={recordSettings[row.key]}
+                    onChange={(e) => updateRecordSetting({ [row.key]: e.target.checked } as Partial<RecordSettings>)}
+                    className="w-5 h-5 accent-[var(--color-primary)] flex-shrink-0" />
+                </label>
+              ))}
             </div>
-          </div>
+          )}
+
+          <p className="text-[10px] text-gray-400">
+            Nota: el sello se graba al momento de capturar/agregar la foto. Las fotos ya guardadas no cambian.
+          </p>
         </div>
-      )}
+      </Modal>
 
       {/* Matriz mensaje × chat — qué parte del registro va a cada chat */}
       {matrixModal.open && (
