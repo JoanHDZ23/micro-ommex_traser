@@ -7,7 +7,7 @@ import { getCompanyId } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
 import { useTracerFeatures } from '../lib/tracer-features'
-import { Badge, Button, Card, ErrorState, LoadingState, operationStatusLabel, operationStatusTone } from '../components/ui'
+import { Badge, Button, Card, ErrorState, LoadingState, Modal, operationStatusLabel, operationStatusTone } from '../components/ui'
 
 const DETAIL_GUIDE: GuideStep[] = [
   {
@@ -204,23 +204,10 @@ export function OperationDetailPage() {
       <ShareButton trackingCode={operation.trackingCode} companyId={operation.companyId} whatsappEnabled={whatsappTrazabilidad} />
 
       {/* Modal: sincronización de WhatsApp (solo QR, sin ID de grupo) */}
-      {showWaSync && (
-        <div className="fixed inset-0 z-[95] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[92vh] flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                <MessageCircle className="w-4 h-4 text-[#128c7e]" /> Sincronizar WhatsApp
-              </h3>
-              <button onClick={() => setShowWaSync(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-            <div className="overflow-y-auto p-4">
-              <WhatsAppSync syncOnly />
-            </div>
-          </div>
-        </div>
-      )}
+      <Modal open={showWaSync} onClose={() => setShowWaSync(false)} z={95}
+        title="Sincronizar WhatsApp" icon={<MessageCircle className="w-4 h-4 text-[#128c7e]" />}>
+        <WhatsAppSync syncOnly />
+      </Modal>
 
       {/* Edit/Reopen button — visible when completed */}
       {operation.status === 'COMPLETADO' && (

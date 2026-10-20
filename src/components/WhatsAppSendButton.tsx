@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
-import { Send, Loader2, X, CheckCircle2 } from 'lucide-react'
+import { Send, Loader2, CheckCircle2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId } from '../lib/context'
+import { Modal } from './ui'
 
 /**
  * Botón de envío por WhatsApp REUTILIZABLE.
@@ -154,66 +155,62 @@ export function WhatsAppSendButton({ target, children, className, title, disable
       )}
 
       {/* Selector de chats destino */}
-      {modal.open && (
-        <div className="fixed inset-0 z-[97] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={cancelDest}>
-          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
-              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                <Send className="w-4 h-4 text-[#128c7e]" /> ¿A qué chats enviar?
-              </h3>
-              <button onClick={cancelDest} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                <X className="w-4 h-4 text-gray-500" />
+      <Modal
+        open={modal.open}
+        onClose={cancelDest}
+        z={97}
+        title="¿A qué chats enviar?"
+        icon={<Send className="w-4 h-4 text-[#128c7e]" />}
+        footer={
+          <div className="flex items-center gap-2">
+            <button onClick={cancelDest} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600">Cancelar</button>
+            <button onClick={confirmDest} disabled={total === 0}
+              className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
+              <Send className="w-4 h-4" /> Enviar ({total})
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-2">
+          {modal.options.length === 0 && (
+            <p className="text-[12px] text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+              No hay chats guardados. Escribe un número abajo para enviar sin guardarlo.
+            </p>
+          )}
+          {modal.options.map((d) => {
+            const on = selected.has(d.to)
+            return (
+              <button key={d.id} onClick={() => toggle(d.to)}
+                className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-colors text-left ${on ? 'border-[#128c7e] bg-emerald-50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${on ? 'bg-[#128c7e] border-[#128c7e]' : 'border-gray-300'}`}>
+                  {on && <CheckCircle2 className="w-4 h-4 text-white" />}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{d.label}</p>
+                  <p className="text-[11px] text-gray-400 truncate">{d.to}</p>
+                </div>
               </button>
-            </div>
-            <div className="overflow-y-auto p-4 space-y-2">
-              {modal.options.length === 0 && (
-                <p className="text-[12px] text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
-                  No hay chats guardados. Escribe un número abajo para enviar sin guardarlo.
-                </p>
-              )}
-              {modal.options.map((d) => {
-                const on = selected.has(d.to)
-                return (
-                  <button key={d.id} onClick={() => toggle(d.to)}
-                    className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-colors text-left ${on ? 'border-[#128c7e] bg-emerald-50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                    <div className={`w-5 h-5 rounded border flex items-center justify-center flex-shrink-0 ${on ? 'bg-[#128c7e] border-[#128c7e]' : 'border-gray-300'}`}>
-                      {on && <CheckCircle2 className="w-4 h-4 text-white" />}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-800 truncate">{d.label}</p>
-                      <p className="text-[11px] text-gray-400 truncate">{d.to}</p>
-                    </div>
-                  </button>
-                )
-              })}
-              <div className="pt-2 mt-1 border-t border-gray-100">
-                <label className="text-[11px] font-semibold text-gray-500 uppercase flex items-center gap-1.5 mb-1.5">
-                  <Send className="w-3 h-3" /> Enviar a otro chat (sin guardar)
-                </label>
-                <input type="tel" inputMode="numeric" value={manual}
-                  onChange={(e) => setManual(e.target.value.replace(/[^\d]/g, ''))}
-                  placeholder="Ej: 573001234567 (con indicativo)"
-                  className="w-full px-3 py-2.5 rounded-lg border border-dashed border-amber-400 bg-amber-50/40 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/40" />
-                {manualDigits && (
-                  <div className="mt-2 flex items-center gap-2 p-2 rounded-lg border border-dashed border-amber-400 bg-amber-50">
-                    <span className="text-[10px] font-bold uppercase text-amber-700 bg-amber-200 px-1.5 py-0.5 rounded">Nuevo</span>
-                    <span className="text-sm font-medium text-amber-900 truncate">{manualDigits}</span>
-                    <span className="ml-auto text-[10px] text-amber-600">sin guardar</span>
-                  </div>
-                )}
-                <p className="text-[10px] text-gray-400 mt-1">Solo números, con código de país. No se guarda en la configuración.</p>
+            )
+          })}
+          <div className="pt-2 mt-1 border-t border-gray-100">
+            <label className="text-[11px] font-semibold text-gray-500 uppercase flex items-center gap-1.5 mb-1.5">
+              <Send className="w-3 h-3" /> Enviar a otro chat (sin guardar)
+            </label>
+            <input type="tel" inputMode="numeric" value={manual}
+              onChange={(e) => setManual(e.target.value.replace(/[^\d]/g, ''))}
+              placeholder="Ej: 573001234567 (con indicativo)"
+              className="w-full px-3 py-2.5 rounded-lg border border-dashed border-amber-400 bg-amber-50/40 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/40" />
+            {manualDigits && (
+              <div className="mt-2 flex items-center gap-2 p-2 rounded-lg border border-dashed border-amber-400 bg-amber-50">
+                <span className="text-[10px] font-bold uppercase text-amber-700 bg-amber-200 px-1.5 py-0.5 rounded">Nuevo</span>
+                <span className="text-sm font-medium text-amber-900 truncate">{manualDigits}</span>
+                <span className="ml-auto text-[10px] text-amber-600">sin guardar</span>
               </div>
-            </div>
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200">
-              <button onClick={cancelDest} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600">Cancelar</button>
-              <button onClick={confirmDest} disabled={total === 0}
-                className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
-                <Send className="w-4 h-4" /> Enviar ({total})
-              </button>
-            </div>
+            )}
+            <p className="text-[10px] text-gray-400 mt-1">Solo números, con código de país. No se guarda en la configuración.</p>
           </div>
         </div>
-      )}
+      </Modal>
     </>
   )
 }
