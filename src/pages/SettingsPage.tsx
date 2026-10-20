@@ -5,7 +5,7 @@ import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
-import { Button, Card, ErrorState, LoadingState, SectionHeader } from '../components/ui'
+import { Button, Card, ErrorState, Input, LoadingState, SectionHeader } from '../components/ui'
 
 const SETTINGS_GUIDE: GuideStep[] = [
   {
@@ -398,13 +398,12 @@ export function SettingsPage() {
 
         {/* Campo de correo destinatario */}
         <div className={`space-y-2 transition-opacity ${sendEmail ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-          <label className="text-xs font-medium text-[var(--color-text-2)]">Correo(s) destinatario(s)</label>
-          <input
+          <Input
             type="email"
+            label="Correo(s) destinatario(s)"
             value={emailTo}
             onChange={(e) => setEmailTo(e.target.value)}
             placeholder="correo@empresa.com (o varios separados por coma)"
-            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
           <p className="text-[10px] text-[var(--color-text-3)]">
             Los registros completados se enviarán a este correo. Para varios destinatarios, sepáralos con coma.
@@ -530,22 +529,18 @@ export function SettingsPage() {
           )}
           {opTypes.map((t, idx) => (
             <div key={`${t.id || 'new'}-${idx}`} className="p-2.5 rounded-lg border space-y-2 bg-[var(--color-surface)] border-[var(--color-border)]">
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
+              <div className="flex items-end gap-2">
+                <Input
                   value={t.label}
                   onChange={(e) => updateOpType(idx, { label: e.target.value })}
                   placeholder="Nombre del tipo"
-                  className="flex-1 min-w-0 px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-                <button type="button" onClick={() => removeOpType(idx)} className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-1">Quitar</button>
+                <button type="button" onClick={() => removeOpType(idx)} className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-2">Quitar</button>
               </div>
-              <input
-                type="text"
+              <Input
                 value={t.descripcion ?? ''}
                 onChange={(e) => updateOpType(idx, { descripcion: e.target.value })}
                 placeholder="Descripción (opcional)"
-                className="w-full px-2.5 py-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] text-xs text-[var(--color-text-2)] focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
           ))}
@@ -561,21 +556,17 @@ export function SettingsPage() {
               </span>
             )}
           </div>
-          <input
-            type="text"
+          <Input
             value={newTypeLabel}
             onChange={(e) => setNewTypeLabel(e.target.value)}
             placeholder="Nombre del tipo (ej. Inventario, Mantenimiento)"
             disabled={limitReached}
-            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
           />
-          <input
-            type="text"
+          <Input
             value={newTypeDesc}
             onChange={(e) => setNewTypeDesc(e.target.value)}
             placeholder="Descripción (opcional)"
             disabled={limitReached}
-            className="w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
           />
           <button
             type="button"
