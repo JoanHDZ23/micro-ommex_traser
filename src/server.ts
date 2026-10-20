@@ -4,6 +4,7 @@ import { connectToMongo } from './lib/mongodb.js'
 import { operationsRouter } from './routes/operations.js'
 import { photosRouter } from './routes/photos.js'
 import { settingsRouter } from './routes/settings.js'
+import { mfeRouter } from './routes/mfe.js'
 import { sheetsRouter } from './routes/sheets.js'
 import { whatsappRouter } from './routes/whatsapp.js'
 import { whatsappWebRouter } from './routes/whatsapp-web.js'
@@ -28,6 +29,7 @@ app.use(express.json({ limit: '60mb' }))
 app.use('/api/operations', operationsRouter)
 app.use('/api/photos', photosRouter)
 app.use('/api/settings', settingsRouter)
+app.use('/api/mfe', mfeRouter)
 app.use('/api/sheets', sheetsRouter)
 app.use('/api/uploads', uploadsRouter)
 app.use('/api/whatsapp', whatsappRouter)
