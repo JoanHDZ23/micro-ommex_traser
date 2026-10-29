@@ -311,6 +311,75 @@ sheetsRouter.get('/:id', async (req, res) => {
 })
 
 /**
+ * GET /api/sheets/:id/lookup?companyId=xxx&code=ABC&codeColumn=0[&descColumn=2][&source=sheet]
+ * Busca una fila por su código dentro de la tabla fijada (DATA) y devuelve los
+ * datos del producto. Se usa cuando un registro tiene una base de datos fija:
+ * al ingresar/escanear un código, trae automáticamente la descripción y la fila.
+ *
+ * - codeColumn: índice de la columna que contiene el código (default 0).
+ * - descColumn: índice de la columna de descripción (opcional).
+ * - La comparación es exacta pero case-insensitive y sin espacios extremos.
+ */
+sheetsRouter.get('/:id/lookup', async (req, res) => {
+  const { id } = req.params
+  const { companyId, code, codeColumn, descColumn, source } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  const needle = (code ?? '').trim().toLowerCase()
+  if (!needle) { res.status(400).json({ message: 'code es requerido.' }); return }
+
+  const codeCol = Number.isFinite(Number(codeColumn)) ? Math.max(0, Math.trunc(Number(codeColumn))) : 0
+  const descCol = descColumn !== undefined && descColumn !== '' && Number.isFinite(Number(descColumn))
+    ? Math.trunc(Number(descColumn))
+    : -1
+
+  try {
+    const doc = await getDb().collection(COLLECTION).findOne({ id, companyId }, { projection: { _id: 0 } })
+    if (!doc) { res.status(404).json({ message: 'Base de datos no encontrada.' }); return }
+
+    let headers: string[] = (doc.columns as string[]) ?? []
+    let rows: string[][] = (doc.rows as string[][]) ?? []
+
+    // Lectura en vivo desde Google Sheets si se pide y hay sheetId.
+    const GAS_URL = process.env.GAS_WEBHOOK_URL ?? ''
+    if (source === 'sheet' && doc.sheetId && GAS_URL) {
+      try {
+        const live = await callGas(GAS_URL, { action: 'getSheetData', sheetId: doc.sheetId, maxRows: MAX_STORED_ROWS }, 60_000) as {
+          status?: string; headers?: string[]; rows?: string[][]
+        }
+        if (live.status === 'success') {
+          headers = live.headers ?? headers
+          rows = live.rows ?? rows
+        }
+      } catch { /* cae a copia local */ }
+    }
+
+    const match = rows.find((r) => String(r[codeCol] ?? '').trim().toLowerCase() === needle)
+    if (!match) {
+      res.json({ found: false, headers, sheetName: doc.sheetName })
+      return
+    }
+
+    const descripcion = descCol >= 0 ? String(match[descCol] ?? '').trim() : ''
+    // Mapa columna→valor para poder mostrar todos los datos de la fila.
+    const data: Record<string, string> = {}
+    headers.forEach((h, i) => { data[h || `col${i}`] = String(match[i] ?? '') })
+
+    res.json({
+      found: true,
+      sheetName: doc.sheetName,
+      headers,
+      row: match,
+      code: String(match[codeCol] ?? ''),
+      descripcion,
+      data,
+    })
+  } catch (err) {
+    console.error('[sheets] Error en lookup:', err)
+    res.status(500).json({ message: 'Error al buscar en la base de datos.' })
+  }
+})
+
+/**
  * PUT /api/sheets/:id/rows
  * Body: { companyId, rows, headers? }
  * Guarda las filas editadas en Mongo y actualiza la Google Sheet (best-effort).
