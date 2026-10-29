@@ -202,20 +202,6 @@ export function CameraCapture({
     void startCamera()
   }
 
-  /**
-   * Guarda la foto actual (en preview) en la bandeja SIN reabrir la cámara.
-   * Se usa al tocar "Agregar producto": conserva las fotos ya tomadas mientras
-   * se elige/registra el producto, y al cerrar el panel se puede seguir tomando.
-   */
-  const stashPreviewToTray = () => {
-    if (!preview) return
-    const base64 = preview.split(',')[1] ?? ''
-    setTray((prev) => [...prev, { base64, dataUrl: preview, comment: comment.trim() }])
-    setPreview(null)
-    setComment('')
-    setShowCommentInput(false)
-  }
-
   const removeFromTray = (idx: number) => {
     setTray((prev) => prev.filter((_, i) => i !== idx))
   }
@@ -232,10 +218,22 @@ export function CameraCapture({
     onCaptureMulti?.({ photos, productCode })
   }
 
+  // Selecciona el producto SIN tocar la cámara ni la foto en revisión: la
+  // secuencia de fotos nunca se interrumpe.
   const handleProductSelected = (item: SheetSearchItem) => {
     setProductCode(item.code || item.descripcion || 'PRODUCTO')
     setShowProductPanel(false)
-    // Si no hay foto en preview, reanuda la cámara para seguir tomando fotos.
+  }
+
+  // Abrir el escáner: como usa su propia cámara, se libera la nuestra para
+  // evitar conflictos de doble stream en móviles. Se reanuda al cerrarlo (si no
+  // hay una foto en revisión), para no cortar la secuencia.
+  const openScanner = () => {
+    if (!preview) stopCamera()
+    setShowScanner(true)
+  }
+  const closeScanner = () => {
+    setShowScanner(false)
     if (!preview) void startCamera()
   }
 
@@ -296,7 +294,7 @@ export function CameraCapture({
           <div className="mt-3 flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setShowScanner(true)}
+              onClick={openScanner}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
             >
               <QrCode className="w-4 h-4" /> Escanear
@@ -401,13 +399,13 @@ export function CameraCapture({
                 </div>
               )}
 
-              {/* Agregar/vincular producto SIN perder las fotos ya tomadas.
-                  Guarda la foto actual en la bandeja y abre el panel de producto. */}
+              {/* Vincular producto SIN interrumpir la secuencia: el panel se abre
+                  encima y la foto en revisión se conserva tal cual. */}
               {multi && allowProductLink && (
-                <div className="flex items-center justify-center gap-2 px-2">
+                <div className="flex items-center justify-center gap-2 px-2 flex-wrap">
                   <button
                     type="button"
-                    onClick={() => { stashPreviewToTray(); setShowScanner(true) }}
+                    onClick={openScanner}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
                   >
                     <QrCode className="w-4 h-4" /> Escanear producto
@@ -415,16 +413,20 @@ export function CameraCapture({
                   {dbConfig?.sheetId && (
                     <button
                       type="button"
-                      onClick={() => { stashPreviewToTray(); setShowProductPanel(true) }}
+                      onClick={() => setShowProductPanel(true)}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
                     >
                       <Package className="w-4 h-4" /> Agregar producto
                     </button>
                   )}
                   {productCode && (
-                    <span className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-emerald-500/80 text-white text-xs font-medium">
-                      <Package className="w-3 h-3" /> {productCode}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setProductCode(undefined)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-emerald-500/90 text-white text-xs font-medium"
+                    >
+                      <Package className="w-3 h-3" /> {productCode} <X className="w-3 h-3" />
+                    </button>
                   )}
                 </div>
               )}
@@ -528,12 +530,11 @@ export function CameraCapture({
       {showScanner && (
         <BarcodeScanner
           onResult={(code) => {
-            setShowScanner(false)
             const clean = dbConfig?.codeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim()
             setProductCode(clean || undefined)
-            if (!preview) void startCamera()
+            closeScanner()
           }}
-          onClose={() => { setShowScanner(false); if (!preview) void startCamera() }}
+          onClose={closeScanner}
         />
       )}
 
@@ -545,7 +546,7 @@ export function CameraCapture({
               <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
                 <Package className="w-4 h-4 text-emerald-600" /> Vincular producto
               </h3>
-              <button onClick={() => { setShowProductPanel(false); if (!preview) void startCamera() }} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+              <button onClick={() => setShowProductPanel(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
                 <X className="w-4 h-4 text-gray-500" />
               </button>
             </div>
