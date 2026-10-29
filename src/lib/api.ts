@@ -298,7 +298,7 @@ export interface SheetLookupResult {
 
 /**
  * Busca un código dentro de una tabla de la DATA (base de datos fijada en el
- * registro) y devuelve los datos del producto si existe.
+ * registro) y devuelve los datos del producto si existe (coincidencia exacta).
  */
 export async function lookupInSheet(params: {
   sheetId: string
@@ -313,6 +313,45 @@ export async function lookupInSheet(params: {
   q.set('codeColumn', String(params.codeColumn ?? 0))
   if (typeof params.descColumn === 'number' && params.descColumn >= 0) q.set('descColumn', String(params.descColumn))
   return apiRequest<SheetLookupResult>(`/sheets/${encodeURIComponent(params.sheetId)}/lookup?${q.toString()}`)
+}
+
+export interface SheetSearchItem {
+  rowIndex: number
+  code: string
+  descripcion: string
+  row: string[]
+  data: Record<string, string>
+}
+
+export interface SheetSearchResult {
+  results: SheetSearchItem[]
+  total: number
+  headers: string[]
+  sheetName?: string
+}
+
+/**
+ * Busca por CÓDIGO o NOMBRE (coincidencia parcial) dentro de una tabla de la
+ * DATA y devuelve todos los resultados ordenados por relevancia. Útil para:
+ *  - 1 resultado → autocompletar directamente.
+ *  - varios → mostrar lista para seleccionar el correcto.
+ *  - ninguno → mensaje "no se encontró".
+ */
+export async function searchInSheet(params: {
+  sheetId: string
+  companyId: string
+  q: string
+  codeColumn?: number
+  descColumn?: number
+  limit?: number
+}): Promise<SheetSearchResult> {
+  const qs = new URLSearchParams()
+  qs.set('companyId', params.companyId)
+  qs.set('q', params.q)
+  qs.set('codeColumn', String(params.codeColumn ?? 0))
+  if (typeof params.descColumn === 'number' && params.descColumn >= 0) qs.set('descColumn', String(params.descColumn))
+  if (params.limit) qs.set('limit', String(params.limit))
+  return apiRequest<SheetSearchResult>(`/sheets/${encodeURIComponent(params.sheetId)}/search?${qs.toString()}`)
 }
 
 /** Lee un File como base64 (sin el prefijo data URL). */

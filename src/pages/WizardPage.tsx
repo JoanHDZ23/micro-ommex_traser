@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
-import { apiRequest, fileToBase64, lookupInSheet, type CompanySheet, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
+import { apiRequest, fileToBase64, lookupInSheet, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
+import { DbProductSearch } from '../components/DbProductSearch'
 import { WhatsAppSync } from '../components/WhatsAppSync'
 import { WhatsAppSendButton } from '../components/WhatsAppSendButton'
 import { AudioRecorder } from '../components/AudioRecorder'
@@ -268,9 +269,9 @@ export function WizardPage() {
   const [showDbModal, setShowDbModal] = useState(false)
   // Modal de búsqueda por código antes de abrir el modal de DATA (con selector alfanumérico/numérico).
   const [showDbCodeModal, setShowDbCodeModal] = useState(false)
-  const [dbCodeInput, setDbCodeInput] = useState('')
+  // Valor inicial del buscador DATA (vacío: el buscador gestiona su propio texto).
+  const dbCodeInput = ''
   const [dbCodeType, setDbCodeType] = useState<'alphanumeric' | 'numeric'>('alphanumeric')
-  const [showDbCodeScanner, setShowDbCodeScanner] = useState(false)
   // Modal para sincronizar/conectar el WhatsApp de la empresa desde el registro.
   const [showWaSync, setShowWaSync] = useState(false)
   // Producto de catálogo asociado a la bandeja de fotos (para vincular grupo al producto).
@@ -278,6 +279,9 @@ export function WizardPage() {
   const [showTrayCatalog, setShowTrayCatalog] = useState(false)
   // Escáner de código de barras en la bandeja de fotos.
   const [showTrayScanner, setShowTrayScanner] = useState(false)
+  // Buscador en la base de datos (DATA) desde la bandeja de fotos.
+  const [showTrayDbSearch, setShowTrayDbSearch] = useState(false)
+  const [trayDbSearchInitial, setTrayDbSearchInitial] = useState('')
 
   // ── Adjuntos: audio, catálogo, documento (estilo WhatsApp) ──
   const [showAudioRecorder, setShowAudioRecorder] = useState(false)
@@ -1107,6 +1111,39 @@ export function WizardPage() {
       setFeedback(`✓ Producto ${code.trim()} agregado. Ya puedes añadir fotos.`)
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error.')
+    } finally {
+      setLbAdding(false)
+    }
+  }
+
+  /**
+   * Agrega al registro un producto encontrado/seleccionado en la base de datos
+   * (DATA). Usa su código y la descripción resuelta. Si ya existe en la
+   * operación, solo lo activa para añadirle fotos.
+   */
+  const addProductFromDb = async (item: SheetSearchItem) => {
+    if (!trackingCode) return
+    const code = (item.code || '').trim()
+    if (!code) { setFeedback('El producto seleccionado no tiene código.'); return }
+    const already = lbProducts.some((p) => p.productCode.toLowerCase() === code.toLowerCase())
+    if (already) {
+      setActiveLbProduct(code)
+      setFeedback(`✓ ${code} ya está en el registro. Ya puedes añadir fotos.`)
+      return
+    }
+    setLbAdding(true)
+    setFeedback(null)
+    try {
+      const labelData = item.descripcion ? { descripcion: item.descripcion } : undefined
+      await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
+        method: 'POST',
+        body: { productCode: code, labelData, isLineaBlanca: false },
+      })
+      setActiveLbProduct(code)
+      await loadOperation()
+      setFeedback(`✓ ${code} agregado desde la base de datos. Ya puedes añadir fotos.`)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al agregar el producto.')
     } finally {
       setLbAdding(false)
     }
@@ -2261,7 +2298,7 @@ export function WizardPage() {
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
                 <Package className="w-4 h-4 text-[var(--color-primary)]" /> Agregar producto
               </button>
-              <button onClick={() => { setShowPlusMenu(false); setDbCodeInput(''); setDbCodeType('alphanumeric'); setShowDbCodeModal(true) }}
+              <button onClick={() => { setShowPlusMenu(false); setDbCodeType('alphanumeric'); setShowDbCodeModal(true) }}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
                 <Database className="w-4 h-4 text-emerald-600" /> Traer producto de la base de datos
               </button>
@@ -2604,12 +2641,7 @@ export function WizardPage() {
                 <label className="text-xs font-medium text-gray-600">Tipo de código</label>
                 <select
                   value={dbCodeType}
-                  onChange={(e) => {
-                    const next = e.target.value as 'alphanumeric' | 'numeric'
-                    setDbCodeType(next)
-                    // Si cambia a numérico, limpia caracteres no numéricos del input.
-                    if (next === 'numeric') setDbCodeInput((v) => v.replace(/[^0-9]/g, ''))
-                  }}
+                  onChange={(e) => setDbCodeType(e.target.value as 'alphanumeric' | 'numeric')}
                   className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
                 >
                   <option value="alphanumeric">Alfanumérico (letras y números)</option>
@@ -2617,64 +2649,38 @@ export function WizardPage() {
                 </select>
               </div>
 
-              {/* Código: escribir o escanear */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-gray-600">Código del producto</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    inputMode={dbCodeType === 'numeric' ? 'numeric' : 'text'}
-                    value={dbCodeInput}
-                    onChange={(e) => {
-                      const raw = e.target.value
-                      const clean = dbCodeType === 'numeric' ? raw.replace(/[^0-9]/g, '') : raw.toUpperCase()
-                      setDbCodeInput(clean)
-                    }}
-                    placeholder={dbCodeType === 'numeric' ? 'Ej. 123456' : 'Ej. ABC-123'}
-                    className="flex-1 px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                    autoFocus
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') { setShowDbCodeModal(false); setShowDbModal(true) }
-                    }}
-                  />
+              {recordSettings.dbSheetId ? (
+                /* Buscador: 1 resultado → autocompleta, varios → lista, ninguno → aviso */
+                <DbProductSearch
+                  sheetId={recordSettings.dbSheetId}
+                  sheetName={recordSettings.dbSheetName}
+                  codeColumn={recordSettings.dbCodeColumn ?? 0}
+                  descColumn={recordSettings.dbDescColumn ?? -1}
+                  codeType={dbCodeType}
+                  initialValue={dbCodeInput}
+                  onSelect={(item) => { setShowDbCodeModal(false); void addProductFromDb(item) }}
+                />
+              ) : (
+                /* Sin base de datos fijada: ofrece abrir la tabla completa */
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <span>No hay una base de datos fijada en este registro. Fíjala en “Ajustes del registro” para buscar por código, o abre la tabla completa.</span>
+                  </div>
                   <button
-                    onClick={() => setShowDbCodeScanner(true)}
-                    title="Escanear código de barras"
-                    className="px-3 py-2.5 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center"
+                    onClick={() => { setShowDbCodeModal(false); setShowDbModal(true) }}
+                    className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium flex items-center justify-center gap-2"
                   >
-                    <QrCode className="w-5 h-5" />
+                    <Database className="w-4 h-4" /> Abrir base de datos
                   </button>
                 </div>
-              </div>
-
-              <button
-                onClick={() => { setShowDbCodeModal(false); setShowDbModal(true) }}
-                className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium flex items-center justify-center gap-2"
-              >
-                <Search className="w-4 h-4" />
-                {dbCodeInput.trim() ? `Buscar "${dbCodeInput.trim()}"` : 'Abrir base de datos'}
-              </button>
-              <p className="text-[10px] text-gray-400 text-center">
-                Escribe o escanea el código. La tabla se abrirá filtrada por ese valor.
-              </p>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Escáner de código de barras para el paso previo de la base de datos */}
-      {showDbCodeScanner && (
-        <BarcodeScanner
-          onResult={(code) => {
-            setShowDbCodeScanner(false)
-            const clean = dbCodeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim().toUpperCase()
-            setDbCodeInput(clean)
-          }}
-          onClose={() => setShowDbCodeScanner(false)}
-        />
-      )}
-
-      {/* Traer productos de la base de datos a ESTE registro */}
+      {/* Traer productos de la base de datos a ESTE registro (tabla completa) */}
       {showDbModal && (
         <SheetsModal
           open={showDbModal}
@@ -3105,16 +3111,34 @@ export function WizardPage() {
                 Arrastra imágenes aquí · Ctrl+V para pegar · o usa Galería para seleccionar varias
               </p>
 
-              {/* ── Escanear código de barras para vincular producto ── */}
-              <div className="flex items-center gap-2">
+              {/* ── Vincular estas fotos a un producto ── */}
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => setShowTrayScanner(true)}
+                  onClick={() => {
+                    // Con base de datos fijada, escanear abre el buscador DATA
+                    // (valida: uno/varios/ninguno). Sin DB, escáner directo.
+                    if (recordSettings.dbSheetId) {
+                      setTrayDbSearchInitial(''); setShowTrayDbSearch(true)
+                    } else {
+                      setShowTrayScanner(true)
+                    }
+                  }}
                   className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors"
                 >
                   <QrCode className="w-4 h-4" />
                   Escanear código
                 </button>
+                {recordSettings.dbSheetId && (
+                  <button
+                    type="button"
+                    onClick={() => { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) }}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-xs font-medium hover:bg-emerald-100 transition-colors"
+                  >
+                    <Database className="w-4 h-4" />
+                    Buscar en DATA
+                  </button>
+                )}
                 {features.whatsappCatalog && (
                   <button
                     type="button"
@@ -3122,7 +3146,7 @@ export function WizardPage() {
                     className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors"
                   >
                     <Package className="w-4 h-4" />
-                    Catálogo DATA
+                    Catálogo
                   </button>
                 )}
               </div>
@@ -3174,7 +3198,7 @@ export function WizardPage() {
         </div>
       )}
 
-      {/* Escáner de código de barras en la bandeja de fotos */}
+      {/* Escáner de código de barras en la bandeja de fotos (sin base de datos fijada) */}
       {showTrayScanner && (
         <BarcodeScanner
           onResult={(code) => {
@@ -3183,6 +3207,34 @@ export function WizardPage() {
           }}
           onClose={() => setShowTrayScanner(false)}
         />
+      )}
+
+      {/* Buscar en la base de datos (DATA) desde la bandeja: uno/varios/ninguno */}
+      {showTrayDbSearch && recordSettings.dbSheetId && (
+        <div className="fixed inset-0 z-[97] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-600" /> Buscar producto en la base de datos
+              </h3>
+              <button onClick={() => setShowTrayDbSearch(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <DbProductSearch
+              sheetId={recordSettings.dbSheetId}
+              sheetName={recordSettings.dbSheetName}
+              codeColumn={recordSettings.dbCodeColumn ?? 0}
+              descColumn={recordSettings.dbDescColumn ?? -1}
+              initialValue={trayDbSearchInitial}
+              onSelect={(item) => {
+                setShowTrayDbSearch(false)
+                // Vincula estas fotos al producto elegido de la DATA.
+                setTrayProductCode(item.code.trim())
+              }}
+            />
+          </div>
+        </div>
       )}
 
       {/* Catálogo DATA para vincular producto al grupo de fotos */}
