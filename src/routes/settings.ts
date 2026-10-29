@@ -184,7 +184,11 @@ settingsRouter.get('/cleanup', async (req, res) => {
 settingsRouter.put('/cleanup', async (req, res) => {
   const { companyId, cleanupEnabled, cleanupDays } = req.body ?? {}
   if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
-  const days = typeof cleanupDays === 'number' && cleanupDays >= 1 ? Math.round(cleanupDays) : 20
+  // Normaliza cleanupDays: acepta número o string numérico enviado por el cliente.
+  const rawDays = typeof cleanupDays === 'number' ? cleanupDays : Number(cleanupDays)
+  const days = Number.isFinite(rawDays) && rawDays >= 1 ? Math.round(rawDays) : 20
+  // Normaliza cleanupEnabled: acepta boolean o string "true"/"false".
+  const enabled = cleanupEnabled === true || cleanupEnabled === 'true'
   try {
     const db = getDb()
     await db.collection(COLLECTION).updateOne(
@@ -192,14 +196,14 @@ settingsRouter.put('/cleanup', async (req, res) => {
       {
         $set: {
           companyId: companyId.trim(),
-          cleanupEnabled: Boolean(cleanupEnabled),
+          cleanupEnabled: enabled,
           cleanupDays: days,
           updatedAt: new Date().toISOString(),
         },
       },
       { upsert: true },
     )
-    res.json({ message: 'Configuración de limpieza guardada.', cleanupEnabled: Boolean(cleanupEnabled), cleanupDays: days })
+    res.json({ message: 'Configuración de limpieza guardada.', cleanupEnabled: enabled, cleanupDays: days })
   } catch (err) {
     console.error('[settings] Error al guardar config cleanup:', err)
     res.status(500).json({ message: 'Error al guardar configuración de limpieza.' })

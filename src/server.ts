@@ -1,6 +1,7 @@
 import cors from 'cors'
 import express from 'express'
 import { connectToMongo } from './lib/mongodb.js'
+import { authRouter } from './routes/auth.js'
 import { operationsRouter } from './routes/operations.js'
 import { photosRouter } from './routes/photos.js'
 import { settingsRouter } from './routes/settings.js'
@@ -9,6 +10,8 @@ import { sheetsRouter } from './routes/sheets.js'
 import { whatsappRouter } from './routes/whatsapp.js'
 import { whatsappWebRouter } from './routes/whatsapp-web.js'
 import { uploadsRouter } from './routes/uploads.js'
+import { requireToken } from './middleware/requireToken.js'
+import { sweepExpiredSessions } from './lib/auth.js'
 import { runCleanupOldOperations } from './jobs/cleanupOldOperations.js'
 
 const app = express()
@@ -22,20 +25,26 @@ app.use(cors({
     /\.onrender\.com$/,
   ],
   credentials: true,
+  // Permite el header Authorization para el token de sesión.
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }))
 app.use(express.json({ limit: '60mb' }))
 
-// Routes
-app.use('/api/operations', operationsRouter)
-app.use('/api/photos', photosRouter)
-app.use('/api/settings', settingsRouter)
-app.use('/api/mfe', mfeRouter)
-app.use('/api/sheets', sheetsRouter)
-app.use('/api/uploads', uploadsRouter)
-app.use('/api/whatsapp', whatsappRouter)
+// ── Rutas PÚBLICAS (sin token) ──
+// Autenticación: emite el token y mantiene viva la sesión.
+app.use('/api/auth', authRouter)
+
+// ── Rutas PROTEGIDAS (requieren token de sesión válido) ──
+app.use('/api/operations', requireToken, operationsRouter)
+app.use('/api/photos', requireToken, photosRouter)
+app.use('/api/settings', requireToken, settingsRouter)
+app.use('/api/mfe', requireToken, mfeRouter)
+app.use('/api/sheets', requireToken, sheetsRouter)
+app.use('/api/uploads', requireToken, uploadsRouter)
+app.use('/api/whatsapp', requireToken, whatsappRouter)
 // WhatsApp Web (Baileys, vía QR) — módulo opcional, solo si está habilitado.
 if (process.env.ENABLE_WHATSAPP_WEB === 'true') {
-  app.use('/api/whatsapp-web', whatsappWebRouter)
+  app.use('/api/whatsapp-web', requireToken, whatsappWebRouter)
   console.log('[ommex-tracer] WhatsApp Web (Baileys) HABILITADO en /api/whatsapp-web')
 }
 
@@ -284,6 +293,12 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`[ommex-tracer] Servidor corriendo en http://localhost:${PORT}`)
   })
+
+  // Barrido periódico de sesiones caducadas por inactividad (cada 10 min).
+  setInterval(() => {
+    const removed = sweepExpiredSessions()
+    if (removed > 0) console.log(`[auth] ${removed} sesión(es) cerrada(s) por inactividad.`)
+  }, 10 * 60 * 1000)
 
   try {
     await connectToMongo()
