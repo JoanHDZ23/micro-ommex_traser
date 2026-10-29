@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2,
@@ -29,6 +29,12 @@ interface SheetsModalProps {
    * la tabla arranca filtrada por este valor para encontrar el producto rápido.
    */
   initialFilter?: string
+  /**
+   * Si es `true`, se renderiza como VISTA de página completa (no como modal con
+   * overlay). Usado por la ruta /documentos. El Wizard lo deja en `false` para
+   * seguir usándolo como modal superpuesto al registro.
+   */
+  asPage?: boolean
 }
 
 const ACCEPTED = '.csv,.xlsx,.xls,.pdf'
@@ -505,7 +511,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
  * con filtro por columna, crear un Google Sheet filtrable y gestionar
  * (listar / verificar en la app / eliminar) las hojas creadas por la empresa.
  */
-export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, initialFilter }: SheetsModalProps) {
+export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, initialFilter, asPage = false }: SheetsModalProps) {
   const navigate = useNavigate()
   const titleId = useId()
   // Si no viene companyId (p. ej. abriendo la app directamente para probar),
@@ -525,6 +531,8 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   const [sheets, setSheets] = useState<CompanySheet[]>([])
   const [loadingList, setLoadingList] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  // Búsqueda dentro del listado de tablas (por nombre de tabla o archivo origen).
+  const [sheetSearch, setSheetSearch] = useState('')
 
   // Visor de una hoja importada (verificación dentro de la app)
   const [viewing, setViewing] = useState<SheetData | null>(null)
@@ -961,10 +969,45 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     }
   }
 
+  // Tablas filtradas por el buscador del listado.
+  const filteredSheets = useMemo(() => {
+    const q = sheetSearch.trim().toLowerCase()
+    if (!q) return sheets
+    return sheets.filter((s) =>
+      s.sheetName.toLowerCase().includes(q) || (s.sourceFileName ?? '').toLowerCase().includes(q),
+    )
+  }, [sheets, sheetSearch])
+
   if (!open) return null
 
-  return (
-    <>
+  // Botón "atrás" para volver del visor al listado (solo en modo modal; en modo
+  // página el SectionHeader ya ofrece el "atrás").
+  const viewerBackButton = viewing && !asPage ? (
+    <div className="pb-2">
+      <Button variant="ghost" size="sm" onClick={closeViewer}
+        leftIcon={<ArrowLeft className="w-4 h-4" />}>
+        Volver a las tablas
+      </Button>
+    </div>
+  ) : null
+
+  // Contenedor raíz: en modo página es una vista con SectionHeader fijo; en modo
+  // modal es el ModalSurface con overlay. El cuerpo (children) es idéntico.
+  const Shell = ({ children }: { children: ReactNode }) =>
+    asPage ? (
+      <div className="flex flex-col min-h-full">
+        <div className="sticky top-0 z-10 bg-[var(--color-bg)]/95 backdrop-blur border-b border-[var(--color-border)] px-4 py-3">
+          <SectionHeader
+            title={viewing ? viewing.sheetName : 'Base de datos'}
+            subtitle={viewing ? 'Consulta, edita y gestiona la tabla' : 'Importa y administra tus tablas de datos'}
+            onBack={viewing ? closeViewer : onClose}
+          />
+        </div>
+        <div className="flex-1 w-full max-w-3xl mx-auto px-4 py-4">
+          {children}
+        </div>
+      </div>
+    ) : (
       <ModalSurface
         open={open}
         onClose={onClose}
@@ -972,15 +1015,15 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
         titleId={titleId}
         size="lg"
       >
-        {/* Botón "atrás" para volver del visor al listado (ModalSurface ya provee el cierre). */}
-        {viewing && (
-          <div className="pb-2">
-            <Button variant="ghost" size="sm" onClick={closeViewer}
-              leftIcon={<ArrowLeft className="w-4 h-4" />}>
-              Volver a las tablas
-            </Button>
-          </div>
-        )}
+        {children}
+      </ModalSurface>
+    )
+
+  return (
+    <>
+      <Shell>
+        {/* Botón "atrás" para volver del visor al listado (solo modal). */}
+        {viewerBackButton}
 
         {/* ── Modo visor: verificar una tabla importada dentro de la app ── */}
         {viewing ? (
@@ -1146,29 +1189,31 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
         ) : (
           /* ── Modo normal: subir + listar ── */
           <div className="pb-4 space-y-5">
-            {/* Banner hero principal */}
-            <section
-              className="relative overflow-hidden rounded-2xl p-4 sm:p-5 shadow-sm border border-[color:var(--color-border)]"
-              style={{
-                backgroundImage: 'linear-gradient(135deg, var(--hero-from) 0%, var(--hero-via) 55%, var(--hero-to) 100%)',
-                color: 'var(--hero-text)',
-              }}
-            >
-              <div className="absolute top-0 right-0 w-36 h-36 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
-              <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
-              <div className="relative">
-                <div className="flex items-center gap-2 mb-2">
-                  <FileSpreadsheet className="w-5 h-5" style={{ color: 'var(--hero-chip-text)' }} />
-                  <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
-                    Base de datos
-                  </span>
+            {/* Banner hero principal (solo en modo modal; en página lo cubre el header) */}
+            {!asPage && (
+              <section
+                className="relative overflow-hidden rounded-2xl p-4 sm:p-5 shadow-sm border border-[color:var(--color-border)]"
+                style={{
+                  backgroundImage: 'linear-gradient(135deg, var(--hero-from) 0%, var(--hero-via) 55%, var(--hero-to) 100%)',
+                  color: 'var(--hero-text)',
+                }}
+              >
+                <div className="absolute top-0 right-0 w-36 h-36 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
+                <div className="absolute bottom-0 left-0 w-32 h-32 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2" style={{ backgroundColor: 'var(--hero-accent-ring)' }} aria-hidden="true" />
+                <div className="relative">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FileSpreadsheet className="w-5 h-5" style={{ color: 'var(--hero-chip-text)' }} />
+                    <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--hero-chip-text)', opacity: .9 }}>
+                      Base de datos
+                    </span>
+                  </div>
+                  <h2 className="text-lg sm:text-xl font-bold">Documentos a Tablas</h2>
+                  <p className="text-xs sm:text-sm mt-0.5 max-w-md" style={{ color: 'var(--hero-text-2)' }}>
+                    Importa CSV, Excel o PDF para consultar, editar y usar los datos en tus registros de trazabilidad.
+                  </p>
                 </div>
-                <h2 className="text-lg sm:text-xl font-bold">Documentos a Tablas</h2>
-                <p className="text-xs sm:text-sm mt-0.5 max-w-md" style={{ color: 'var(--hero-text-2)' }}>
-                  Importa CSV, Excel o PDF para consultar, editar y usar los datos en tus registros de trazabilidad.
-                </p>
-              </div>
-            </section>
+              </section>
+            )}
 
             {/* ── Subida ── */}
             <section className="space-y-3">
@@ -1260,6 +1305,25 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                 actions={(loadingList || loadingView) ? <LoadingState inline size="sm" label="" /> : undefined}
               />
 
+              {/* Buscador de tablas (aparece cuando hay más de una) */}
+              {sheets.length > 1 && (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-3)]" />
+                  <input
+                    value={sheetSearch}
+                    onChange={(e) => setSheetSearch(e.target.value)}
+                    placeholder="Buscar tabla por nombre…"
+                    className="w-full pl-9 pr-9 py-2.5 rounded-xl border border-[var(--color-border)] text-sm bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                  />
+                  {sheetSearch && (
+                    <button onClick={() => setSheetSearch('')} aria-label="Limpiar búsqueda"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:bg-[var(--color-bg)]">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+
               {!loadingList && sheets.length === 0 && (
                 <EmptyState
                   icon={<FileText className="w-8 h-8 mx-auto" />}
@@ -1268,10 +1332,22 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                 />
               )}
 
+              {/* Sin coincidencias de búsqueda (pero sí hay tablas) */}
+              {!loadingList && sheets.length > 0 && filteredSheets.length === 0 && (
+                <div className="text-center py-6 text-sm text-[var(--color-text-3)]">
+                  Sin coincidencias para “{sheetSearch}”.
+                </div>
+              )}
+
               <div className="space-y-2.5">
-                {sheets.map((s) => (
-                  <Card key={s.id} interactive padding="none" className="group transition-all hover:shadow-md">
-                    <div className="flex items-center gap-3.5 p-3.5">
+                {filteredSheets.map((s) => (
+                  <Card key={s.id} padding="none" className="group overflow-hidden transition-all hover:shadow-md hover:border-emerald-300/60">
+                    {/* Fila principal: clic en el cuerpo abre el visor */}
+                    <button
+                      type="button"
+                      onClick={() => void handleView(s)}
+                      className="w-full flex items-center gap-3.5 p-3.5 text-left"
+                    >
                       <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center text-white shadow-sm flex-shrink-0">
                         <FileSpreadsheet className="w-5 h-5" />
                       </div>
@@ -1279,42 +1355,44 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-bold text-[var(--color-text)] truncate">{s.sheetName}</p>
                           {s.sheetUrl && (
-                            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 flex-shrink-0">
                               Drive
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-3 mt-1">
+                        <div className="flex items-center gap-3 mt-1 flex-wrap">
                           <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-3)]">
                             <Table2 className="w-3 h-3" /> {s.rowCount} filas
                           </span>
                           <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-3)]">
-                            <Database className="w-3 h-3" /> {s.columns.length} cols
+                            <Database className="w-3 h-3" /> {s.columns.length} columnas
                           </span>
                           <span className="inline-flex items-center gap-1 text-[11px] text-[var(--color-text-3)]">
                             {new Date(s.createdAt).toLocaleDateString()}
                           </span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button onClick={() => void handleView(s)}
-                          className="w-9 h-9 rounded-xl flex items-center justify-center text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors"
-                          aria-label="Verificar datos en la app" title="Ver/Editar en la app">
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        {s.sheetUrl && (
-                          <a href={s.sheetUrl} target="_blank" rel="noopener noreferrer"
-                            className="w-9 h-9 rounded-xl flex items-center justify-center text-emerald-600 hover:bg-emerald-50 transition-colors"
-                            aria-label="Abrir en Google Sheets" title="Abrir en Google Sheets">
-                            <ExternalLink className="w-4 h-4" />
-                          </a>
-                        )}
-                        <button onClick={() => void handleDelete(s)} disabled={deletingId === s.id}
-                          className="w-9 h-9 rounded-xl flex items-center justify-center text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-                          aria-label="Eliminar hoja" title="Eliminar">
-                          {deletingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                        </button>
-                      </div>
+                    </button>
+
+                    {/* Barra de acciones con etiquetas (clara en móvil) */}
+                    <div className="flex items-stretch border-t border-[var(--color-border)] divide-x divide-[var(--color-border)]">
+                      <button onClick={() => void handleView(s)}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors"
+                        title="Ver y editar en la app">
+                        <Eye className="w-4 h-4" /> Ver / Editar
+                      </button>
+                      {s.sheetUrl && (
+                        <a href={s.sheetUrl} target="_blank" rel="noopener noreferrer"
+                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-emerald-600 hover:bg-emerald-50 transition-colors"
+                          title="Abrir en Google Sheets">
+                          <ExternalLink className="w-4 h-4" /> Sheets
+                        </a>
+                      )}
+                      <button onClick={() => void handleDelete(s)} disabled={deletingId === s.id}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                        title="Eliminar tabla">
+                        {deletingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Eliminar
+                      </button>
                     </div>
                   </Card>
                 ))}
@@ -1322,7 +1400,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
             </section>
           </div>
         )}
-      </ModalSurface>
+      </Shell>
 
       {/* ── Modal: destino para traer productos del documento a los registros ── */}
       {bringRows && (
