@@ -1117,11 +1117,28 @@ export function WizardPage() {
   }
 
   /**
-   * Agrega al registro un producto encontrado/seleccionado en la base de datos
-   * (DATA). Usa su código y la descripción resuelta. Si ya existe en la
-   * operación, solo lo activa para añadirle fotos.
+   * Compone la descripción del producto a partir de la descripción configurada
+   * más las COLUMNAS ADICIONALES seleccionadas en los ajustes del registro,
+   * con el formato "Encabezado: valor" separado por " · ".
    */
-  const addProductFromDb = async (item: SheetSearchItem) => {
+  const composeDbDescription = (item: SheetSearchItem, headers: string[]): string => {
+    const parts: string[] = []
+    if (item.descripcion) parts.push(item.descripcion)
+    const extraCols = recordSettings.dbExtraColumns ?? []
+    for (const col of extraCols) {
+      const name = headers[col] || `Columna ${col + 1}`
+      const value = String(item.row[col] ?? '').trim()
+      if (value) parts.push(`${name}: ${value}`)
+    }
+    return parts.join(' · ')
+  }
+
+  /**
+   * Agrega al registro un producto encontrado/seleccionado en la base de datos
+   * (DATA). Usa su código y los datos configurados (descripción + columnas
+   * adicionales). Si ya existe en la operación, solo lo activa.
+   */
+  const addProductFromDb = async (item: SheetSearchItem, headers: string[] = []) => {
     if (!trackingCode) return
     const code = (item.code || '').trim()
     if (!code) { setFeedback('El producto seleccionado no tiene código.'); return }
@@ -1134,7 +1151,8 @@ export function WizardPage() {
     setLbAdding(true)
     setFeedback(null)
     try {
-      const labelData = item.descripcion ? { descripcion: item.descripcion } : undefined
+      const descripcion = composeDbDescription(item, headers)
+      const labelData = descripcion ? { descripcion } : undefined
       await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
         method: 'POST',
         body: { productCode: code, labelData, isLineaBlanca: false },
@@ -2658,7 +2676,7 @@ export function WizardPage() {
                   descColumn={recordSettings.dbDescColumn ?? -1}
                   codeType={dbCodeType}
                   initialValue={dbCodeInput}
-                  onSelect={(item) => { setShowDbCodeModal(false); void addProductFromDb(item) }}
+                  onSelect={(item, headers) => { setShowDbCodeModal(false); void addProductFromDb(item, headers) }}
                 />
               ) : (
                 /* Sin base de datos fijada: ofrece abrir la tabla completa */
@@ -2775,6 +2793,7 @@ export function WizardPage() {
                     // Al cambiar de tabla, reinicia las columnas a valores por defecto.
                     dbCodeColumn: 0,
                     dbDescColumn: -1,
+                    dbExtraColumns: [],
                   })
                   setDbHeaders([])
                   if (sheetId) void loadDbHeaders(sheetId)
@@ -2824,6 +2843,47 @@ export function WizardPage() {
                           <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>
                         ))}
                       </select>
+                    </div>
+
+                    {/* Columnas de datos ADICIONALES a usar del producto (multi-selección) */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-medium text-gray-600">Datos del producto a usar (columnas)</label>
+                      <p className="text-[10px] text-gray-400 -mt-1">
+                        Marca las columnas cuyos datos quieres traer del producto. El código y la descripción ya se incluyen.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {dbHeaders.map((h, i) => {
+                          // El código y la descripción no son columnas "extra" seleccionables.
+                          if (i === (recordSettings.dbCodeColumn ?? 0)) return null
+                          if (i === recordSettings.dbDescColumn) return null
+                          const selected = (recordSettings.dbExtraColumns ?? []).includes(i)
+                          return (
+                            <button
+                              key={i}
+                              type="button"
+                              onClick={() => {
+                                const current = recordSettings.dbExtraColumns ?? []
+                                const next = selected
+                                  ? current.filter((c) => c !== i)
+                                  : [...current, i].sort((a, b) => a - b)
+                                updateRecordSetting({ dbExtraColumns: next })
+                              }}
+                              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${
+                                selected
+                                  ? 'bg-emerald-600 border-emerald-600 text-white'
+                                  : 'bg-white border-gray-200 text-gray-600 hover:border-emerald-300'
+                              }`}
+                            >
+                              {h || `Columna ${i + 1}`}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {(recordSettings.dbExtraColumns ?? []).length > 0 && (
+                        <p className="text-[10px] text-emerald-700 pt-0.5">
+                          {(recordSettings.dbExtraColumns ?? []).length} columna(s) adicional(es) seleccionada(s).
+                        </p>
+                      )}
                     </div>
                   </>
                 ) : (

@@ -29,8 +29,11 @@ export interface DbProductSearchProps {
   codeType?: 'alphanumeric' | 'numeric'
   /** Texto inicial del campo (opcional). */
   initialValue?: string
-  /** Se llama cuando el usuario resuelve un producto (único o seleccionado). */
-  onSelect: (item: SheetSearchItem) => void
+  /**
+   * Se llama cuando el usuario resuelve un producto (único o seleccionado).
+   * Recibe el item y los encabezados de la tabla (para componer datos extra).
+   */
+  onSelect: (item: SheetSearchItem, headers: string[]) => void
   /** Autofoco en el input al montar. */
   autoFocus?: boolean
 }
@@ -48,6 +51,7 @@ export function DbProductSearch({
   const [value, setValue] = useState(initialValue)
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<SheetSearchItem[]>([])
+  const [headers, setHeaders] = useState<string[]>([])
   const [total, setTotal] = useState(0)
   const [searched, setSearched] = useState(false)
   const [scannerOpen, setScannerOpen] = useState(false)
@@ -65,12 +69,13 @@ export function DbProductSearch({
     try {
       const r = await searchInSheet({ sheetId, companyId, q, codeColumn, descColumn, limit: 25 })
       setResults(r.results)
+      setHeaders(r.headers ?? [])
       setTotal(r.total)
       setSearched(true)
       // Un único resultado → resolver automáticamente (una sola vez por término).
       if (r.results.length === 1 && autoResolvedFor.current !== q.toLowerCase()) {
         autoResolvedFor.current = q.toLowerCase()
-        onSelect(r.results[0])
+        onSelect(r.results[0], r.headers ?? [])
       }
     } catch {
       setResults([]); setTotal(0); setSearched(true)
@@ -148,7 +153,7 @@ export function DbProductSearch({
           /* Único: se autoselecciona; se muestra confirmación tappable */
           <button
             type="button"
-            onClick={() => onSelect(results[0])}
+            onClick={() => onSelect(results[0], headers)}
             className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-left hover:bg-emerald-100 transition-colors"
           >
             <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />
@@ -170,7 +175,7 @@ export function DbProductSearch({
                 <button
                   key={item.rowIndex}
                   type="button"
-                  onClick={() => onSelect(item)}
+                  onClick={() => onSelect(item, headers)}
                   className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left hover:bg-emerald-50 transition-colors"
                 >
                   <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />

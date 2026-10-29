@@ -29,6 +29,11 @@ export interface RecordSettings {
   dbCodeColumn?: number
   /** Índice de la columna de descripción a traer (opcional, -1 = ninguna). */
   dbDescColumn?: number
+  /**
+   * Columnas ADICIONALES de datos que se traerán del producto (además del
+   * código y la descripción). Índices de columna de la tabla fijada.
+   */
+  dbExtraColumns?: number[]
 }
 
 export const DEFAULT_RECORD_SETTINGS: RecordSettings = {
@@ -40,6 +45,7 @@ export const DEFAULT_RECORD_SETTINGS: RecordSettings = {
   dbSheetName: undefined,
   dbCodeColumn: 0,
   dbDescColumn: -1,
+  dbExtraColumns: [],
 }
 
 const KEY_PREFIX = 'ommex_record_settings:'
