@@ -6,7 +6,7 @@ import {
   Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
   Star, LayoutGrid, List, Package,
 } from 'lucide-react'
-import { getDbSettings, patchDbSettings } from '../lib/db-settings'
+import { getPrimarySheetId, getSheetColumns, setPrimarySheet, setSheetColumns } from '../lib/db-settings'
 import { apiRequest, fileToBase64, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
@@ -96,28 +96,6 @@ function loadMarkedQty(key?: string): Record<number, number> {
     if (raw) return JSON.parse(raw) as Record<number, number>
   } catch { /* ignore */ }
   return {}
-}
-
-interface SavedColumnSelection {
-  codeCol: number
-  descCol: number
-  extraCols: number[]
-}
-
-/** Lee la última selección de columnas guardada para una empresa. */
-function loadColumnSelection(companyId: string): SavedColumnSelection | null {
-  try {
-    const raw = localStorage.getItem(`ommex_colsel_${companyId}`)
-    if (raw) return JSON.parse(raw) as SavedColumnSelection
-  } catch { /* ignore */ }
-  return null
-}
-
-/** Guarda la selección de columnas actual para una empresa. */
-function saveColumnSelection(companyId: string, sel: SavedColumnSelection) {
-  try {
-    localStorage.setItem(`ommex_colsel_${companyId}`, JSON.stringify(sel))
-  } catch { /* ignore */ }
 }
 
 function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTableProps) {
@@ -749,14 +727,14 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   const [loadingView, setLoadingView] = useState(false)
 
   // ── DATA principal de la empresa (tabla donde se busca por defecto) ──
-  const [primarySheetId, setPrimarySheetId] = useState<string | undefined>(
-    () => getDbSettings(companyId).primarySheetId,
+  const [primarySheetId, setPrimarySheetIdState] = useState<string | undefined>(
+    () => getPrimarySheetId(companyId),
   )
   // Marca/desmarca una tabla como la DATA principal de la empresa.
   const togglePrimarySheet = (sheet: CompanySheet) => {
     const next = primarySheetId === sheet.id ? undefined : sheet.id
-    patchDbSettings(companyId, { primarySheetId: next, primarySheetName: next ? sheet.sheetName : undefined })
-    setPrimarySheetId(next)
+    setPrimarySheet(companyId, next, next ? sheet.sheetName : undefined)
+    setPrimarySheetIdState(next)
     setSuccess(next ? `✓ "${sheet.sheetName}" marcada como DATA principal.` : 'Se quitó la DATA principal.')
   }
 
@@ -808,35 +786,25 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     if (col >= 0) setExtraCols((prev) => prev.filter((c) => c !== col))
   }
 
-  // Al abrir el visor: primero intenta cargar la selección guardada; si no existe
-  // o los índices no son válidos para esta tabla, adivina por nombre de encabezado.
+  // Al abrir el visor: carga la configuración de columnas GUARDADA PARA ESA
+  // TABLA (cada tabla tiene su propia selección). Si no hay o los índices no son
+  // válidos, adivina por el nombre del encabezado.
   useEffect(() => {
     if (!viewing) return
     const numCols = viewing.headers.length
-    // Si la tabla es la DATA principal, usa la configuración de columnas guardada
-    // a nivel empresa (db-settings) como fuente preferente.
-    const db = companyId ? getDbSettings(companyId) : null
-    if (db && db.primarySheetId === viewing.id &&
-      db.codeColumn >= 0 && db.codeColumn < numCols &&
-      db.descColumn >= -1 && db.descColumn < numCols &&
-      Array.isArray(db.extraColumns) && db.extraColumns.every((c) => c >= 0 && c < numCols)) {
-      setCodeCol(db.codeColumn)
-      setDescCol(db.descColumn)
-      setExtraCols(db.extraColumns.filter((c) => c !== db.codeColumn && c !== db.descColumn))
-      return
-    }
-    const saved = companyId ? loadColumnSelection(companyId) : null
-    if (
-      saved &&
-      saved.codeCol >= 0 && saved.codeCol < numCols &&
-      saved.descCol >= -1 && saved.descCol < numCols &&
-      Array.isArray(saved.extraCols) &&
-      saved.extraCols.every((c) => c >= 0 && c < numCols && c !== saved.codeCol && c !== saved.descCol)
-    ) {
-      setCodeCol(saved.codeCol)
-      setDescCol(saved.descCol)
-      setExtraCols(saved.extraCols)
-      return
+    // Configuración de columnas propia de esta tabla.
+    const cols = companyId ? getSheetColumns(companyId, viewing.id) : null
+    if (cols &&
+      cols.codeColumn >= 0 && cols.codeColumn < numCols &&
+      cols.descColumn >= -1 && cols.descColumn < numCols &&
+      Array.isArray(cols.extraColumns) && cols.extraColumns.every((c) => c >= 0 && c < numCols)) {
+      // Solo si hay algo realmente configurado (extra o desc); si no, adivina.
+      if (cols.extraColumns.length > 0 || cols.descColumn >= 0 || cols.codeColumn > 0) {
+        setCodeCol(cols.codeColumn)
+        setDescCol(cols.descColumn)
+        setExtraCols(cols.extraColumns.filter((c) => c !== cols.codeColumn && c !== cols.descColumn))
+        return
+      }
     }
     const hs = viewing.headers.map((h) => (h || '').toLowerCase())
     const guessCode = hs.findIndex((h) => /sku|c[oó]digo|code|ref|producto/.test(h))
@@ -846,10 +814,10 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     setExtraCols([])
   }, [viewing, companyId])
 
-  // Persistir la selección de columnas en localStorage cuando cambie (solo si hay viewing activo).
+  // Persistir la selección de columnas PARA ESTA TABLA cuando cambie.
   useEffect(() => {
     if (!viewing || !companyId) return
-    saveColumnSelection(companyId, { codeCol, descCol, extraCols })
+    setSheetColumns(companyId, viewing.id, { codeColumn: codeCol, descColumn: descCol, extraColumns: extraCols })
   }, [codeCol, descCol, extraCols, viewing, companyId])
 
   /**
@@ -1398,18 +1366,12 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   {viewing.source === 'sheet' && (
                     <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full">En vivo desde Sheets</span>
                   )}
-                  {/* Guardar la configuración de columnas de ESTA tabla como la de
-                      la DATA de la empresa (código/descripción/columnas a traer)
-                      y marcarla como DATA principal. */}
+                  {/* Guarda las columnas de ESTA tabla (ya se guardan solas al
+                      cambiarlas) y la marca como la DATA principal de la empresa. */}
                   <Button variant="primary" onClick={() => {
-                    patchDbSettings(companyId, {
-                      primarySheetId: viewing.id,
-                      primarySheetName: viewing.sheetName,
-                      codeColumn: codeCol,
-                      descColumn: descCol,
-                      extraColumns: extraCols,
-                    })
-                    setPrimarySheetId(viewing.id)
+                    setSheetColumns(companyId, viewing.id, { codeColumn: codeCol, descColumn: descCol, extraColumns: extraCols })
+                    setPrimarySheet(companyId, viewing.id, viewing.sheetName)
+                    setPrimarySheetIdState(viewing.id)
                     setSuccess(`✓ Columnas guardadas y "${viewing.sheetName}" marcada como DATA principal.`)
                   }}
                     leftIcon={<Star className="w-4 h-4" />}>

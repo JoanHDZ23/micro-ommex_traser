@@ -20,7 +20,7 @@ import type { PhotoRecord } from '../lib/api'
 import { useTracerFeatures } from '../lib/tracer-features'
 import { getCompanyId } from '../lib/context'
 import { getRecordSettings, setRecordSettings, DEFAULT_RECORD_SETTINGS, type RecordSettings } from '../lib/record-settings'
-import { getDbSettings } from '../lib/db-settings'
+import { getPrimarySheetId, getSheetColumns, type SheetColumnSettings } from '../lib/db-settings'
 
 /** URL directa de R2: driveUrl http(s) que no es de Google. */
 function directUrl(photo: Pick<PhotoRecord, 'driveUrl'>): string | null {
@@ -189,14 +189,12 @@ export function WizardPage() {
     if (!trackingCode) return
     const rs = getRecordSettings(trackingCode)
     if (!rs.dbSheetId) {
-      const db = getDbSettings(getCompanyId())
-      if (db.primarySheetId) {
-        rs.dbSheetId = db.primarySheetId
-        rs.dbSheetName = db.primarySheetName
-        rs.dbCodeColumn = db.codeColumn
-        rs.dbDescColumn = db.descColumn
-        // La primera columna extra se usa como descripción de los buscadores.
-        rs.dbExtraColumns = db.extraColumns?.length ? db.extraColumns : (db.descColumn >= 0 ? [db.descColumn] : [])
+      // Sin tabla fijada → hereda la DATA PRINCIPAL de la empresa.
+      const cid = getCompanyId()
+      const primaryId = getPrimarySheetId(cid)
+      if (primaryId) {
+        rs.dbSheetId = primaryId
+        // El nombre se resuelve luego con la lista de tablas; aquí basta el id.
       }
     }
     setRecordSettingsState(rs)
@@ -231,17 +229,19 @@ export function WizardPage() {
   const recordSettingsRef = useRef(recordSettings)
   useEffect(() => { recordSettingsRef.current = recordSettings }, [recordSettings])
   /**
-   * Columnas efectivas de la DATA: SIEMPRE las globales de la empresa
-   * (configuradas en la vista de Base de datos). El registro solo decide QUÉ
-   * tabla usar, no qué columnas traer.
+   * Columnas efectivas de la DATA: las configuradas PARA LA TABLA que usa este
+   * registro (cada tabla tiene su propia configuración, hecha en la vista de
+   * Base de datos). El registro solo decide QUÉ tabla usar.
    */
-  const getDbCols = useCallback(() => {
-    const db = getDbSettings(getCompanyId())
-    const extra = db.extraColumns?.length ? db.extraColumns : (db.descColumn >= 0 ? [db.descColumn] : [])
-    return { codeColumn: db.codeColumn ?? 0, descColumn: db.descColumn ?? -1, extraColumns: extra }
+  const getDbCols = useCallback((): SheetColumnSettings & { extra: number[] } => {
+    const cid = getCompanyId()
+    const sheetId = recordSettingsRef.current.dbSheetId || getPrimarySheetId(cid)
+    const cols = sheetId ? getSheetColumns(cid, sheetId) : { codeColumn: 0, descColumn: -1, extraColumns: [] }
+    const extra = cols.extraColumns?.length ? cols.extraColumns : (cols.descColumn >= 0 ? [cols.descColumn] : [])
+    return { ...cols, extra }
   }, [])
-  // Columna usada como "descripción" para los buscadores (primera global).
-  const dbPrimaryDescCol = (() => { const c = getDbCols(); return c.extraColumns[0] ?? c.descColumn })()
+  // Columna usada como "descripción" para los buscadores (primera configurada).
+  const dbPrimaryDescCol = (() => { const c = getDbCols(); return c.extra[0] ?? c.descColumn })()
 
   // Carga la lista de tablas de la empresa al abrir los ajustes del registro.
   useEffect(() => {
@@ -1139,7 +1139,7 @@ export function WizardPage() {
           companyId: cid,
           code,
           codeColumn: cols.codeColumn,
-          descColumn: cols.extraColumns[0] ?? cols.descColumn,
+          descColumn: cols.extra[0] ?? cols.descColumn,
         })
         setDbLookup({ loading: false, found: r.found, descripcion: r.descripcion, data: r.data })
         // Si trae descripción, la precargamos en labelData para crear el producto con ella.
@@ -1199,7 +1199,7 @@ export function WizardPage() {
    * Separador " · ".
    */
   const composeDbDescription = (item: SheetSearchItem, headers: string[]): string => {
-    const cols = getDbCols().extraColumns
+    const cols = getDbCols().extra
     if (cols.length === 0) return ''
     const parts: string[] = []
     cols.forEach((col, idx) => {
@@ -2849,8 +2849,8 @@ export function WizardPage() {
             </div>
             <p className="text-[11px] text-gray-500">
               Elige qué tabla de la DATA usar SOLO en este registro. Al ingresar o escanear un código se
-              buscará en esa tabla. Las columnas que se traen (código y descripción) se configuran de forma
-              global desde la vista de Base de datos.
+              buscará en esa tabla. Las columnas que se traen se configuran en cada tabla desde la vista de
+              Base de datos.
             </p>
 
             {/* Seleccionar la tabla fija para ESTE registro */}
@@ -2861,16 +2861,9 @@ export function WizardPage() {
                 onChange={(e) => {
                   const sheetId = e.target.value || undefined
                   const sheet = dbSheets.find((s) => s.id === sheetId)
-                  // Las columnas (código/descripción/adicionales) vienen de la
-                  // configuración GLOBAL de la DATA; aquí solo se fija la tabla.
-                  const db = getDbSettings(getCompanyId())
-                  updateRecordSetting({
-                    dbSheetId: sheetId,
-                    dbSheetName: sheet?.sheetName,
-                    dbCodeColumn: db.codeColumn,
-                    dbDescColumn: db.descColumn,
-                    dbExtraColumns: db.extraColumns?.length ? db.extraColumns : (db.descColumn >= 0 ? [db.descColumn] : []),
-                  })
+                  // Solo se fija QUÉ tabla usar; las columnas se leen de la
+                  // configuración de esa tabla (por-sheet) al momento de buscar.
+                  updateRecordSetting({ dbSheetId: sheetId, dbSheetName: sheet?.sheetName })
                 }}
                 className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
               >
@@ -2885,7 +2878,7 @@ export function WizardPage() {
                 </p>
               )}
               <p className="text-[10px] text-gray-400">
-                Las columnas a traer se configuran en la vista de Base de datos (botón "Usar como DATA").
+                Las columnas que se traen se configuran en cada tabla, dentro de la vista de Base de datos.
               </p>
             </div>
           </div>
