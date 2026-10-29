@@ -88,6 +88,16 @@ function loadMarked(key?: string): Set<number> {
   return new Set()
 }
 
+/** Lee las cantidades encontradas por fila (índice → cantidad) de localStorage. */
+function loadMarkedQty(key?: string): Record<number, number> {
+  if (!key) return {}
+  try {
+    const raw = localStorage.getItem(`ommex_markedqty_${key}`)
+    if (raw) return JSON.parse(raw) as Record<number, number>
+  } catch { /* ignore */ }
+  return {}
+}
+
 interface SavedColumnSelection {
   codeCol: number
   descCol: number
@@ -122,8 +132,10 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards')
   // Filas "marcadas" (producto ya cogido/listo) → se pintan de color. Persistente.
   const [marked, setMarked] = useState<Set<number>>(() => loadMarked(markKey))
+  // Cantidad encontrada por fila (para saber cuántas se han encontrado). Persistente.
+  const [markedQty, setMarkedQty] = useState<Record<number, number>>(() => loadMarkedQty(markKey))
 
-  useEffect(() => { setMarked(loadMarked(markKey)) }, [markKey])
+  useEffect(() => { setMarked(loadMarked(markKey)); setMarkedQty(loadMarkedQty(markKey)) }, [markKey])
 
   const persistMarked = (next: Set<number>) => {
     setMarked(new Set(next))
@@ -132,11 +144,42 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
     }
   }
 
+  const persistMarkedQty = (next: Record<number, number>) => {
+    setMarkedQty({ ...next })
+    if (markKey) {
+      try { localStorage.setItem(`ommex_markedqty_${markKey}`, JSON.stringify(next)) } catch { /* ignore */ }
+    }
+  }
+
   const toggleMark = (globalIdx: number) => {
     const next = new Set(marked)
-    if (next.has(globalIdx)) next.delete(globalIdx); else next.add(globalIdx)
+    const nextQty = { ...markedQty }
+    if (next.has(globalIdx)) {
+      // Desmarcar: también limpia su cantidad.
+      next.delete(globalIdx)
+      delete nextQty[globalIdx]
+    } else {
+      // Marcar: arranca con 1 encontrada.
+      next.add(globalIdx)
+      nextQty[globalIdx] = nextQty[globalIdx] && nextQty[globalIdx] > 0 ? nextQty[globalIdx] : 1
+    }
     persistMarked(next)
+    persistMarkedQty(nextQty)
   }
+
+  // Ajusta la cantidad encontrada de una fila marcada (mínimo 1).
+  const setQty = (globalIdx: number, qty: number) => {
+    const q = Math.max(1, Math.floor(qty || 1))
+    const nextQty = { ...markedQty, [globalIdx]: q }
+    persistMarkedQty(nextQty)
+  }
+  const bumpQty = (globalIdx: number, delta: number) => {
+    setQty(globalIdx, (markedQty[globalIdx] ?? 1) + delta)
+  }
+
+  // Totales: items marcados y suma de cantidades encontradas.
+  const totalFoundItems = marked.size
+  const totalFoundQty = Array.from(marked).reduce((s, i) => s + (markedQty[i] ?? 1), 0)
 
   // Lista de filtros de columna activos (con texto no vacío).
   const activeColumnFilters = useMemo(
@@ -413,11 +456,17 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
       {/* ── Vista de ITEMS (tarjetas) — cada fila como una ficha de producto ── */}
       {viewMode === 'cards' ? (
         <div className="space-y-2">
-          <div className="flex items-center justify-between px-1">
+          <div className="flex items-center justify-between px-1 gap-2 flex-wrap">
             <span className="text-xs text-[var(--color-text-3)]">
               <span className="font-bold text-[var(--color-text)]">{filtered.length}</span> de {rows.length} ·{' '}
               {headers.length} columnas
             </span>
+            {totalFoundItems > 0 && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                {totalFoundItems} item(s) · {totalFoundQty} encontrada(s)
+              </span>
+            )}
           </div>
           {visible.length === 0 ? (
             <div className="py-10 text-center text-sm text-[var(--color-text-3)]">Sin resultados.</div>
@@ -468,15 +517,38 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
                           })}
                         </dl>
                       </div>
-                      {/* Marcar como listo */}
-                      <button onClick={() => toggleMark(gIdx)}
-                        title={isMarked ? 'Quitar marca' : 'Marcar como listo/cogido'}
-                        className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
-                          isMarked ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
-                            : 'bg-[var(--color-bg)] text-[var(--color-text-3)] hover:bg-[var(--color-border)]'
-                        }`}>
-                        <CheckCircle2 className="w-4 h-4" />
-                      </button>
+                      {/* Marcar como listo + contador de cantidad encontrada */}
+                      <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
+                        <button onClick={() => toggleMark(gIdx)}
+                          title={isMarked ? 'Quitar marca' : 'Marcar como encontrado'}
+                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                            isMarked ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
+                              : 'bg-[var(--color-bg)] text-[var(--color-text-3)] hover:bg-[var(--color-border)]'
+                          }`}>
+                          <CheckCircle2 className="w-4 h-4" />
+                        </button>
+                        {isMarked && (
+                          <div className="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-1 py-0.5">
+                            <button onClick={() => bumpQty(gIdx, -1)}
+                              aria-label="Menos cantidad"
+                              className="w-5 h-5 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-sm font-bold leading-none">
+                              −
+                            </button>
+                            <input
+                              type="number"
+                              min={1}
+                              value={markedQty[gIdx] ?? 1}
+                              onChange={(e) => setQty(gIdx, Number(e.target.value))}
+                              className="w-8 text-center bg-transparent text-xs font-bold text-emerald-800 focus:outline-none"
+                            />
+                            <button onClick={() => bumpQty(gIdx, 1)}
+                              aria-label="Más cantidad"
+                              className="w-5 h-5 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-sm font-bold leading-none">
+                              +
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     {/* Acciones por item */}
                     {actions && (
@@ -518,9 +590,16 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
               <span className="text-xs text-[var(--color-text-3)]"> de {rows.length} filas</span>
             </div>
           </div>
-          <span className="text-xs text-[var(--color-text-3)] px-2.5 py-1 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] font-medium">
-            {headers.length} columnas
-          </span>
+          <div className="flex items-center gap-2">
+            {totalFoundItems > 0 && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                <CheckCircle2 className="w-3.5 h-3.5" /> {totalFoundItems} · {totalFoundQty} encontrada(s)
+              </span>
+            )}
+            <span className="text-xs text-[var(--color-text-3)] px-2.5 py-1 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] font-medium">
+              {headers.length} columnas
+            </span>
+          </div>
         </div>
         <div className="overflow-auto max-h-[46vh]">
           <table className="w-full text-sm border-collapse">
@@ -573,17 +652,28 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
                           className="w-4 h-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]/30" />
                       </td>
                     )}
-                    {/* Botón de marcar: cambia el color de la fila */}
+                    {/* Botón de marcar + cantidad encontrada */}
                     <td className="px-2 py-2.5 text-center border-r border-[var(--color-border)]">
-                      <button onClick={() => toggleMark(gIdx)}
-                        title={isMarked ? 'Quitar marca' : 'Marcar como listo/cogido'}
-                        className={`w-7 h-7 rounded-full flex items-center justify-center mx-auto transition-all ${
-                          isMarked
-                            ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
-                            : 'bg-[var(--color-bg)] text-[var(--color-text-3)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]'
-                        }`}>
-                        <CheckCircle2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex flex-col items-center gap-1">
+                        <button onClick={() => toggleMark(gIdx)}
+                          title={isMarked ? 'Quitar marca' : 'Marcar como encontrado'}
+                          className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                            isMarked
+                              ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
+                              : 'bg-[var(--color-bg)] text-[var(--color-text-3)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]'
+                          }`}>
+                          <CheckCircle2 className="w-4 h-4" />
+                        </button>
+                        {isMarked && (
+                          <div className="flex items-center gap-0.5">
+                            <button onClick={() => bumpQty(gIdx, -1)} aria-label="Menos"
+                              className="w-4 h-4 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-xs font-bold leading-none">−</button>
+                            <span className="w-5 text-center text-[11px] font-bold text-emerald-800">{markedQty[gIdx] ?? 1}</span>
+                            <button onClick={() => bumpQty(gIdx, 1)} aria-label="Más"
+                              className="w-4 h-4 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-xs font-bold leading-none">+</button>
+                          </div>
+                        )}
+                      </div>
                     </td>
                     {headers.map((_, ci) => (
                       <td key={ci} className={`px-3.5 py-2.5 whitespace-nowrap border-r border-[var(--color-border)] last:border-r-0 text-[var(--color-text)] ${isMarked ? 'text-emerald-900/80 line-through decoration-emerald-400/50' : ''}`}>

@@ -224,17 +224,24 @@ export function WizardPage() {
   useEffect(() => { stampOptsRef.current = stampOpts }, [stampOpts])
 
   // ── Base de datos (tabla DATA) fijada para ESTE registro ──
-  // Lista de tablas disponibles de la empresa + headers de la seleccionada,
-  // para elegir la columna de código y de descripción en los ajustes.
+  // Lista de tablas disponibles de la empresa para elegir cuál usar en este
+  // registro. El mapeo de columnas (código/descripción) es GLOBAL (db-settings).
   const [dbSheets, setDbSheets] = useState<CompanySheet[]>([])
-  const [dbHeaders, setDbHeaders] = useState<string[]>([])
-  const [dbLoadingHeaders, setDbLoadingHeaders] = useState(false)
   // Ref a los ajustes del registro, para usarlos en callbacks sin recrearlos.
   const recordSettingsRef = useRef(recordSettings)
   useEffect(() => { recordSettingsRef.current = recordSettings }, [recordSettings])
-  // Columna usada como "descripción" para los buscadores: la primera columna
-  // marcada en "Columnas a traer de la DATA" (o -1 si no hay).
-  const dbPrimaryDescCol = (recordSettings.dbExtraColumns ?? [])[0] ?? -1
+  /**
+   * Columnas efectivas de la DATA: SIEMPRE las globales de la empresa
+   * (configuradas en la vista de Base de datos). El registro solo decide QUÉ
+   * tabla usar, no qué columnas traer.
+   */
+  const getDbCols = useCallback(() => {
+    const db = getDbSettings(getCompanyId())
+    const extra = db.extraColumns?.length ? db.extraColumns : (db.descColumn >= 0 ? [db.descColumn] : [])
+    return { codeColumn: db.codeColumn ?? 0, descColumn: db.descColumn ?? -1, extraColumns: extra }
+  }, [])
+  // Columna usada como "descripción" para los buscadores (primera global).
+  const dbPrimaryDescCol = (() => { const c = getDbCols(); return c.extraColumns[0] ?? c.descColumn })()
 
   // Carga la lista de tablas de la empresa al abrir los ajustes del registro.
   useEffect(() => {
@@ -244,27 +251,6 @@ export function WizardPage() {
     void apiRequest<{ sheets: CompanySheet[] }>(`/sheets?companyId=${encodeURIComponent(cid)}`)
       .then((r) => setDbSheets(r.sheets ?? []))
       .catch(() => { /* sin tablas */ })
-  }, [showRecordSettings])
-
-  // Carga los headers de la tabla fijada (para elegir columnas).
-  const loadDbHeaders = useCallback(async (sheetId: string) => {
-    const cid = getCompanyId()
-    if (!cid || !sheetId) { setDbHeaders([]); return }
-    setDbLoadingHeaders(true)
-    try {
-      const data = await apiRequest<{ headers: string[] }>(`/sheets/${encodeURIComponent(sheetId)}?companyId=${encodeURIComponent(cid)}`)
-      setDbHeaders(data.headers ?? [])
-    } catch {
-      setDbHeaders([])
-    } finally {
-      setDbLoadingHeaders(false)
-    }
-  }, [])
-
-  // Al abrir ajustes con una DB ya fijada, carga sus headers.
-  useEffect(() => {
-    if (showRecordSettings && recordSettings.dbSheetId) void loadDbHeaders(recordSettings.dbSheetId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showRecordSettings])
 
   // Edición de una foto general existente desde la bandeja de revisión.
@@ -1147,12 +1133,13 @@ export function WizardPage() {
     setDbLookup({ loading: true })
     const t = setTimeout(async () => {
       try {
+        const cols = getDbCols()
         const r = await lookupInSheet({
           sheetId: cfg.dbSheetId!,
           companyId: cid,
           code,
-          codeColumn: cfg.dbCodeColumn ?? 0,
-          descColumn: (cfg.dbExtraColumns ?? [])[0] ?? -1,
+          codeColumn: cols.codeColumn,
+          descColumn: cols.extraColumns[0] ?? cols.descColumn,
         })
         setDbLookup({ loading: false, found: r.found, descripcion: r.descripcion, data: r.data })
         // Si trae descripción, la precargamos en labelData para crear el producto con ella.
@@ -1206,17 +1193,13 @@ export function WizardPage() {
   }
 
   /**
-   * Compone la descripción del producto SOLO con las columnas configuradas en
-   * los ajustes del registro (dbExtraColumns), en el orden marcado. La primera
+   * Compone la descripción del producto SOLO con las columnas configuradas de
+   * forma GLOBAL en la vista de Base de datos (en el orden marcado). La primera
    * columna va como texto principal; las demás como "Encabezado: valor".
    * Separador " · ".
    */
   const composeDbDescription = (item: SheetSearchItem, headers: string[]): string => {
-    let cols = recordSettings.dbExtraColumns ?? []
-    // Compatibilidad: configuraciones antiguas que usaban solo dbDescColumn.
-    if (cols.length === 0 && typeof recordSettings.dbDescColumn === 'number' && recordSettings.dbDescColumn >= 0) {
-      cols = [recordSettings.dbDescColumn]
-    }
+    const cols = getDbCols().extraColumns
     if (cols.length === 0) return ''
     const parts: string[] = []
     cols.forEach((col, idx) => {
@@ -2762,7 +2745,7 @@ export function WizardPage() {
                 <DbProductSearch
                   sheetId={recordSettings.dbSheetId}
                   sheetName={recordSettings.dbSheetName}
-                  codeColumn={recordSettings.dbCodeColumn ?? 0}
+                  codeColumn={getDbCols().codeColumn}
                   descColumn={dbPrimaryDescCol}
                   codeType={dbCodeType}
                   initialValue={dbCodeInput}
@@ -2862,14 +2845,15 @@ export function WizardPage() {
           <div className="pt-3 border-t border-gray-200 space-y-3">
             <div className="flex items-center gap-2">
               <Database className="w-4 h-4 text-emerald-600" />
-              <p className="text-sm font-semibold text-gray-800">Base de datos del registro</p>
+              <p className="text-sm font-semibold text-gray-800">Base de datos de este registro</p>
             </div>
             <p className="text-[11px] text-gray-500">
-              Fija una tabla de la DATA para este registro. Al ingresar o escanear un código, se traerán
-              automáticamente los datos del producto desde esa tabla.
+              Elige qué tabla de la DATA usar SOLO en este registro. Al ingresar o escanear un código se
+              buscará en esa tabla. Las columnas que se traen (código y descripción) se configuran de forma
+              global desde la vista de Base de datos.
             </p>
 
-            {/* Seleccionar la tabla fija */}
+            {/* Seleccionar la tabla fija para ESTE registro */}
             <div className="space-y-1.5">
               <label className="text-[11px] font-medium text-gray-600">Tabla de datos</label>
               <select
@@ -2877,16 +2861,16 @@ export function WizardPage() {
                 onChange={(e) => {
                   const sheetId = e.target.value || undefined
                   const sheet = dbSheets.find((s) => s.id === sheetId)
+                  // Las columnas (código/descripción/adicionales) vienen de la
+                  // configuración GLOBAL de la DATA; aquí solo se fija la tabla.
+                  const db = getDbSettings(getCompanyId())
                   updateRecordSetting({
                     dbSheetId: sheetId,
                     dbSheetName: sheet?.sheetName,
-                    // Al cambiar de tabla, reinicia las columnas a valores por defecto.
-                    dbCodeColumn: 0,
-                    dbDescColumn: -1,
-                    dbExtraColumns: [],
+                    dbCodeColumn: db.codeColumn,
+                    dbDescColumn: db.descColumn,
+                    dbExtraColumns: db.extraColumns?.length ? db.extraColumns : (db.descColumn >= 0 ? [db.descColumn] : []),
                   })
-                  setDbHeaders([])
-                  if (sheetId) void loadDbHeaders(sheetId)
                 }}
                 className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
               >
@@ -2900,87 +2884,10 @@ export function WizardPage() {
                   No hay tablas importadas. Impórtalas desde "Documentos" en Configuración.
                 </p>
               )}
+              <p className="text-[10px] text-gray-400">
+                Las columnas a traer se configuran en la vista de Base de datos (botón "Usar como DATA").
+              </p>
             </div>
-
-            {/* Columnas (solo si hay tabla fijada) */}
-            {recordSettings.dbSheetId && (
-              <div className="space-y-3">
-                {dbLoadingHeaders ? (
-                  <div className="py-2"><LoadingState inline size="sm" label="Cargando columnas…" /></div>
-                ) : dbHeaders.length > 0 ? (
-                  <>
-                    {/* Columna del código: la que se usa para buscar/escanear */}
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-medium text-gray-600">Columna del código (para buscar)</label>
-                      <select
-                        value={recordSettings.dbCodeColumn ?? 0}
-                        onChange={(e) => {
-                          const code = Number(e.target.value)
-                          // Quita la columna de código de las columnas a traer (ya va como código).
-                          const cols = (recordSettings.dbExtraColumns ?? []).filter((c) => c !== code)
-                          updateRecordSetting({ dbCodeColumn: code, dbExtraColumns: cols })
-                        }}
-                        className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                      >
-                        {dbHeaders.map((h, i) => (
-                          <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Columnas a traer: SOLO estas columnas se traen de la DATA */}
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-medium text-gray-600">Columnas a traer de la DATA</label>
-                      <p className="text-[10px] text-gray-400 -mt-1">
-                        Marca las columnas cuyos datos quieres traer del producto. Solo estas columnas se usarán; la primera marcada será la descripción principal.
-                      </p>
-                      <div className="flex flex-wrap gap-1.5 pt-0.5">
-                        {dbHeaders.map((h, i) => {
-                          // La columna de código no se puede marcar (ya se trae como código).
-                          if (i === (recordSettings.dbCodeColumn ?? 0)) return null
-                          const selected = (recordSettings.dbExtraColumns ?? []).includes(i)
-                          const order = (recordSettings.dbExtraColumns ?? []).indexOf(i)
-                          return (
-                            <button
-                              key={i}
-                              type="button"
-                              onClick={() => {
-                                const current = recordSettings.dbExtraColumns ?? []
-                                // Mantiene el ORDEN de selección (no reordena) para respetar
-                                // qué columna es la "principal".
-                                const next = selected
-                                  ? current.filter((c) => c !== i)
-                                  : [...current, i]
-                                updateRecordSetting({ dbExtraColumns: next })
-                              }}
-                              className={`px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition-colors flex items-center gap-1 ${
-                                selected
-                                  ? 'bg-emerald-600 border-emerald-600 text-white'
-                                  : 'bg-white border-gray-200 text-gray-600 hover:border-emerald-300'
-                              }`}
-                            >
-                              {selected && <span className="text-[9px] font-bold">{order + 1}</span>}
-                              {h || `Columna ${i + 1}`}
-                            </button>
-                          )
-                        })}
-                      </div>
-                      {(recordSettings.dbExtraColumns ?? []).length > 0 ? (
-                        <p className="text-[10px] text-emerald-700 pt-0.5">
-                          Se traerán {(recordSettings.dbExtraColumns ?? []).length} columna(s), en el orden marcado.
-                        </p>
-                      ) : (
-                        <p className="text-[10px] text-amber-600 pt-0.5">
-                          No has marcado columnas: solo se traerá el código del producto.
-                        </p>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <p className="text-[10px] text-gray-400">No se pudieron cargar las columnas de la tabla.</p>
-                )}
-              </div>
-            )}
           </div>
         </div>
       </Modal>
@@ -3374,7 +3281,7 @@ export function WizardPage() {
             <DbProductSearch
               sheetId={recordSettings.dbSheetId}
               sheetName={recordSettings.dbSheetName}
-              codeColumn={recordSettings.dbCodeColumn ?? 0}
+              codeColumn={getDbCols().codeColumn}
               descColumn={dbPrimaryDescCol}
               initialValue={trayDbSearchInitial}
               onSelect={(item) => {
@@ -3422,7 +3329,7 @@ export function WizardPage() {
           dbConfig={recordSettings.dbSheetId ? {
             sheetId: recordSettings.dbSheetId,
             sheetName: recordSettings.dbSheetName,
-            codeColumn: recordSettings.dbCodeColumn ?? 0,
+            codeColumn: getDbCols().codeColumn,
             descColumn: dbPrimaryDescCol,
           } : undefined}
           onCaptureMulti={(r) => void handleMultiCapture(r)}
