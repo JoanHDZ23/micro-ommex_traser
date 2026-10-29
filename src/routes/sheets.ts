@@ -380,6 +380,88 @@ sheetsRouter.get('/:id/lookup', async (req, res) => {
 })
 
 /**
+ * GET /api/sheets/:id/search?companyId=xxx&q=texto[&codeColumn=0][&descColumn=2][&limit=20][&source=sheet]
+ * Busca por CÓDIGO o NOMBRE/DESCRIPCIÓN (coincidencia parcial, case-insensitive)
+ * dentro de la tabla fijada y devuelve TODOS los resultados (hasta `limit`).
+ *
+ * Orden de relevancia: coincidencia exacta del código → el código empieza por q
+ * → coincidencia parcial en código o descripción.
+ *
+ * Respuesta: { results: [{ rowIndex, code, descripcion, row, data }], total, headers }
+ */
+sheetsRouter.get('/:id/search', async (req, res) => {
+  const { id } = req.params
+  const { companyId, q, codeColumn, descColumn, limit, source } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  const needle = (q ?? '').trim().toLowerCase()
+  if (!needle) { res.status(400).json({ message: 'q es requerido.' }); return }
+
+  const codeCol = Number.isFinite(Number(codeColumn)) ? Math.max(0, Math.trunc(Number(codeColumn))) : 0
+  const descCol = descColumn !== undefined && descColumn !== '' && Number.isFinite(Number(descColumn))
+    ? Math.trunc(Number(descColumn))
+    : -1
+  const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.min(100, Math.trunc(Number(limit))) : 20
+
+  try {
+    const doc = await getDb().collection(COLLECTION).findOne({ id, companyId }, { projection: { _id: 0 } })
+    if (!doc) { res.status(404).json({ message: 'Base de datos no encontrada.' }); return }
+
+    let headers: string[] = (doc.columns as string[]) ?? []
+    let rows: string[][] = (doc.rows as string[][]) ?? []
+
+    const GAS_URL = process.env.GAS_WEBHOOK_URL ?? ''
+    if (source === 'sheet' && doc.sheetId && GAS_URL) {
+      try {
+        const live = await callGas(GAS_URL, { action: 'getSheetData', sheetId: doc.sheetId, maxRows: MAX_STORED_ROWS }, 60_000) as {
+          status?: string; headers?: string[]; rows?: string[][]
+        }
+        if (live.status === 'success') {
+          headers = live.headers ?? headers
+          rows = live.rows ?? rows
+        }
+      } catch { /* cae a copia local */ }
+    }
+
+    // Puntúa cada fila: menor score = más relevante.
+    const scored: Array<{ rowIndex: number; score: number; row: string[] }> = []
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]
+      const codeVal = String(row[codeCol] ?? '').trim().toLowerCase()
+      const descVal = descCol >= 0 ? String(row[descCol] ?? '').trim().toLowerCase() : ''
+      let score = Infinity
+      if (codeVal === needle) score = 0
+      else if (codeVal.startsWith(needle)) score = 1
+      else if (codeVal.includes(needle)) score = 2
+      else if (descVal.includes(needle)) score = 3
+      // Búsqueda amplia: también busca en cualquier celda (última prioridad).
+      else if (row.some((c) => String(c ?? '').toLowerCase().includes(needle))) score = 4
+      if (score !== Infinity) scored.push({ rowIndex: i, score, row })
+    }
+
+    scored.sort((a, b) => a.score - b.score || a.rowIndex - b.rowIndex)
+    const total = scored.length
+    const top = scored.slice(0, max)
+
+    const results = top.map(({ rowIndex, row }) => {
+      const data: Record<string, string> = {}
+      headers.forEach((h, idx) => { data[h || `col${idx}`] = String(row[idx] ?? '') })
+      return {
+        rowIndex,
+        code: String(row[codeCol] ?? '').trim(),
+        descripcion: descCol >= 0 ? String(row[descCol] ?? '').trim() : '',
+        row,
+        data,
+      }
+    })
+
+    res.json({ results, total, headers, sheetName: doc.sheetName })
+  } catch (err) {
+    console.error('[sheets] Error en search:', err)
+    res.status(500).json({ message: 'Error al buscar en la base de datos.' })
+  }
+})
+
+/**
  * PUT /api/sheets/:id/rows
  * Body: { companyId, rows, headers? }
  * Guarda las filas editadas en Mongo y actualiza la Google Sheet (best-effort).
