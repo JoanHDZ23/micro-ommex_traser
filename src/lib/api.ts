@@ -1,6 +1,10 @@
 import { enqueue } from './sync-queue'
+import { ensureSession, getToken, renewSession, touchActivity } from './auth'
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
+
+/** Endpoints de autenticación: no requieren token previo (lo emiten). */
+const AUTH_ENDPOINT = /^\/auth\//
 
 /** Métodos que modifican datos y deben encolarse si hay offline. */
 const MUTATION_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE'])
@@ -51,14 +55,26 @@ interface ApiOptions {
 export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
   const { method = 'GET', body } = options
 
-  const config: RequestInit = {
-    method,
-    headers: { 'Content-Type': 'application/json' },
+  // Toda llamada al API cuenta como actividad del usuario (mantiene viva la sesión).
+  touchActivity()
+
+  const isAuthEndpoint = AUTH_ENDPOINT.test(endpoint)
+
+  // Asegura un token válido antes de llamar a rutas protegidas.
+  let token = getToken()
+  if (!token && !isAuthEndpoint) {
+    token = await ensureSession()
   }
 
-  if (body) {
-    config.body = JSON.stringify(body)
+  const buildConfig = (tkn: string | null): RequestInit => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (tkn && !isAuthEndpoint) headers.Authorization = `Bearer ${tkn}`
+    const cfg: RequestInit = { method, headers }
+    if (body) cfg.body = JSON.stringify(body)
+    return cfg
   }
+
+  let config = buildConfig(token)
 
   const isGet = method.toUpperCase() === 'GET'
   let response: Response
@@ -97,6 +113,26 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
       throw new Error(offline
         ? 'Sin conexión a internet. Verifica tu red e intenta de nuevo.'
         : 'El servidor está iniciando, espera unos segundos e intenta de nuevo.')
+    }
+  }
+
+  // 401 en ruta protegida: la sesión pudo expirar/invalidarse. Re-crea el token
+  // y reintenta UNA vez. Si vuelve a fallar, se trata como error normal.
+  if (response.status === 401 && !isAuthEndpoint) {
+    let errData: { code?: string } | null = null
+    try { errData = JSON.parse(await response.clone().text()) } catch { /* ignore */ }
+    // SESSION_EXPIRED = cerrada por inactividad: notifica y no reintenta en bucle.
+    if (errData?.code === 'SESSION_EXPIRED') {
+      window.dispatchEvent(new CustomEvent('session:expired'))
+    }
+    const fresh = await renewSession()
+    if (fresh) {
+      config = buildConfig(fresh)
+      try {
+        response = await doFetch()
+      } catch {
+        throw new Error('No se pudo reconectar la sesión. Intenta de nuevo.')
+      }
     }
   }
 

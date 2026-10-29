@@ -1,11 +1,12 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { Suspense, lazy, useEffect } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { Layout } from './components/Layout'
 import { HomePage } from './pages/HomePage'
 import { LoadingState } from './components/ui'
 import { invalidateTracerFeaturesCache } from './lib/tracer-features'
 import { apiRequest } from './lib/api'
 import { getCompanyId } from './lib/context'
+import { renewSession } from './lib/auth'
 
 // Code-splitting por ruta: cada pantalla se descarga solo cuando se visita, así
 // el arranque es más rápido y la primera vista (Home) carga menos JS. Las libs
@@ -22,6 +23,9 @@ const DocumentsPage = lazy(() => import('./pages/DocumentsPage').then((m) => ({ 
 const PhotoUploadPage = lazy(() => import('./pages/PhotoUploadPage').then((m) => ({ default: m.PhotoUploadPage })))
 
 export default function App() {
+  // Aviso cuando la sesión se cierra por inactividad (1 hora sin actividad).
+  const [sessionExpired, setSessionExpired] = useState(false)
+
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       const data = event.data
@@ -32,6 +36,13 @@ export default function App() {
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
+  }, [])
+
+  // Escucha el cierre de sesión por inactividad para avisar al usuario.
+  useEffect(() => {
+    const onExpired = () => setSessionExpired(true)
+    window.addEventListener('session:expired', onExpired as EventListener)
+    return () => window.removeEventListener('session:expired', onExpired as EventListener)
   }, [])
 
   // Auto-sincroniza WhatsApp al iniciar la app: si ya hay sesión guardada,
@@ -47,6 +58,23 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      {sessionExpired && (
+        <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 space-y-4 shadow-xl text-center">
+            <div className="text-3xl">🔒</div>
+            <h3 className="text-base font-bold text-gray-800">Sesión cerrada por inactividad</h3>
+            <p className="text-sm text-gray-500">
+              Tu sesión se cerró tras una hora sin actividad. Vuelve a iniciar sesión para continuar.
+            </p>
+            <button
+              onClick={() => { setSessionExpired(false); void renewSession() }}
+              className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-semibold"
+            >
+              Reanudar sesión
+            </button>
+          </div>
+        </div>
+      )}
       <Suspense fallback={<div className="flex-1 flex items-center justify-center p-8"><LoadingState label="Cargando…" /></div>}>
         <Routes>
           {/* Public share route — no auth needed */}

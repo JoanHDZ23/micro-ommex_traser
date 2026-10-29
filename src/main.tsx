@@ -4,9 +4,15 @@ import App from './App'
 import './index.css'
 import { getCompanyId } from './lib/context'
 import { startLocationWatch } from './lib/photo-stamp'
+import { initAuth } from './lib/auth'
 
 // Initialize context (captures companyId from URL before router changes it)
 getCompanyId()
+
+// Valida la identidad y obtiene el token de sesión. Arranca el heartbeat que
+// mantiene viva la sesión (y el backend) mientras haya actividad, y cierra la
+// sesión tras 1 hora de inactividad. No bloquea el render.
+void initAuth()
 
 // Arranca el seguimiento de ubicación en segundo plano desde el inicio, para
 // que al capturar una foto el sello GPS esté listo sin que la captura espere.

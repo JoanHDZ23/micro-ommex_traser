@@ -24,6 +24,11 @@ interface SheetsModalProps {
    */
   targetTrackingCode?: string
   onBrought?: () => void
+  /**
+   * Texto de filtro inicial (código escrito o escaneado). Al abrir una hoja,
+   * la tabla arranca filtrada por este valor para encontrar el producto rápido.
+   */
+  initialFilter?: string
 }
 
 const ACCEPTED = '.csv,.xlsx,.xls,.pdf'
@@ -38,6 +43,8 @@ interface DataTableProps {
   rows: string[][]
   /** Clave estable para persistir las filas marcadas (color) en localStorage. */
   markKey?: string
+  /** Texto de filtro inicial (código escrito/escaneado) para arrancar filtrado. */
+  initialFilter?: string
   /** Si se definen, habilita las acciones por fila / selección múltiple (modo registros). */
   actions?: {
     /** Columna usada como código/nombre del producto. */
@@ -95,9 +102,9 @@ function saveColumnSelection(companyId: string, sel: SavedColumnSelection) {
   } catch { /* ignore */ }
 }
 
-function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
+function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTableProps) {
   const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas (filtro global)
-  const [filterText, setFilterText] = useState('')
+  const [filterText, setFilterText] = useState(initialFilter ?? '')
   // Filtros por columna (estilo Excel): { [colIndex]: texto }. Se aplican con AND.
   const [columnFilters, setColumnFilters] = useState<Record<number, string>>({})
   const [showColumnFilters, setShowColumnFilters] = useState(false)
@@ -498,7 +505,7 @@ function DataTable({ headers, rows, actions, markKey }: DataTableProps) {
  * con filtro por columna, crear un Google Sheet filtrable y gestionar
  * (listar / verificar en la app / eliminar) las hojas creadas por la empresa.
  */
-export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: SheetsModalProps) {
+export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, initialFilter }: SheetsModalProps) {
   const navigate = useNavigate()
   const titleId = useId()
   // Si no viene companyId (p. ej. abriendo la app directamente para probar),
@@ -1119,6 +1126,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought }: Sh
                   headers={viewing.headers}
                   rows={viewing.rows}
                   markKey={`${companyId}_${viewing.id}`}
+                  initialFilter={initialFilter}
                   actions={{
                     codeCol, descCol, extraCols,
                     onCodeColChange: handleCodeColChange,

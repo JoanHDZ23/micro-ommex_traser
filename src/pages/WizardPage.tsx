@@ -225,8 +225,18 @@ export function WizardPage() {
   const [showAddProductModal, setShowAddProductModal] = useState(false)
   // Modal para traer productos de la base de datos a ESTE registro.
   const [showDbModal, setShowDbModal] = useState(false)
+  // Modal de búsqueda por código antes de abrir el modal de DATA (con selector alfanumérico/numérico).
+  const [showDbCodeModal, setShowDbCodeModal] = useState(false)
+  const [dbCodeInput, setDbCodeInput] = useState('')
+  const [dbCodeType, setDbCodeType] = useState<'alphanumeric' | 'numeric'>('alphanumeric')
+  const [showDbCodeScanner, setShowDbCodeScanner] = useState(false)
   // Modal para sincronizar/conectar el WhatsApp de la empresa desde el registro.
   const [showWaSync, setShowWaSync] = useState(false)
+  // Producto de catálogo asociado a la bandeja de fotos (para vincular grupo al producto).
+  const [trayProductCode, setTrayProductCode] = useState<string | null>(null)
+  const [showTrayCatalog, setShowTrayCatalog] = useState(false)
+  // Escáner de código de barras en la bandeja de fotos.
+  const [showTrayScanner, setShowTrayScanner] = useState(false)
 
   // ── Adjuntos: audio, catálogo, documento (estilo WhatsApp) ──
   const [showAudioRecorder, setShowAudioRecorder] = useState(false)
@@ -635,6 +645,7 @@ export function WizardPage() {
     setCaptureTray([])
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
+    setTrayProductCode(null)
   }
 
   // Pega imagen(es) desde el portapapeles usando la Clipboard API (funciona en
@@ -686,6 +697,7 @@ export function WizardPage() {
   // Envía todas las fotos de la bandeja. Una sola foto → flujo normal.
   // Varias → UNA sola petición batch con el mismo groupId, para que se guarden
   // TODAS juntas (sin condición de carrera) y se muestren/envíen como un álbum.
+  // Si trayProductCode está definido, sube las fotos al producto del catálogo DATA.
   const sendCaptureTray = async () => {
     if (captureTray.length === 0) { cancelCaptureTray(); return }
     if (!trackingCode) return
@@ -693,31 +705,29 @@ export function WizardPage() {
     const message = trayMessage.trim()
     const photos = [...captureTray]
     const editingIdx = trayEditingPhotoIdx
+    const linkedProduct = trayProductCode
 
     // Cerramos el modal de inmediato; la subida sigue en segundo plano.
     setShowCaptureTray(false)
     setCaptureTray([])
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
+    setTrayProductCode(null)
 
     // ── Modo EDICIÓN de una foto existente ──
     if (editingIdx !== null) {
       try {
-        // ¿La primera imagen es nueva (dataURL base64) o la original del servidor (URL)?
         const first = photos[0] ?? ''
         const imageChanged = first.startsWith('data:')
-        const extras = photos.slice(1).filter((p) => p.startsWith('data:')) // fotos añadidas
+        const extras = photos.slice(1).filter((p) => p.startsWith('data:'))
 
         if (imageChanged) {
-          // Imagen reemplazada: sube la nueva con el comentario y borra la original.
           const base64 = first.split(',')[1] ?? ''
           await uploadSinglePhoto(base64, message, false)
           await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'DELETE' })
         } else {
-          // Solo cambió el comentario: PATCH, sin re-subir la imagen.
           await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'PATCH', body: { comment: message } })
         }
-        // Si además agregó más imágenes en la bandeja, súbelas como fotos nuevas.
         for (const p of extras) {
           await uploadSinglePhoto(p.split(',')[1] ?? '', '', false)
         }
@@ -725,6 +735,33 @@ export function WizardPage() {
         setFeedback('✓ Foto actualizada')
       } catch (err) {
         setFeedback(err instanceof Error ? err.message : 'Error al actualizar la foto')
+      } finally {
+        setTraySending(false)
+      }
+      return
+    }
+
+    // ── Fotos vinculadas a un producto del catálogo DATA ──
+    if (linkedProduct) {
+      try {
+        // Asegura que el producto exista en esta operación; si no, lo crea.
+        const alreadyExists = lbProducts.some((p) => p.productCode.toLowerCase() === linkedProduct.toLowerCase())
+        if (!alreadyExists) {
+          await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
+            method: 'POST',
+            body: { productCode: linkedProduct },
+          })
+        }
+        setFeedback(`⏳ Subiendo ${photos.length} foto(s) al producto ${linkedProduct}…`)
+        for (let i = 0; i < photos.length; i++) {
+          const base64 = photos[i].split(',')[1] ?? ''
+          await uploadSinglePhoto(base64, i === 0 ? message : '', true, linkedProduct)
+        }
+        setActiveLbProduct(linkedProduct)
+        await loadOperation()
+        setFeedback(`✓ ${photos.length} foto(s) vinculada(s) a ${linkedProduct}`)
+      } catch (err) {
+        setFeedback(err instanceof Error ? err.message : 'Error al vincular fotos al producto')
       } finally {
         setTraySending(false)
       }
@@ -739,7 +776,6 @@ export function WizardPage() {
       } else {
         const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const clientTimestamp = new Date().toISOString()
-        // Cache local (vista instantánea) de cada foto.
         const cachedIds: string[] = []
         for (let i = 0; i < photos.length; i++) {
           const base64 = photos[i].split(',')[1] ?? ''
@@ -748,7 +784,6 @@ export function WizardPage() {
           cachedIds.push(cached.id)
         }
         setFeedback(`⏳ Subiendo ${photos.length} fotos...`)
-        // UNA sola petición con todas las fotos (un solo $push en el backend).
         await apiRequest<{ count: number }>('/photos/upload-batch', {
           method: 'POST',
           body: {
@@ -760,7 +795,6 @@ export function WizardPage() {
             photos: photos.map((p) => ({ base64Image: p.split(',')[1] ?? '' })),
           },
         })
-        // Limpiar cache local y recargar desde el servidor.
         for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
         await loadOperation()
         setFeedback(`✓ ${photos.length} fotos enviadas`)
@@ -2152,7 +2186,7 @@ export function WizardPage() {
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
                 <Package className="w-4 h-4 text-[var(--color-primary)]" /> Agregar producto
               </button>
-              <button onClick={() => { setShowPlusMenu(false); setShowDbModal(true) }}
+              <button onClick={() => { setShowPlusMenu(false); setDbCodeInput(''); setDbCodeType('alphanumeric'); setShowDbCodeModal(true) }}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
                 <Database className="w-4 h-4 text-emerald-600" /> Traer producto de la base de datos
               </button>
@@ -2447,12 +2481,103 @@ export function WizardPage() {
         </div>
       )}
 
+      {/* Paso previo: escribir o escanear el código a buscar en la DATA, con
+          selector de si el código es alfanumérico o solo numérico. */}
+      {showDbCodeModal && (
+        <div className="fixed inset-0 z-[90] bg-black/50 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white rounded-2xl p-5 space-y-4 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-600" /> Buscar producto en la base de datos
+              </h3>
+              <button onClick={() => setShowDbCodeModal(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {/* Selector de tipo de código: alfanumérico o solo numérico */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-gray-600">Tipo de código</label>
+                <select
+                  value={dbCodeType}
+                  onChange={(e) => {
+                    const next = e.target.value as 'alphanumeric' | 'numeric'
+                    setDbCodeType(next)
+                    // Si cambia a numérico, limpia caracteres no numéricos del input.
+                    if (next === 'numeric') setDbCodeInput((v) => v.replace(/[^0-9]/g, ''))
+                  }}
+                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                >
+                  <option value="alphanumeric">Alfanumérico (letras y números)</option>
+                  <option value="numeric">Solo numérico</option>
+                </select>
+              </div>
+
+              {/* Código: escribir o escanear */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-gray-600">Código del producto</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    inputMode={dbCodeType === 'numeric' ? 'numeric' : 'text'}
+                    value={dbCodeInput}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      const clean = dbCodeType === 'numeric' ? raw.replace(/[^0-9]/g, '') : raw.toUpperCase()
+                      setDbCodeInput(clean)
+                    }}
+                    placeholder={dbCodeType === 'numeric' ? 'Ej. 123456' : 'Ej. ABC-123'}
+                    className="flex-1 px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { setShowDbCodeModal(false); setShowDbModal(true) }
+                    }}
+                  />
+                  <button
+                    onClick={() => setShowDbCodeScanner(true)}
+                    title="Escanear código de barras"
+                    className="px-3 py-2.5 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center"
+                  >
+                    <QrCode className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <button
+                onClick={() => { setShowDbCodeModal(false); setShowDbModal(true) }}
+                className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-medium flex items-center justify-center gap-2"
+              >
+                <Search className="w-4 h-4" />
+                {dbCodeInput.trim() ? `Buscar "${dbCodeInput.trim()}"` : 'Abrir base de datos'}
+              </button>
+              <p className="text-[10px] text-gray-400 text-center">
+                Escribe o escanea el código. La tabla se abrirá filtrada por ese valor.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Escáner de código de barras para el paso previo de la base de datos */}
+      {showDbCodeScanner && (
+        <BarcodeScanner
+          onResult={(code) => {
+            setShowDbCodeScanner(false)
+            const clean = dbCodeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim().toUpperCase()
+            setDbCodeInput(clean)
+          }}
+          onClose={() => setShowDbCodeScanner(false)}
+        />
+      )}
+
       {/* Traer productos de la base de datos a ESTE registro */}
       {showDbModal && (
         <SheetsModal
           open={showDbModal}
           onClose={() => setShowDbModal(false)}
           targetTrackingCode={trackingCode}
+          initialFilter={dbCodeInput.trim() || undefined}
           onBrought={() => { void loadOperation() }}
         />
       )}
@@ -2744,13 +2869,12 @@ export function WizardPage() {
                   e.preventDefault()
                   const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
                   if (files.length === 0) return
-                  void addImageFilesToTray(files) // estampa marca de agua
+                  void addImageFilesToTray(files)
                 }}
               >
                 {captureTray.map((src, i) => (
                   <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
                     <img src={src} className="w-full h-full object-cover" />
-                    {/* Editar/marcar foto (líneas, colores) */}
                     <button onClick={() => setTrayEditIdx(i)} aria-label="Editar foto"
                       className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
                       <Pencil className="w-3.5 h-3.5 text-white" />
@@ -2779,11 +2903,11 @@ export function WizardPage() {
                     onChange={(e) => {
                       const files = Array.from(e.target.files ?? [])
                       e.target.value = ''
-                      void addImageFilesToTray(files) // estampa marca de agua
+                      void addImageFilesToTray(files)
                     }}
                   />
                 </label>
-                {/* Pegar imagen del portapapeles (funciona en móvil) */}
+                {/* Pegar imagen del portapapeles */}
                 <button type="button" onClick={() => void pasteImageFromClipboard()}
                   className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 text-gray-500 hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]">
                   <ClipboardPaste className="w-6 h-6" />
@@ -2794,6 +2918,41 @@ export function WizardPage() {
               <p className="text-[10px] text-gray-400 text-center">
                 Arrastra imágenes aquí · Ctrl+V para pegar · o usa Galería para seleccionar varias
               </p>
+
+              {/* ── Escanear código de barras para vincular producto ── */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTrayScanner(true)}
+                  className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors"
+                >
+                  <QrCode className="w-4 h-4" />
+                  Escanear código
+                </button>
+                {features.whatsappCatalog && (
+                  <button
+                    type="button"
+                    onClick={() => setShowTrayCatalog(true)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors"
+                  >
+                    <Package className="w-4 h-4" />
+                    Catálogo DATA
+                  </button>
+                )}
+              </div>
+
+              {/* Producto vinculado a este grupo de fotos */}
+              {trayProductCode && (
+                <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
+                  <div className="flex items-center gap-2 text-emerald-700">
+                    <Package className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>Vinculado a: <strong>{trayProductCode}</strong></span>
+                  </div>
+                  <button onClick={() => setTrayProductCode(null)} className="text-emerald-600 hover:text-emerald-800">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
 
               {/* Mensaje (como en WhatsApp) */}
               <div className="space-y-1.5">
@@ -2818,12 +2977,38 @@ export function WizardPage() {
                 {traySending
                   ? <LoadingState inline size="sm" label={trayEditingPhotoIdx !== null ? 'Guardando…' : 'Enviando…'} />
                   : (trayEditingPhotoIdx !== null ? <CheckCircle2 className="w-4 h-4" /> : <Send className="w-4 h-4" />)}
-                {trayEditingPhotoIdx !== null ? 'Guardar' : `Enviar ${captureTray.length > 0 ? `(${captureTray.length})` : ''}`}
+                {trayEditingPhotoIdx !== null
+                  ? 'Guardar'
+                  : trayProductCode
+                    ? `Guardar en ${trayProductCode} (${captureTray.length})`
+                    : `Enviar ${captureTray.length > 0 ? `(${captureTray.length})` : ''}`}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Escáner de código de barras en la bandeja de fotos */}
+      {showTrayScanner && (
+        <BarcodeScanner
+          onResult={(code) => {
+            setShowTrayScanner(false)
+            setTrayProductCode(code.trim().toUpperCase())
+          }}
+          onClose={() => setShowTrayScanner(false)}
+        />
+      )}
+
+      {/* Catálogo DATA para vincular producto al grupo de fotos */}
+      <CatalogPicker
+        open={showTrayCatalog}
+        onClose={() => setShowTrayCatalog(false)}
+        onSelect={(productCode) => {
+          setShowTrayCatalog(false)
+          setTrayProductCode(productCode)
+        }}
+        existingCodes={[]}
+      />
 
       {/* Editor de imagen para una foto de la bandeja (marcar/dibujar antes de enviar) */}
       {trayEditIdx !== null && captureTray[trayEditIdx] && (
