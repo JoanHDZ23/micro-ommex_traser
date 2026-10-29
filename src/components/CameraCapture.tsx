@@ -1,21 +1,80 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Flashlight, FlashlightOff, MessageSquare, Pencil, RefreshCw, RotateCcw, Send, X } from 'lucide-react'
+import { Check, Flashlight, FlashlightOff, MessageSquare, Package, Pencil, Plus, QrCode, RefreshCw, RotateCcw, Search, Send, X } from 'lucide-react'
 import { ErrorState, LoadingState } from './ui'
 import { ImageEditor } from './ImageEditor'
+import { BarcodeScanner } from './BarcodeScanner'
+import { DbProductSearch } from './DbProductSearch'
 import { drawStampOnCanvas, getAddress, getAddressNow, getCoordsNow, primeCoords } from '../lib/photo-stamp'
+import type { SheetSearchItem } from '../lib/api'
+
+/** Foto capturada dentro de la bandeja de la cámara (modo multi-captura). */
+export interface CapturedPhoto {
+  /** base64 sin el prefijo data URL. */
+  base64: string
+  /** dataURL completa para previsualizar. */
+  dataUrl: string
+  /** Comentario asociado a esta foto. */
+  comment: string
+}
+
+/** Resultado de una sesión de cámara en modo multi-captura. */
+export interface MultiCaptureResult {
+  photos: CapturedPhoto[]
+  /** Código de producto al que se vinculan las fotos (si se eligió uno). */
+  productCode?: string
+}
+
+/** Configuración de la base de datos (DATA) fijada en el registro. */
+export interface CameraDbConfig {
+  sheetId: string
+  sheetName?: string
+  codeColumn?: number
+  descColumn?: number
+  codeType?: 'alphanumeric' | 'numeric'
+}
 
 interface CameraCaptureProps {
   stepName: string
   stepIndex: number
-  onCapture: (base64: string, comment: string) => void
+  /** Captura simple (una foto) — compatibilidad con el flujo anterior. */
+  onCapture?: (base64: string, comment: string) => void
   onCancel: () => void
   /** Estampar marca de agua (fecha/hora/ubicación). Por defecto true. */
   stamp?: boolean
   /** Qué partes de la marca mostrar. */
   stampParts?: { date?: boolean; time?: boolean; location?: boolean }
+
+  /**
+   * Modo multi-captura: permite tomar varias fotos seguidas sin salir, y
+   * (opcionalmente) vincularlas a un producto. Al confirmar se devuelve todo
+   * el lote mediante `onCaptureMulti`.
+   */
+  multi?: boolean
+  /** Devuelve el lote de fotos al confirmar (modo multi). */
+  onCaptureMulti?: (result: MultiCaptureResult) => void
+  /**
+   * Permite elegir/registrar un producto para vincular las fotos sin salir de
+   * la cámara. Si se pasa dbConfig, se habilita la búsqueda en la DATA.
+   */
+  allowProductLink?: boolean
+  dbConfig?: CameraDbConfig
+  /** Producto preseleccionado (p. ej. al tomar fotos de un producto existente). */
+  initialProductCode?: string
 }
 
-export function CameraCapture({ stepName, stepIndex, onCapture, onCancel, stamp = true, stampParts }: CameraCaptureProps) {
+export function CameraCapture({
+  stepName,
+  stepIndex,
+  onCapture,
+  onCancel,
+  stamp = true,
+  stampParts,
+  multi = false,
+  onCaptureMulti,
+  allowProductLink = false,
+  dbConfig,
+  initialProductCode,
+}: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
@@ -26,6 +85,12 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel, stamp 
   const [torchOn, setTorchOn] = useState(false)
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment')
   const [editing, setEditing] = useState(false)
+
+  // ── Estado del modo multi-captura ──
+  const [tray, setTray] = useState<CapturedPhoto[]>([])
+  const [productCode, setProductCode] = useState<string | undefined>(initialProductCode)
+  const [showProductPanel, setShowProductPanel] = useState(false)
+  const [showScanner, setShowScanner] = useState(false)
 
   const startCamera = useCallback(async (facing?: 'environment' | 'user') => {
     try {
@@ -119,11 +184,46 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel, stamp 
     void startCamera()
   }
 
-  const confirm = () => {
+  // Captura simple (flujo anterior): entrega la foto y cierra.
+  const confirmSingle = () => {
     if (!preview) return
     const base64 = preview.split(',')[1] ?? ''
-    onCapture(base64, comment.trim())
+    onCapture?.(base64, comment.trim())
   }
+
+  // Modo multi: agrega la foto a la bandeja y reabre la cámara para la siguiente.
+  const addToTray = () => {
+    if (!preview) return
+    const base64 = preview.split(',')[1] ?? ''
+    setTray((prev) => [...prev, { base64, dataUrl: preview, comment: comment.trim() }])
+    setPreview(null)
+    setComment('')
+    setShowCommentInput(false)
+    void startCamera()
+  }
+
+  const removeFromTray = (idx: number) => {
+    setTray((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  // Confirma toda la sesión multi-captura (incluye la foto en preview si existe).
+  const finishMulti = () => {
+    const photos = [...tray]
+    if (preview) {
+      const base64 = preview.split(',')[1] ?? ''
+      photos.push({ base64, dataUrl: preview, comment: comment.trim() })
+    }
+    if (photos.length === 0) { onCancel(); return }
+    stopCamera()
+    onCaptureMulti?.({ photos, productCode })
+  }
+
+  const handleProductSelected = (item: SheetSearchItem) => {
+    setProductCode(item.code || item.descripcion || 'PRODUCTO')
+    setShowProductPanel(false)
+  }
+
+  const trayCount = tray.length + (preview ? 1 : 0)
 
   return (
     <div className="camera-overlay">
@@ -133,6 +233,11 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel, stamp 
           <div className="text-white">
             <p className="text-xs opacity-80">Paso {stepIndex + 1}</p>
             <p className="text-sm font-semibold">{stepName}</p>
+            {multi && productCode && (
+              <p className="text-[11px] mt-0.5 inline-flex items-center gap-1 text-emerald-300">
+                <Package className="w-3 h-3" /> {productCode}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {!preview && !error && (
@@ -169,6 +274,37 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel, stamp 
             </button>
           </div>
         </div>
+
+        {/* Barra de producto (modo multi): escanear / buscar en DATA sin salir. */}
+        {multi && allowProductLink && !preview && !error && (
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowScanner(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
+            >
+              <QrCode className="w-4 h-4" /> Escanear
+            </button>
+            {dbConfig?.sheetId && (
+              <button
+                type="button"
+                onClick={() => setShowProductPanel(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
+              >
+                <Search className="w-4 h-4" /> Buscar producto
+              </button>
+            )}
+            {productCode && (
+              <button
+                type="button"
+                onClick={() => setProductCode(undefined)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-emerald-500/80 text-white text-xs font-medium"
+              >
+                {productCode} <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Video / Preview */}
@@ -206,6 +342,27 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel, stamp 
             </div>
           )}
         </>
+      )}
+
+      {/* Tira de miniaturas de la bandeja (modo multi, mientras la cámara está activa) */}
+      {multi && !preview && !error && tray.length > 0 && (
+        <div className="absolute left-0 right-0 bottom-[132px] z-10 px-3">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            {tray.map((p, i) => (
+              <div key={i} className="relative flex-shrink-0">
+                <img src={p.dataUrl} className="w-14 h-14 rounded-lg object-cover border-2 border-white/60" />
+                <button
+                  type="button"
+                  onClick={() => removeFromTray(i)}
+                  aria-label="Quitar foto"
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center shadow"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Controls */}
@@ -246,29 +403,68 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel, stamp 
                 >
                   <Pencil className="w-5 h-5 text-white" />
                 </button>
-                <button
-                  type="button"
-                  onClick={confirm}
-                  aria-label={comment.trim() ? 'Enviar captura con comentario' : 'Confirmar captura'}
-                  className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                >
-                  {comment.trim() ? (
-                    <Send className="w-6 h-6 text-white" />
-                  ) : (
-                    <Check className="w-7 h-7 text-white" />
-                  )}
-                </button>
+                {multi ? (
+                  <>
+                    {/* Tomar otra: guarda en la bandeja y reabre la cámara. */}
+                    <button
+                      type="button"
+                      onClick={addToTray}
+                      aria-label="Tomar otra foto"
+                      className="w-16 h-16 rounded-full bg-white flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    >
+                      <Plus className="w-7 h-7 text-gray-800" />
+                    </button>
+                    {/* Listo: finaliza la sesión con todas las fotos. */}
+                    <button
+                      type="button"
+                      onClick={finishMulti}
+                      aria-label="Terminar y enviar"
+                      className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                    >
+                      <Send className="w-6 h-6 text-white" />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={confirmSingle}
+                    aria-label={comment.trim() ? 'Enviar captura con comentario' : 'Confirmar captura'}
+                    className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                  >
+                    {comment.trim() ? (
+                      <Send className="w-6 h-6 text-white" />
+                    ) : (
+                      <Check className="w-7 h-7 text-white" />
+                    )}
+                  </button>
+                )}
               </div>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => void captureFrame()}
-              aria-label="Capturar foto"
-              className="capture-btn"
-            >
-              <div className="capture-btn__inner" />
-            </button>
+            <div className="w-full flex items-center justify-center gap-6">
+              <button
+                type="button"
+                onClick={() => void captureFrame()}
+                aria-label="Capturar foto"
+                className="capture-btn"
+              >
+                <div className="capture-btn__inner" />
+              </button>
+              {/* En multi, botón "Listo" visible si ya hay fotos en la bandeja. */}
+              {multi && trayCount > 0 && (
+                <button
+                  type="button"
+                  onClick={finishMulti}
+                  aria-label="Terminar y enviar"
+                  className="absolute right-6 w-14 h-14 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg"
+                >
+                  <div className="flex flex-col items-center">
+                    <Send className="w-5 h-5 text-white" />
+                    <span className="text-[10px] text-white font-bold leading-none mt-0.5">{trayCount}</span>
+                  </div>
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -282,6 +478,44 @@ export function CameraCapture({ stepName, stepIndex, onCapture, onCancel, stamp 
           }}
           onCancel={() => setEditing(false)}
         />
+      )}
+
+      {/* Escáner de código de barras (modo multi) */}
+      {showScanner && (
+        <BarcodeScanner
+          onResult={(code) => {
+            setShowScanner(false)
+            const clean = dbConfig?.codeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim()
+            setProductCode(clean || undefined)
+          }}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
+
+      {/* Panel de búsqueda en la DATA (modo multi) */}
+      {showProductPanel && dbConfig?.sheetId && (
+        <div className="fixed inset-0 z-[130] bg-black/60 flex items-end sm:items-center justify-center">
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                <Package className="w-4 h-4 text-emerald-600" /> Vincular producto
+              </h3>
+              <button onClick={() => setShowProductPanel(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto">
+              <DbProductSearch
+                sheetId={dbConfig.sheetId}
+                sheetName={dbConfig.sheetName}
+                codeColumn={dbConfig.codeColumn ?? 0}
+                descColumn={dbConfig.descColumn ?? -1}
+                codeType={dbConfig.codeType ?? 'alphanumeric'}
+                onSelect={(item) => handleProductSelected(item)}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

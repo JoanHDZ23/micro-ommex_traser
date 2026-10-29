@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { apiRequest, fileToBase64, lookupInSheet, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
-import { CameraCapture } from '../components/CameraCapture'
+import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { DbProductSearch } from '../components/DbProductSearch'
 import { WhatsAppSync } from '../components/WhatsAppSync'
@@ -20,6 +20,7 @@ import type { PhotoRecord } from '../lib/api'
 import { useTracerFeatures } from '../lib/tracer-features'
 import { getCompanyId } from '../lib/context'
 import { getRecordSettings, setRecordSettings, DEFAULT_RECORD_SETTINGS, type RecordSettings } from '../lib/record-settings'
+import { getDbSettings } from '../lib/db-settings'
 
 /** URL directa de R2: driveUrl http(s) que no es de Google. */
 function directUrl(photo: Pick<PhotoRecord, 'driveUrl'>): string | null {
@@ -181,8 +182,25 @@ export function WizardPage() {
   // ── Ajustes POR REGISTRO (marca de agua, etc.) — locales del dispositivo ──
   const [showRecordSettings, setShowRecordSettings] = useState(false)
   const [recordSettings, setRecordSettingsState] = useState<RecordSettings>(DEFAULT_RECORD_SETTINGS)
-  // Carga los ajustes guardados de este registro.
-  useEffect(() => { if (trackingCode) setRecordSettingsState(getRecordSettings(trackingCode)) }, [trackingCode])
+  // Carga los ajustes guardados de este registro. Si el registro no tiene una
+  // DATA fijada, hereda la DATA PRINCIPAL de la empresa (y su mapeo de columnas),
+  // configurada desde la vista de base de datos.
+  useEffect(() => {
+    if (!trackingCode) return
+    const rs = getRecordSettings(trackingCode)
+    if (!rs.dbSheetId) {
+      const db = getDbSettings(getCompanyId())
+      if (db.primarySheetId) {
+        rs.dbSheetId = db.primarySheetId
+        rs.dbSheetName = db.primarySheetName
+        rs.dbCodeColumn = db.codeColumn
+        rs.dbDescColumn = db.descColumn
+        // La primera columna extra se usa como descripción de los buscadores.
+        rs.dbExtraColumns = db.extraColumns?.length ? db.extraColumns : (db.descColumn >= 0 ? [db.descColumn] : [])
+      }
+    }
+    setRecordSettingsState(rs)
+  }, [trackingCode])
   // Guarda un cambio de ajuste (persistente por registro).
   const updateRecordSetting = (patch: Partial<RecordSettings>) => {
     setRecordSettingsState((prev) => {
@@ -902,16 +920,76 @@ export function WizardPage() {
     })
   }, [operation, trackingCode])
 
-  // ── Photo capture (free-form) ──
-  const handlePhotoCapture = async (base64: string, comment: string) => {
-    if (!trackingCode) return
+  /**
+   * Resultado de la cámara en modo multi-captura (misma cámara que productos).
+   * Sube todas las fotos en lote; si se vinculó un producto, las anexa a él
+   * (creándolo en la operación si aún no existe).
+   */
+  const handleMultiCapture = async ({ photos, productCode }: MultiCaptureResult) => {
     setShowCamera(false)
-    // Si el editor de imágenes (marcador) está activo, abrir para marcar antes de guardar.
-    if (features.markerEditor) {
-      setImgEditor({ src: `data:image/jpeg;base64,${base64}`, comment })
+    if (!trackingCode || photos.length === 0) return
+    const clientTimestamp = new Date().toISOString()
+    const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+    // ── Fotos vinculadas a un producto ──
+    if (productCode) {
+      setFeedback(`⏳ Subiendo ${photos.length} foto(s) a ${productCode}…`)
+      try {
+        const exists = lbProducts.some((p) => p.productCode.toLowerCase() === productCode.toLowerCase())
+        if (!exists) {
+          await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
+            method: 'POST',
+            body: { productCode },
+          })
+        }
+        for (let i = 0; i < photos.length; i++) {
+          await apiRequest<UploadPhotoResponse>(
+            `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo`,
+            { method: 'POST', body: { stepIndex: 0, base64Image: photos[i].base64, mimeType: 'image/jpeg', comment: photos[i].comment, clientTimestamp, groupId } },
+          )
+        }
+        setActiveLbProduct(productCode)
+        await loadOperation()
+        setFeedback(`✓ ${photos.length} foto(s) vinculada(s) a ${productCode}`)
+      } catch (err) {
+        setFeedback(err instanceof Error ? err.message : 'Error al vincular las fotos al producto')
+      }
       return
     }
-    await savePhotoGeneral(base64, comment)
+
+    // ── Fotos generales ──
+    try {
+      const cachedIds: string[] = []
+      for (const p of photos) {
+        const cached = await cachePhoto({ trackingCode, base64: p.base64, comment: p.comment })
+        setLocalPhotos((prev) => [...prev, cached])
+        cachedIds.push(cached.id)
+      }
+      if (photos.length === 1) {
+        await apiRequest<UploadPhotoResponse>('/photos/upload', {
+          method: 'POST',
+          body: { trackingCode, stepIndex: 0, base64Image: photos[0].base64, mimeType: 'image/jpeg', comment: photos[0].comment, clientTimestamp },
+        })
+      } else {
+        setFeedback(`⏳ Subiendo ${photos.length} fotos…`)
+        await apiRequest<{ count: number }>('/photos/upload-batch', {
+          method: 'POST',
+          body: {
+            trackingCode,
+            groupId,
+            comment: photos[0].comment,
+            clientTimestamp,
+            mimeType: 'image/jpeg',
+            photos: photos.map((p) => ({ base64Image: p.base64, comment: p.comment })),
+          },
+        })
+      }
+      for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
+      await loadOperation()
+      setFeedback(`✓ ${photos.length} foto(s) enviada(s)`)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
+    }
   }
 
   // Guarda una foto general (cache local + subida en background).
@@ -1292,17 +1370,6 @@ export function WizardPage() {
       else next.add(code)
       return next
     })
-  }
-
-  const handleLbCapture = async (base64: string, comment: string) => {
-    if (!trackingCode || !activeLbProduct) return
-    const productCode = activeLbProduct
-    setLbCameraOpen(false)
-    setFeedback(`✓ Foto de ${productCode}`)
-    // Mismo flujo que galería/cámara general: cache temporal (IndexedDB) →
-    // sube a GitHub en background → al subir se borra del cache y se recarga
-    // el registro para mostrar la foto ya anexada.
-    await uploadSinglePhoto(base64, comment, true, productCode)
   }
 
   // ── Finalize / Reopen ──
@@ -2452,13 +2519,14 @@ export function WizardPage() {
                 <Send className="w-4 h-4 text-white" />
               </button>
             )}
-            {/* Camera button — abre la app de cámara del dispositivo (estilo WhatsApp) */}
-            <button type="button" onClick={openNativeCamera}
+            {/* Camera button — abre la MISMA cámara in-app que usan los productos,
+                en modo multi-captura (varias fotos + vincular producto sin salir). */}
+            <button type="button" onClick={() => { setChatMessage(''); setShowCamera(true) }}
               className="w-9 h-9 rounded-full bg-[var(--color-primary)] flex items-center justify-center cursor-pointer flex-shrink-0"
               aria-label="Abrir cámara">
               <Camera className="w-5 h-5 text-white" />
             </button>
-            {/* Input oculto: usa la cámara nativa del dispositivo */}
+            {/* Input oculto: cámara nativa (respaldo, aún usado por el menú "+"). */}
             <input ref={nativeCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
               onChange={(e) => void handleNativeCameraShot(e)} />
           </div>
@@ -3343,11 +3411,21 @@ export function WizardPage() {
         />
       )}
 
-      {/* Camera for general photos */}
+      {/* Camera for general photos — misma cámara in-app, en modo multi-captura:
+          permite tomar varias fotos seguidas y, sin salir, escanear/buscar un
+          producto en la DATA para vincularlas. */}
       {showCamera && (
         <CameraCapture stepName="Registro fotográfico" stepIndex={0}
           stamp={stampOpts.stamp} stampParts={stampOpts.stampParts}
-          onCapture={(b64, cmt) => { void handlePhotoCapture(b64, cmt || chatMessage); setChatMessage('') }}
+          multi
+          allowProductLink
+          dbConfig={recordSettings.dbSheetId ? {
+            sheetId: recordSettings.dbSheetId,
+            sheetName: recordSettings.dbSheetName,
+            codeColumn: recordSettings.dbCodeColumn ?? 0,
+            descColumn: dbPrimaryDescCol,
+          } : undefined}
+          onCaptureMulti={(r) => void handleMultiCapture(r)}
           onCancel={() => setShowCamera(false)} />
       )}
 
@@ -3374,11 +3452,13 @@ export function WizardPage() {
         />
       )}
 
-      {/* Camera for Línea Blanca */}
+      {/* Camera for Línea Blanca — multi-captura para el producto activo. */}
       {lbCameraOpen && activeLbProduct && (
         <CameraCapture stepName={`Foto de ${activeLbProduct}`} stepIndex={activeLbData?.photos.length ?? 0}
           stamp={stampOpts.stamp} stampParts={stampOpts.stampParts}
-          onCapture={(b64, cmt) => void handleLbCapture(b64, cmt)}
+          multi
+          initialProductCode={activeLbProduct}
+          onCaptureMulti={(r) => void handleMultiCapture({ ...r, productCode: r.productCode ?? activeLbProduct })}
           onCancel={() => setLbCameraOpen(false)} />
       )}
 

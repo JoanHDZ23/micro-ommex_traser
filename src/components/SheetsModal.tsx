@@ -4,7 +4,9 @@ import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2,
   Search, CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
   Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
+  Star, LayoutGrid, List, Package,
 } from 'lucide-react'
+import { getDbSettings, patchDbSettings } from '../lib/db-settings'
 import { apiRequest, fileToBase64, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
@@ -116,6 +118,8 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
   const [showColumnFilters, setShowColumnFilters] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  // Vista de los datos: 'cards' (items, por defecto) o 'table' (tabla clásica).
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards')
   // Filas "marcadas" (producto ya cogido/listo) → se pintan de color. Persistente.
   const [marked, setMarked] = useState<Set<number>>(() => loadMarked(markKey))
 
@@ -323,6 +327,25 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
           leftIcon={<QrCode className="w-4 h-4" />} className="flex-shrink-0">
           <span className="hidden sm:inline">Escanear</span>
         </Button>
+        {/* Alternar vista: items (tarjetas) ↔ tabla */}
+        <div className="flex-shrink-0 inline-flex rounded-[var(--radius)] border border-[var(--color-border)] overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setViewMode('cards')}
+            title="Vista de items"
+            className={`px-3 py-2 flex items-center gap-1.5 text-sm ${viewMode === 'cards' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-2)]'}`}
+          >
+            <LayoutGrid className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('table')}
+            title="Vista de tabla"
+            className={`px-3 py-2 flex items-center gap-1.5 text-sm ${viewMode === 'table' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-2)]'}`}
+          >
+            <List className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Panel de filtros por columna — un input por cada columna (estilo Excel) */}
@@ -387,7 +410,103 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
         </div>
       )}
 
-      {/* Tabla */}
+      {/* ── Vista de ITEMS (tarjetas) — cada fila como una ficha de producto ── */}
+      {viewMode === 'cards' ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between px-1">
+            <span className="text-xs text-[var(--color-text-3)]">
+              <span className="font-bold text-[var(--color-text)]">{filtered.length}</span> de {rows.length} ·{' '}
+              {headers.length} columnas
+            </span>
+          </div>
+          {visible.length === 0 ? (
+            <div className="py-10 text-center text-sm text-[var(--color-text-3)]">Sin resultados.</div>
+          ) : (
+            <div className="space-y-2">
+              {visible.map((row, ri) => {
+                const gIdx = indexOfRow(row)
+                const isSel = selected.has(gIdx)
+                const isMarked = marked.has(gIdx)
+                // Título de la ficha: columna de código (si hay actions) o la primera columna.
+                const titleCol = actions ? actions.codeCol : 0
+                const title = (row[titleCol] ?? '').trim() || `Fila ${gIdx + 1}`
+                // Descripción destacada: columna de descripción si está configurada.
+                const descCol = actions && actions.descCol >= 0 ? actions.descCol : -1
+                const desc = descCol >= 0 ? (row[descCol] ?? '').trim() : ''
+                return (
+                  <div key={ri}
+                    className={`rounded-[var(--radius-lg)] border p-3 transition-colors ${
+                      isMarked ? 'bg-emerald-50/70 border-emerald-200'
+                        : isSel ? 'bg-[var(--color-primary-bg)]/50 border-[var(--color-primary)]/40'
+                        : 'bg-[var(--color-surface)] border-[var(--color-border)]'
+                    }`}>
+                    <div className="flex items-start gap-2.5">
+                      {actions && (
+                        <input type="checkbox" checked={isSel} onChange={() => toggleRow(gIdx)}
+                          className="mt-1 w-4 h-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]/30 flex-shrink-0" />
+                      )}
+                      <div className="w-9 h-9 rounded-lg bg-[var(--color-primary-bg)] text-[var(--color-primary)] flex items-center justify-center flex-shrink-0">
+                        <Package className="w-4.5 h-4.5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-sm font-bold text-[var(--color-text)] break-words ${isMarked ? 'line-through decoration-emerald-400/60' : ''}`}>
+                          {title}
+                        </p>
+                        {desc && <p className="text-xs text-[var(--color-text-2)] mt-0.5 break-words">{desc}</p>}
+                        {/* Resto de campos como pares etiqueta: valor */}
+                        <dl className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
+                          {headers.map((h, ci) => {
+                            if (ci === titleCol || ci === descCol) return null
+                            const val = (row[ci] ?? '').trim()
+                            if (!val) return null
+                            return (
+                              <div key={ci} className="flex gap-1.5 text-[11px] min-w-0">
+                                <dt className="font-semibold text-[var(--color-text-3)] flex-shrink-0">{h || `Col ${ci + 1}`}:</dt>
+                                <dd className="text-[var(--color-text)] truncate">{val}</dd>
+                              </div>
+                            )
+                          })}
+                        </dl>
+                      </div>
+                      {/* Marcar como listo */}
+                      <button onClick={() => toggleMark(gIdx)}
+                        title={isMarked ? 'Quitar marca' : 'Marcar como listo/cogido'}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
+                          isMarked ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
+                            : 'bg-[var(--color-bg)] text-[var(--color-text-3)] hover:bg-[var(--color-border)]'
+                        }`}>
+                        <CheckCircle2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                    {/* Acciones por item */}
+                    {actions && (
+                      <div className="flex items-center gap-1.5 mt-2.5 pt-2.5 border-t border-[var(--color-border)]">
+                        <button onClick={() => actions.onCreateRecord(row)} disabled={actions.busy}
+                          className="flex-1 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50 hover:opacity-90 transition-opacity">
+                          {actions.primaryLabel === 'Traer' ? <PackagePlus className="w-3.5 h-3.5" /> : <FilePlus className="w-3.5 h-3.5" />}
+                          {actions.primaryLabel ?? 'Registro'}
+                        </button>
+                        {actions.primaryLabel !== 'Traer' && (
+                          <button onClick={() => actions.onCreateProduct(row)} disabled={actions.busy}
+                            className="flex-1 px-3 py-1.5 rounded-lg border border-[var(--color-primary)]/30 text-[var(--color-primary)] text-xs font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50 hover:bg-[var(--color-primary-bg)] transition-colors">
+                            <PackagePlus className="w-3.5 h-3.5" /> Producto
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+          {filtered.length > MAX_VISIBLE_ROWS && (
+            <div className="px-4 py-2.5 bg-[var(--color-bg)] text-xs text-[var(--color-text-3)] text-center rounded-[var(--radius-lg)] border border-[var(--color-border)]">
+              Mostrando los primeros {MAX_VISIBLE_ROWS} de {filtered.length} items. Usa el filtro para acotar.
+            </div>
+          )}
+        </div>
+      ) : (
+      /* Tabla */
       <div className="border border-[var(--color-border)] rounded-[var(--radius-lg)] overflow-hidden bg-[var(--color-surface)] shadow-sm">
         <div className="flex items-center justify-between px-4 py-3 bg-[var(--color-bg)] border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2">
@@ -502,6 +621,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }
@@ -537,6 +657,18 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   // Visor de una hoja importada (verificación dentro de la app)
   const [viewing, setViewing] = useState<SheetData | null>(null)
   const [loadingView, setLoadingView] = useState(false)
+
+  // ── DATA principal de la empresa (tabla donde se busca por defecto) ──
+  const [primarySheetId, setPrimarySheetId] = useState<string | undefined>(
+    () => getDbSettings(companyId).primarySheetId,
+  )
+  // Marca/desmarca una tabla como la DATA principal de la empresa.
+  const togglePrimarySheet = (sheet: CompanySheet) => {
+    const next = primarySheetId === sheet.id ? undefined : sheet.id
+    patchDbSettings(companyId, { primarySheetId: next, primarySheetName: next ? sheet.sheetName : undefined })
+    setPrimarySheetId(next)
+    setSuccess(next ? `✓ "${sheet.sheetName}" marcada como DATA principal.` : 'Se quitó la DATA principal.')
+  }
 
   // Edición de filas dentro del visor
   const [editing, setEditing] = useState(false)
@@ -590,8 +722,20 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   // o los índices no son válidos para esta tabla, adivina por nombre de encabezado.
   useEffect(() => {
     if (!viewing) return
-    const saved = companyId ? loadColumnSelection(companyId) : null
     const numCols = viewing.headers.length
+    // Si la tabla es la DATA principal, usa la configuración de columnas guardada
+    // a nivel empresa (db-settings) como fuente preferente.
+    const db = companyId ? getDbSettings(companyId) : null
+    if (db && db.primarySheetId === viewing.id &&
+      db.codeColumn >= 0 && db.codeColumn < numCols &&
+      db.descColumn >= -1 && db.descColumn < numCols &&
+      Array.isArray(db.extraColumns) && db.extraColumns.every((c) => c >= 0 && c < numCols)) {
+      setCodeCol(db.codeColumn)
+      setDescCol(db.descColumn)
+      setExtraCols(db.extraColumns.filter((c) => c !== db.codeColumn && c !== db.descColumn))
+      return
+    }
+    const saved = companyId ? loadColumnSelection(companyId) : null
     if (
       saved &&
       saved.codeCol >= 0 && saved.codeCol < numCols &&
@@ -1164,6 +1308,23 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   {viewing.source === 'sheet' && (
                     <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-1 rounded-full">En vivo desde Sheets</span>
                   )}
+                  {/* Guardar la configuración de columnas de ESTA tabla como la de
+                      la DATA de la empresa (código/descripción/columnas a traer)
+                      y marcarla como DATA principal. */}
+                  <Button variant="primary" onClick={() => {
+                    patchDbSettings(companyId, {
+                      primarySheetId: viewing.id,
+                      primarySheetName: viewing.sheetName,
+                      codeColumn: codeCol,
+                      descColumn: descCol,
+                      extraColumns: extraCols,
+                    })
+                    setPrimarySheetId(viewing.id)
+                    setSuccess(`✓ Columnas guardadas y "${viewing.sheetName}" marcada como DATA principal.`)
+                  }}
+                    leftIcon={<Star className="w-4 h-4" />}>
+                    Usar como DATA
+                  </Button>
                 </div>
                 <DataTable
                   headers={viewing.headers}
@@ -1354,6 +1515,11 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-bold text-[var(--color-text)] truncate">{s.sheetName}</p>
+                          {primarySheetId === s.id && (
+                            <span className="inline-flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 flex-shrink-0">
+                              <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500" /> DATA principal
+                            </span>
+                          )}
                           {s.sheetUrl && (
                             <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 flex-shrink-0">
                               Drive
@@ -1380,6 +1546,14 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                         className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors"
                         title="Ver y editar en la app">
                         <Eye className="w-4 h-4" /> Ver / Editar
+                      </button>
+                      <button onClick={() => togglePrimarySheet(s)}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium transition-colors ${
+                          primarySheetId === s.id ? 'text-amber-600 hover:bg-amber-50' : 'text-[var(--color-text-3)] hover:bg-[var(--color-bg)]'
+                        }`}
+                        title="Marcar como la DATA principal (donde se busca por defecto)">
+                        <Star className={`w-4 h-4 ${primarySheetId === s.id ? 'fill-amber-500 text-amber-500' : ''}`} />
+                        {primarySheetId === s.id ? 'Principal' : 'Hacer principal'}
                       </button>
                       {s.sheetUrl && (
                         <a href={s.sheetUrl} target="_blank" rel="noopener noreferrer"
