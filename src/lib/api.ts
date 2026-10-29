@@ -286,6 +286,35 @@ export interface SheetData {
   createdAt: string
 }
 
+export interface SheetLookupResult {
+  found: boolean
+  sheetName?: string
+  headers?: string[]
+  row?: string[]
+  code?: string
+  descripcion?: string
+  data?: Record<string, string>
+}
+
+/**
+ * Busca un código dentro de una tabla de la DATA (base de datos fijada en el
+ * registro) y devuelve los datos del producto si existe.
+ */
+export async function lookupInSheet(params: {
+  sheetId: string
+  companyId: string
+  code: string
+  codeColumn?: number
+  descColumn?: number
+}): Promise<SheetLookupResult> {
+  const q = new URLSearchParams()
+  q.set('companyId', params.companyId)
+  q.set('code', params.code)
+  q.set('codeColumn', String(params.codeColumn ?? 0))
+  if (typeof params.descColumn === 'number' && params.descColumn >= 0) q.set('descColumn', String(params.descColumn))
+  return apiRequest<SheetLookupResult>(`/sheets/${encodeURIComponent(params.sheetId)}/lookup?${q.toString()}`)
+}
+
 /** Lee un File como base64 (sin el prefijo data URL). */
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

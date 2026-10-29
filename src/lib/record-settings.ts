@@ -17,6 +17,18 @@ export interface RecordSettings {
   watermarkTime: boolean
   /** Incluir la ubicación (dirección/coordenadas) en la marca. */
   watermarkLocation: boolean
+  /**
+   * Base de datos (tabla de la DATA) fijada para este registro. Si está
+   * definida, al ingresar/escanear un código se buscan los datos del producto
+   * en esta tabla y se autocompletan.
+   */
+  dbSheetId?: string
+  /** Nombre legible de la tabla fijada (solo para mostrar). */
+  dbSheetName?: string
+  /** Índice de la columna que contiene el código del producto. */
+  dbCodeColumn?: number
+  /** Índice de la columna de descripción a traer (opcional, -1 = ninguna). */
+  dbDescColumn?: number
 }
 
 export const DEFAULT_RECORD_SETTINGS: RecordSettings = {
@@ -24,6 +36,10 @@ export const DEFAULT_RECORD_SETTINGS: RecordSettings = {
   watermarkDate: true,
   watermarkTime: true,
   watermarkLocation: true,
+  dbSheetId: undefined,
+  dbSheetName: undefined,
+  dbCodeColumn: 0,
+  dbDescColumn: -1,
 }
 
 const KEY_PREFIX = 'ommex_record_settings:'

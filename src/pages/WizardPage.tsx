@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
-import { apiRequest, fileToBase64, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
+import { apiRequest, fileToBase64, lookupInSheet, type CompanySheet, type LabelData, type Operation, type OperationType, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
@@ -203,6 +203,47 @@ export function WizardPage() {
   // Ref siempre actualizado, para usarlo dentro de callbacks memorizados.
   const stampOptsRef = useRef(stampOpts)
   useEffect(() => { stampOptsRef.current = stampOpts }, [stampOpts])
+
+  // ── Base de datos (tabla DATA) fijada para ESTE registro ──
+  // Lista de tablas disponibles de la empresa + headers de la seleccionada,
+  // para elegir la columna de código y de descripción en los ajustes.
+  const [dbSheets, setDbSheets] = useState<CompanySheet[]>([])
+  const [dbHeaders, setDbHeaders] = useState<string[]>([])
+  const [dbLoadingHeaders, setDbLoadingHeaders] = useState(false)
+  // Ref a los ajustes del registro, para usarlos en callbacks sin recrearlos.
+  const recordSettingsRef = useRef(recordSettings)
+  useEffect(() => { recordSettingsRef.current = recordSettings }, [recordSettings])
+
+  // Carga la lista de tablas de la empresa al abrir los ajustes del registro.
+  useEffect(() => {
+    if (!showRecordSettings) return
+    const cid = getCompanyId()
+    if (!cid) return
+    void apiRequest<{ sheets: CompanySheet[] }>(`/sheets?companyId=${encodeURIComponent(cid)}`)
+      .then((r) => setDbSheets(r.sheets ?? []))
+      .catch(() => { /* sin tablas */ })
+  }, [showRecordSettings])
+
+  // Carga los headers de la tabla fijada (para elegir columnas).
+  const loadDbHeaders = useCallback(async (sheetId: string) => {
+    const cid = getCompanyId()
+    if (!cid || !sheetId) { setDbHeaders([]); return }
+    setDbLoadingHeaders(true)
+    try {
+      const data = await apiRequest<{ headers: string[] }>(`/sheets/${encodeURIComponent(sheetId)}?companyId=${encodeURIComponent(cid)}`)
+      setDbHeaders(data.headers ?? [])
+    } catch {
+      setDbHeaders([])
+    } finally {
+      setDbLoadingHeaders(false)
+    }
+  }, [])
+
+  // Al abrir ajustes con una DB ya fijada, carga sus headers.
+  useEffect(() => {
+    if (showRecordSettings && recordSettings.dbSheetId) void loadDbHeaders(recordSettings.dbSheetId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showRecordSettings])
 
   // Edición de una foto general existente desde la bandeja de revisión.
   // Si está definido, al enviar la bandeja se ACTUALIZA esa foto (comentario +
@@ -998,6 +1039,40 @@ export function WizardPage() {
       .catch(() => { /* sin productos */ })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAddProductModal])
+
+  // ── Autocompletado desde la BASE DE DATOS fijada en el registro ──
+  // Resultado del último lookup (datos del producto encontrado en la DATA).
+  const [dbLookup, setDbLookup] = useState<{ loading: boolean; found?: boolean; descripcion?: string; data?: Record<string, string> }>({ loading: false })
+
+  // Busca el código en la tabla fijada cuando el usuario escribe/escanea (debounce).
+  useEffect(() => {
+    if (!showAddProductModal) return
+    const cfg = recordSettingsRef.current
+    const cid = operation?.companyId || getCompanyId()
+    const code = lbProductCode.trim()
+    if (!cfg.dbSheetId || !cid || code.length < 1) { setDbLookup({ loading: false }); return }
+    setDbLookup({ loading: true })
+    const t = setTimeout(async () => {
+      try {
+        const r = await lookupInSheet({
+          sheetId: cfg.dbSheetId!,
+          companyId: cid,
+          code,
+          codeColumn: cfg.dbCodeColumn ?? 0,
+          descColumn: cfg.dbDescColumn,
+        })
+        setDbLookup({ loading: false, found: r.found, descripcion: r.descripcion, data: r.data })
+        // Si trae descripción, la precargamos en labelData para crear el producto con ella.
+        if (r.found && r.descripcion) {
+          setLbLabelData((prev) => ({ ...(prev ?? {}), descripcion: r.descripcion }))
+        }
+      } catch {
+        setDbLookup({ loading: false })
+      }
+    }, 350)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lbProductCode, showAddProductModal])
 
   // ¿El código escrito ya existe en ESTA operación?
   const existsInThisOperation = lbProductCode.trim()
@@ -2422,6 +2497,34 @@ export function WizardPage() {
                   onChange={(e) => void handleScanLabelOCR(e, 'code')} />
               </label>
 
+              {/* Datos traídos de la BASE DE DATOS fijada en el registro */}
+              {recordSettings.dbSheetId && lbProductCode.trim().length >= 1 && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 space-y-1">
+                  <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 uppercase">
+                    <Database className="w-3 h-3" />
+                    {dbLookup.loading
+                      ? 'Buscando en la base de datos…'
+                      : dbLookup.found
+                        ? `Encontrado en ${recordSettings.dbSheetName ?? 'la base de datos'}`
+                        : 'Sin coincidencia en la base de datos'}
+                  </div>
+                  {!dbLookup.loading && dbLookup.found && (
+                    <div className="space-y-0.5">
+                      {dbLookup.descripcion && (
+                        <p className="text-xs text-gray-700"><span className="font-medium">Descripción:</span> {dbLookup.descripcion}</p>
+                      )}
+                      {dbLookup.data && (
+                        <div className="max-h-28 overflow-y-auto text-[11px] text-gray-600 space-y-0.5">
+                          {Object.entries(dbLookup.data).slice(0, 8).map(([k, v]) => (
+                            v ? <p key={k} className="truncate"><span className="text-gray-400">{k}:</span> {v}</p> : null
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Estado: ya existe en esta operación */}
               {existsInThisOperation && (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 text-amber-700 text-xs">
@@ -2640,6 +2743,89 @@ export function WizardPage() {
           <p className="text-[10px] text-gray-400">
             Nota: el sello se graba al momento de capturar/agregar la foto. Las fotos ya guardadas no cambian.
           </p>
+
+          {/* ── Base de datos del registro (DATA) ── */}
+          <div className="pt-3 border-t border-gray-200 space-y-3">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-emerald-600" />
+              <p className="text-sm font-semibold text-gray-800">Base de datos del registro</p>
+            </div>
+            <p className="text-[11px] text-gray-500">
+              Fija una tabla de la DATA para este registro. Al ingresar o escanear un código, se traerán
+              automáticamente los datos del producto desde esa tabla.
+            </p>
+
+            {/* Seleccionar la tabla fija */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-medium text-gray-600">Tabla de datos</label>
+              <select
+                value={recordSettings.dbSheetId ?? ''}
+                onChange={(e) => {
+                  const sheetId = e.target.value || undefined
+                  const sheet = dbSheets.find((s) => s.id === sheetId)
+                  updateRecordSetting({
+                    dbSheetId: sheetId,
+                    dbSheetName: sheet?.sheetName,
+                    // Al cambiar de tabla, reinicia las columnas a valores por defecto.
+                    dbCodeColumn: 0,
+                    dbDescColumn: -1,
+                  })
+                  setDbHeaders([])
+                  if (sheetId) void loadDbHeaders(sheetId)
+                }}
+                className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+              >
+                <option value="">— Ninguna (sin autocompletar) —</option>
+                {dbSheets.map((s) => (
+                  <option key={s.id} value={s.id}>{s.sheetName}</option>
+                ))}
+              </select>
+              {dbSheets.length === 0 && (
+                <p className="text-[10px] text-gray-400">
+                  No hay tablas importadas. Impórtalas desde "Documentos" en Configuración.
+                </p>
+              )}
+            </div>
+
+            {/* Columnas (solo si hay tabla fijada) */}
+            {recordSettings.dbSheetId && (
+              <div className="space-y-2">
+                {dbLoadingHeaders ? (
+                  <div className="py-2"><LoadingState inline size="sm" label="Cargando columnas…" /></div>
+                ) : dbHeaders.length > 0 ? (
+                  <>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-medium text-gray-600">Columna del código</label>
+                      <select
+                        value={recordSettings.dbCodeColumn ?? 0}
+                        onChange={(e) => updateRecordSetting({ dbCodeColumn: Number(e.target.value) })}
+                        className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                      >
+                        {dbHeaders.map((h, i) => (
+                          <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-medium text-gray-600">Columna de descripción (opcional)</label>
+                      <select
+                        value={recordSettings.dbDescColumn ?? -1}
+                        onChange={(e) => updateRecordSetting({ dbDescColumn: Number(e.target.value) })}
+                        className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                      >
+                        <option value={-1}>— Ninguna —</option>
+                        {dbHeaders.map((h, i) => (
+                          <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-[10px] text-gray-400">No se pudieron cargar las columnas de la tabla.</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </Modal>
 
