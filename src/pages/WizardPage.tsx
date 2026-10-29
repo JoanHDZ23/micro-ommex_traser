@@ -911,66 +911,79 @@ export function WizardPage() {
    * Sube todas las fotos en lote; si se vinculó un producto, las anexa a él
    * (creándolo en la operación si aún no existe).
    */
-  const handleMultiCapture = async ({ photos, productCode }: MultiCaptureResult) => {
+  const handleMultiCapture = async ({ photos, products }: MultiCaptureResult) => {
     setShowCamera(false)
     if (!trackingCode || photos.length === 0) return
     const clientTimestamp = new Date().toISOString()
-    const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
-    // ── Fotos vinculadas a un producto ──
-    if (productCode) {
-      setFeedback(`⏳ Subiendo ${photos.length} foto(s) a ${productCode}…`)
-      try {
+    // Agrupa las fotos por producto (undefined = generales), conservando el orden.
+    const groups = new Map<string, typeof photos>()
+    for (const p of photos) {
+      const key = p.productCode ?? '__general__'
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key)!.push(p)
+    }
+    // Mapa de código → datos del producto (item + headers) para traer columnas.
+    const productData = new Map(products.map((pr) => [pr.code, pr]))
+
+    let lastProduct: string | null = null
+    try {
+      for (const [key, groupPhotos] of groups) {
+        const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+        // ── Fotos GENERALES (sin producto) ──
+        if (key === '__general__') {
+          const cachedIds: string[] = []
+          for (const p of groupPhotos) {
+            const cached = await cachePhoto({ trackingCode, base64: p.base64, comment: p.comment })
+            setLocalPhotos((prev) => [...prev, cached])
+            cachedIds.push(cached.id)
+          }
+          if (groupPhotos.length === 1) {
+            await apiRequest<UploadPhotoResponse>('/photos/upload', {
+              method: 'POST',
+              body: { trackingCode, stepIndex: 0, base64Image: groupPhotos[0].base64, mimeType: 'image/jpeg', comment: groupPhotos[0].comment, clientTimestamp },
+            })
+          } else {
+            await apiRequest<{ count: number }>('/photos/upload-batch', {
+              method: 'POST',
+              body: {
+                trackingCode,
+                groupId,
+                comment: groupPhotos[0].comment,
+                clientTimestamp,
+                mimeType: 'image/jpeg',
+                photos: groupPhotos.map((p) => ({ base64Image: p.base64, comment: p.comment })),
+              },
+            })
+          }
+          for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
+          continue
+        }
+
+        // ── Fotos de un PRODUCTO ──
+        const productCode = key
+        setFeedback(`⏳ Subiendo ${groupPhotos.length} foto(s) a ${productCode}…`)
+        // Crea el producto si no existe, con la descripción compuesta de las
+        // columnas configuradas (trae TODAS las columnas seleccionadas).
         const exists = lbProducts.some((p) => p.productCode.toLowerCase() === productCode.toLowerCase())
         if (!exists) {
+          const pd = productData.get(productCode)
+          const descripcion = pd?.item ? composeDbDescription(pd.item, pd.headers ?? []) : ''
           await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
             method: 'POST',
-            body: { productCode },
+            body: { productCode, labelData: descripcion ? { descripcion } : undefined },
           })
         }
-        for (let i = 0; i < photos.length; i++) {
+        for (const p of groupPhotos) {
           await apiRequest<UploadPhotoResponse>(
             `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo`,
-            { method: 'POST', body: { stepIndex: 0, base64Image: photos[i].base64, mimeType: 'image/jpeg', comment: photos[i].comment, clientTimestamp, groupId } },
+            { method: 'POST', body: { stepIndex: 0, base64Image: p.base64, mimeType: 'image/jpeg', comment: p.comment, clientTimestamp, groupId } },
           )
         }
-        setActiveLbProduct(productCode)
-        await loadOperation()
-        setFeedback(`✓ ${photos.length} foto(s) vinculada(s) a ${productCode}`)
-      } catch (err) {
-        setFeedback(err instanceof Error ? err.message : 'Error al vincular las fotos al producto')
+        lastProduct = productCode
       }
-      return
-    }
-
-    // ── Fotos generales ──
-    try {
-      const cachedIds: string[] = []
-      for (const p of photos) {
-        const cached = await cachePhoto({ trackingCode, base64: p.base64, comment: p.comment })
-        setLocalPhotos((prev) => [...prev, cached])
-        cachedIds.push(cached.id)
-      }
-      if (photos.length === 1) {
-        await apiRequest<UploadPhotoResponse>('/photos/upload', {
-          method: 'POST',
-          body: { trackingCode, stepIndex: 0, base64Image: photos[0].base64, mimeType: 'image/jpeg', comment: photos[0].comment, clientTimestamp },
-        })
-      } else {
-        setFeedback(`⏳ Subiendo ${photos.length} fotos…`)
-        await apiRequest<{ count: number }>('/photos/upload-batch', {
-          method: 'POST',
-          body: {
-            trackingCode,
-            groupId,
-            comment: photos[0].comment,
-            clientTimestamp,
-            mimeType: 'image/jpeg',
-            photos: photos.map((p) => ({ base64Image: p.base64, comment: p.comment })),
-          },
-        })
-      }
-      for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
+      if (lastProduct) setActiveLbProduct(lastProduct)
       await loadOperation()
       setFeedback(`✓ ${photos.length} foto(s) enviada(s)`)
     } catch (err) {
@@ -3354,13 +3367,21 @@ export function WizardPage() {
         />
       )}
 
-      {/* Camera for Línea Blanca — multi-captura para el producto activo. */}
+      {/* Camera for Línea Blanca — multi-captura para el producto activo.
+          Permite escanear/buscar y cambiar de producto sin cortar la secuencia. */}
       {lbCameraOpen && activeLbProduct && (
         <CameraCapture stepName={`Foto de ${activeLbProduct}`} stepIndex={activeLbData?.photos.length ?? 0}
           stamp={stampOpts.stamp} stampParts={stampOpts.stampParts}
           multi
+          allowProductLink
+          dbConfig={recordSettings.dbSheetId ? {
+            sheetId: recordSettings.dbSheetId,
+            sheetName: recordSettings.dbSheetName,
+            codeColumn: getDbCols().codeColumn,
+            descColumn: dbPrimaryDescCol,
+          } : undefined}
           initialProductCode={activeLbProduct}
-          onCaptureMulti={(r) => void handleMultiCapture({ ...r, productCode: r.productCode ?? activeLbProduct })}
+          onCaptureMulti={(r) => void handleMultiCapture(r)}
           onCancel={() => setLbCameraOpen(false)} />
       )}
 

@@ -5,7 +5,8 @@ import { ImageEditor } from './ImageEditor'
 import { BarcodeScanner } from './BarcodeScanner'
 import { DbProductSearch } from './DbProductSearch'
 import { drawStampOnCanvas, getAddress, getAddressNow, getCoordsNow, primeCoords } from '../lib/photo-stamp'
-import type { SheetSearchItem } from '../lib/api'
+import { lookupInSheet, type SheetSearchItem } from '../lib/api'
+import { getCompanyId } from '../lib/context'
 
 /** Foto capturada dentro de la bandeja de la cámara (modo multi-captura). */
 export interface CapturedPhoto {
@@ -15,13 +16,28 @@ export interface CapturedPhoto {
   dataUrl: string
   /** Comentario asociado a esta foto. */
   comment: string
+  /**
+   * Código del producto al que pertenece ESTA foto (el que estaba activo al
+   * capturarla). `undefined` = foto general (sin producto). Así se pueden tomar
+   * fotos de varios productos en una misma secuencia, sin mezclarse.
+   */
+  productCode?: string
+}
+
+/** Producto seleccionado/escaneado durante la sesión (con sus datos de la DATA). */
+export interface CapturedProduct {
+  code: string
+  /** Item completo de la DATA (si vino del buscador) para componer columnas. */
+  item?: SheetSearchItem
+  /** Encabezados de la tabla (para componer "Encabezado: valor"). */
+  headers?: string[]
 }
 
 /** Resultado de una sesión de cámara en modo multi-captura. */
 export interface MultiCaptureResult {
   photos: CapturedPhoto[]
-  /** Código de producto al que se vinculan las fotos (si se eligió uno). */
-  productCode?: string
+  /** Productos usados en la sesión, con sus datos para traer columnas. */
+  products: CapturedProduct[]
 }
 
 /** Configuración de la base de datos (DATA) fijada en el registro. */
@@ -88,7 +104,10 @@ export function CameraCapture({
 
   // ── Estado del modo multi-captura ──
   const [tray, setTray] = useState<CapturedPhoto[]>([])
+  // Producto ACTIVO: se aplica a las fotos que se capturen de ahora en adelante.
   const [productCode, setProductCode] = useState<string | undefined>(initialProductCode)
+  // Datos (item + headers) de cada producto usado, por código, para traer columnas.
+  const [products, setProducts] = useState<Record<string, CapturedProduct>>({})
   const [showProductPanel, setShowProductPanel] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
 
@@ -191,11 +210,12 @@ export function CameraCapture({
     onCapture?.(base64, comment.trim())
   }
 
-  // Modo multi: agrega la foto a la bandeja y reabre la cámara para la siguiente.
+  // Modo multi: agrega la foto a la bandeja (con su producto activo) y reabre la
+  // cámara para la siguiente.
   const addToTray = () => {
     if (!preview) return
     const base64 = preview.split(',')[1] ?? ''
-    setTray((prev) => [...prev, { base64, dataUrl: preview, comment: comment.trim() }])
+    setTray((prev) => [...prev, { base64, dataUrl: preview, comment: comment.trim(), productCode }])
     setPreview(null)
     setComment('')
     setShowCommentInput(false)
@@ -211,17 +231,26 @@ export function CameraCapture({
     const photos = [...tray]
     if (preview) {
       const base64 = preview.split(',')[1] ?? ''
-      photos.push({ base64, dataUrl: preview, comment: comment.trim() })
+      photos.push({ base64, dataUrl: preview, comment: comment.trim(), productCode })
     }
     if (photos.length === 0) { onCancel(); return }
     stopCamera()
-    onCaptureMulti?.({ photos, productCode })
+    onCaptureMulti?.({ photos, products: Object.values(products) })
   }
 
-  // Selecciona el producto SIN tocar la cámara ni la foto en revisión: la
-  // secuencia de fotos nunca se interrumpe.
-  const handleProductSelected = (item: SheetSearchItem) => {
-    setProductCode(item.code || item.descripcion || 'PRODUCTO')
+  // Registra un producto como ACTIVO sin tocar la cámara ni la foto en revisión:
+  // la secuencia nunca se interrumpe. Guarda sus datos (para traer columnas).
+  // `setActive=false` solo adjunta datos a un código ya registrado (p. ej. tras
+  // un lookup posterior al escaneo) sin cambiar el producto activo.
+  const registerProduct = (code: string, item?: SheetSearchItem, headers?: string[], setActive = true) => {
+    const c = code.trim()
+    if (!c) return
+    setProducts((prev) => ({ ...prev, [c]: { code: c, item: item ?? prev[c]?.item, headers: headers ?? prev[c]?.headers } }))
+    if (setActive) setProductCode(c)
+  }
+
+  const handleProductSelected = (item: SheetSearchItem, headers: string[]) => {
+    registerProduct(item.code || item.descripcion || 'PRODUCTO', item, headers)
     setShowProductPanel(false)
   }
 
@@ -358,13 +387,17 @@ export function CameraCapture({
         </>
       )}
 
-      {/* Tira de miniaturas de la bandeja (modo multi, mientras la cámara está activa) */}
+      {/* Tira de miniaturas de la bandeja (modo multi, mientras la cámara está activa).
+          Cada miniatura muestra a qué producto pertenece (o "General"). */}
       {multi && !preview && !error && tray.length > 0 && (
         <div className="absolute left-0 right-0 bottom-[132px] z-10 px-3">
           <div className="flex items-center gap-2 overflow-x-auto pb-1">
             {tray.map((p, i) => (
               <div key={i} className="relative flex-shrink-0">
                 <img src={p.dataUrl} className="w-14 h-14 rounded-lg object-cover border-2 border-white/60" />
+                <span className={`absolute left-0 right-0 bottom-0 px-1 py-0.5 text-[8px] font-semibold text-white text-center truncate rounded-b-md ${p.productCode ? 'bg-emerald-600/90' : 'bg-black/60'}`}>
+                  {p.productCode ?? 'General'}
+                </span>
                 <button
                   type="button"
                   onClick={() => removeFromTray(i)}
@@ -531,8 +564,32 @@ export function CameraCapture({
         <BarcodeScanner
           onResult={(code) => {
             const clean = dbConfig?.codeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim()
-            setProductCode(clean || undefined)
+            if (!clean) { closeScanner(); return }
+            // Registra ya el producto (por si el lookup tarda/falla).
+            registerProduct(clean)
             closeScanner()
+            // Si hay DATA configurada, busca la fila para traer TODAS las columnas.
+            if (dbConfig?.sheetId) {
+              const cid = getCompanyId()
+              if (cid) {
+                void lookupInSheet({
+                  sheetId: dbConfig.sheetId, companyId: cid, code: clean,
+                  codeColumn: dbConfig.codeColumn ?? 0, descColumn: dbConfig.descColumn,
+                }).then((r) => {
+                  if (r.found && r.row) {
+                    const item: SheetSearchItem = {
+                      rowIndex: -1,
+                      code: r.code || clean,
+                      descripcion: r.descripcion ?? '',
+                      row: r.row,
+                      data: r.data ?? {},
+                    }
+                    // Adjunta los datos al MISMO código escaneado (sin cambiar el activo).
+                    registerProduct(clean, item, r.headers ?? [], false)
+                  }
+                }).catch(() => { /* sin datos: queda solo el código */ })
+              }
+            }
           }}
           onClose={closeScanner}
         />
@@ -557,7 +614,7 @@ export function CameraCapture({
                 codeColumn={dbConfig.codeColumn ?? 0}
                 descColumn={dbConfig.descColumn ?? -1}
                 codeType={dbConfig.codeType ?? 'alphanumeric'}
-                onSelect={(item) => handleProductSelected(item)}
+                onSelect={(item, headers) => handleProductSelected(item, headers)}
               />
             </div>
           </div>
