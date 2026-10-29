@@ -4,7 +4,7 @@ import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2,
   Search, CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
   Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
-  Star, LayoutGrid, List, Package,
+  Star, LayoutGrid, List, Package, SlidersHorizontal,
 } from 'lucide-react'
 import { getPrimarySheetId, getSheetColumns, setPrimarySheet, setSheetColumns } from '../lib/db-settings'
 import { apiRequest, fileToBase64, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
@@ -736,6 +736,62 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     setPrimarySheet(companyId, next, next ? sheet.sheetName : undefined)
     setPrimarySheetIdState(next)
     setSuccess(next ? `✓ "${sheet.sheetName}" marcada como DATA principal.` : 'Se quitó la DATA principal.')
+  }
+
+  // ── Modal de CONFIGURACIÓN DE COLUMNAS de una tabla (global, por tabla) ──
+  // Permite elegir qué columnas (código/descripción/adicionales) se traerán cada
+  // vez que se agregue un producto/item de ESA tabla a un registro. Se abre desde
+  // la tarjeta de la tabla sin necesidad de abrir el visor completo.
+  const [colCfg, setColCfg] = useState<{
+    sheet: CompanySheet
+    headers: string[]
+    codeCol: number
+    descCol: number
+    extraCols: number[]
+    loading: boolean
+  } | null>(null)
+
+  // Abre el modal de columnas para una tabla: carga sus encabezados y la
+  // configuración guardada (o la adivina por el nombre de la columna).
+  const openColumnConfig = async (sheet: CompanySheet) => {
+    setColCfg({ sheet, headers: [], codeCol: 0, descCol: -1, extraCols: [], loading: true })
+    let headers: string[] = []
+    const local = getLocalTable(companyId, sheet.id)
+    if (local) {
+      headers = local.headers
+    } else {
+      try {
+        const data = await apiRequest<SheetData>(`/sheets/${encodeURIComponent(sheet.id)}?companyId=${encodeURIComponent(companyId)}`)
+        headers = data.headers ?? []
+      } catch { headers = sheet.columns ?? [] }
+    }
+    const saved = getSheetColumns(companyId, sheet.id)
+    const numCols = headers.length
+    let codeCol = saved.codeColumn
+    let descCol = saved.descColumn
+    let extraCols = saved.extraColumns.filter((c) => c >= 0 && c < numCols)
+    const configured = extraCols.length > 0 || descCol >= 0 || codeCol > 0
+    if (!configured || codeCol < 0 || codeCol >= numCols) {
+      const hs = headers.map((h) => (h || '').toLowerCase())
+      const gc = hs.findIndex((h) => /sku|c[oó]digo|code|ref|producto/.test(h))
+      const gd = hs.findIndex((h) => /descrip|[ií]tem|detalle|nombre|art[ií]culo/.test(h))
+      codeCol = gc >= 0 ? gc : 0
+      descCol = gd >= 0 ? gd : -1
+      extraCols = []
+    }
+    setColCfg({ sheet, headers, codeCol, descCol, extraCols, loading: false })
+  }
+
+  // Guarda la configuración de columnas de la tabla (global, se aplica siempre).
+  const saveColumnConfig = () => {
+    if (!colCfg) return
+    setSheetColumns(companyId, colCfg.sheet.id, {
+      codeColumn: colCfg.codeCol,
+      descColumn: colCfg.descCol,
+      extraColumns: colCfg.extraCols,
+    })
+    setSuccess(`✓ Columnas de "${colCfg.sheet.sheetName}" guardadas. Se aplicarán al traer productos.`)
+    setColCfg(null)
   }
 
   // Edición de filas dentro del visor
@@ -1599,6 +1655,11 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                         title="Ver y editar en la app">
                         <Eye className="w-4 h-4" /> Ver / Editar
                       </button>
+                      <button onClick={() => void openColumnConfig(s)}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors"
+                        title="Configurar qué columnas se traen de esta tabla">
+                        <SlidersHorizontal className="w-4 h-4" /> Columnas
+                      </button>
                       <button onClick={() => togglePrimarySheet(s)}
                         className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium transition-colors ${
                           primarySheetId === s.id ? 'text-amber-600 hover:bg-amber-50' : 'text-[var(--color-text-3)] hover:bg-[var(--color-bg)]'
@@ -1781,6 +1842,96 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                 Listo ({extraCols.length} seleccionada{extraCols.length !== 1 ? 's' : ''})
               </Button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal GLOBAL: configurar las columnas que se traen de una tabla ── */}
+      {colCfg && (
+        <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setColCfg(null) }}>
+          <div className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-xl flex flex-col"
+            style={{ backgroundColor: 'var(--color-surface)', maxHeight: '85vh' }}>
+            <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-[var(--color-border)]">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold text-[var(--color-text-3)] uppercase tracking-wide">Columnas a traer</p>
+                <h3 className="text-sm font-bold text-[var(--color-text)] truncate">{colCfg.sheet.sheetName}</h3>
+              </div>
+              <button onClick={() => setColCfg(null)} aria-label="Cerrar"
+                className="flex-shrink-0 w-8 h-8 rounded-full bg-[var(--color-bg)] flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {colCfg.loading ? (
+              <div className="p-8"><LoadingState label="Cargando columnas…" /></div>
+            ) : colCfg.headers.length === 0 ? (
+              <div className="p-6 text-center text-sm text-[var(--color-text-3)]">No se pudieron leer las columnas de esta tabla.</div>
+            ) : (
+              <>
+                <div className="overflow-y-auto px-4 py-4 space-y-4">
+                  <p className="text-[11px] text-[var(--color-text-2)]">
+                    Esta configuración se guarda para esta tabla y se aplica <strong>cada vez</strong> que traigas
+                    un producto o item de ella a un registro.
+                  </p>
+
+                  {/* Columna del código */}
+                  <label className="space-y-1.5 block">
+                    <span className="text-xs font-semibold text-[var(--color-text-2)]">Código / Nombre del producto</span>
+                    <select value={colCfg.codeCol}
+                      onChange={(e) => setColCfg((p) => p && ({ ...p, codeCol: Number(e.target.value), extraCols: p.extraCols.filter((c) => c !== Number(e.target.value)) }))}
+                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm">
+                      {colCfg.headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
+                    </select>
+                  </label>
+
+                  {/* Columna de descripción */}
+                  <label className="space-y-1.5 block">
+                    <span className="text-xs font-semibold text-[var(--color-text-2)]">Descripción principal</span>
+                    <select value={colCfg.descCol}
+                      onChange={(e) => { const v = Number(e.target.value); setColCfg((p) => p && ({ ...p, descCol: v, extraCols: v >= 0 ? p.extraCols.filter((c) => c !== v) : p.extraCols })) }}
+                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm">
+                      <option value={-1}>— ninguna —</option>
+                      {colCfg.headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
+                    </select>
+                  </label>
+
+                  {/* Columnas adicionales */}
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-semibold text-[var(--color-text-2)]">Columnas adicionales a traer</span>
+                    <p className="text-[10px] text-[var(--color-text-3)]">Marca cuáles se añaden como "Encabezado: valor". El número indica el orden.</p>
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                      {colCfg.headers.map((h, i) => {
+                        if (i === colCfg.codeCol || i === colCfg.descCol) return null
+                        const selected = colCfg.extraCols.includes(i)
+                        const order = colCfg.extraCols.indexOf(i)
+                        return (
+                          <button key={i} type="button"
+                            onClick={() => setColCfg((p) => p && ({
+                              ...p,
+                              extraCols: p.extraCols.includes(i) ? p.extraCols.filter((c) => c !== i) : [...p.extraCols, i],
+                            }))}
+                            className={`px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition-colors flex items-center gap-1 ${
+                              selected ? 'bg-[var(--color-primary)] border-[var(--color-primary)] text-white'
+                                : 'bg-[var(--color-surface)] border-[var(--color-border)] text-[var(--color-text-2)] hover:border-[var(--color-primary)]/40'
+                            }`}>
+                            {selected && <span className="text-[9px] font-bold">{order + 1}</span>}
+                            {h || `Columna ${i + 1}`}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+                <div className="px-4 py-3 border-t border-[var(--color-border)] flex items-center gap-2">
+                  <Button variant="secondary" onClick={() => setColCfg(null)}>Cancelar</Button>
+                  <Button variant="primary" fullWidth className="flex-1" onClick={saveColumnConfig}
+                    leftIcon={<Save className="w-4 h-4" />}>
+                    Guardar y aplicar
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

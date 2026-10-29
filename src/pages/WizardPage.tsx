@@ -1199,21 +1199,23 @@ export function WizardPage() {
    * Separador " · ".
    */
   const composeDbDescription = (item: SheetSearchItem, headers: string[]): string => {
-    const cols = getDbCols().extra
-    if (cols.length === 0) return ''
+    const cfg = getDbCols()
     const parts: string[] = []
-    cols.forEach((col, idx) => {
-      const value = String(item.row[col] ?? '').trim()
-      if (!value) return
-      if (idx === 0) {
-        // Primera columna marcada = descripción principal (sin etiqueta).
-        parts.push(value)
-      } else {
-        const name = headers[col] || `Columna ${col + 1}`
-        parts.push(`${name}: ${value}`)
-      }
-    })
-    return parts.join(' · ')
+    // 1) Descripción principal (columna de descripción configurada), sin etiqueta.
+    if (cfg.descColumn >= 0) {
+      const v = String(item.row[cfg.descColumn] ?? '').trim()
+      if (v) parts.push(v)
+    }
+    // 2) Columnas adicionales como "Encabezado: valor", en el orden marcado.
+    for (const col of cfg.extraColumns) {
+      if (col === cfg.descColumn) continue
+      const v = String(item.row[col] ?? '').trim()
+      if (!v) continue
+      const name = headers[col] || `Columna ${col + 1}`
+      parts.push(`${name}: ${v}`)
+    }
+    // Sin nada configurado/con valor: usa la descripción que ya trae el buscador.
+    return parts.join(' · ') || (item.descripcion ?? '')
   }
 
   /**

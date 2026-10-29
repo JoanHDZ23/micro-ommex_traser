@@ -202,6 +202,20 @@ export function CameraCapture({
     void startCamera()
   }
 
+  /**
+   * Guarda la foto actual (en preview) en la bandeja SIN reabrir la cámara.
+   * Se usa al tocar "Agregar producto": conserva las fotos ya tomadas mientras
+   * se elige/registra el producto, y al cerrar el panel se puede seguir tomando.
+   */
+  const stashPreviewToTray = () => {
+    if (!preview) return
+    const base64 = preview.split(',')[1] ?? ''
+    setTray((prev) => [...prev, { base64, dataUrl: preview, comment: comment.trim() }])
+    setPreview(null)
+    setComment('')
+    setShowCommentInput(false)
+  }
+
   const removeFromTray = (idx: number) => {
     setTray((prev) => prev.filter((_, i) => i !== idx))
   }
@@ -221,6 +235,8 @@ export function CameraCapture({
   const handleProductSelected = (item: SheetSearchItem) => {
     setProductCode(item.code || item.descripcion || 'PRODUCTO')
     setShowProductPanel(false)
+    // Si no hay foto en preview, reanuda la cámara para seguir tomando fotos.
+    if (!preview) void startCamera()
   }
 
   const trayCount = tray.length + (preview ? 1 : 0)
@@ -385,6 +401,34 @@ export function CameraCapture({
                 </div>
               )}
 
+              {/* Agregar/vincular producto SIN perder las fotos ya tomadas.
+                  Guarda la foto actual en la bandeja y abre el panel de producto. */}
+              {multi && allowProductLink && (
+                <div className="flex items-center justify-center gap-2 px-2">
+                  <button
+                    type="button"
+                    onClick={() => { stashPreviewToTray(); setShowScanner(true) }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
+                  >
+                    <QrCode className="w-4 h-4" /> Escanear producto
+                  </button>
+                  {dbConfig?.sheetId && (
+                    <button
+                      type="button"
+                      onClick={() => { stashPreviewToTray(); setShowProductPanel(true) }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
+                    >
+                      <Package className="w-4 h-4" /> Agregar producto
+                    </button>
+                  )}
+                  {productCode && (
+                    <span className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-emerald-500/80 text-white text-xs font-medium">
+                      <Package className="w-3 h-3" /> {productCode}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Action buttons */}
               <div className="flex items-center justify-center gap-5">
                 <button
@@ -487,8 +531,9 @@ export function CameraCapture({
             setShowScanner(false)
             const clean = dbConfig?.codeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim()
             setProductCode(clean || undefined)
+            if (!preview) void startCamera()
           }}
-          onClose={() => setShowScanner(false)}
+          onClose={() => { setShowScanner(false); if (!preview) void startCamera() }}
         />
       )}
 
@@ -500,7 +545,7 @@ export function CameraCapture({
               <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
                 <Package className="w-4 h-4 text-emerald-600" /> Vincular producto
               </h3>
-              <button onClick={() => setShowProductPanel(false)} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+              <button onClick={() => { setShowProductPanel(false); if (!preview) void startCamera() }} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
                 <X className="w-4 h-4 text-gray-500" />
               </button>
             </div>
