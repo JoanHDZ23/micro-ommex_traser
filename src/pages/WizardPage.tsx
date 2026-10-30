@@ -1130,14 +1130,31 @@ export function WizardPage() {
 
   // ── Autocompletado desde la BASE DE DATOS fijada en el registro ──
   // Resultado del último lookup (datos del producto encontrado en la DATA).
-  const [dbLookup, setDbLookup] = useState<{ loading: boolean; found?: boolean; descripcion?: string; data?: Record<string, string> }>({ loading: false })
+  // Incluye la lista de coincidencias para poder elegir cuando hay varias.
+  const [dbLookup, setDbLookup] = useState<{
+    loading: boolean
+    found?: boolean
+    descripcion?: string
+    data?: Record<string, string>
+    results?: SheetSearchItem[]
+    headers?: string[]
+    total?: number
+  }>({ loading: false })
+  // Evita auto-agregar dos veces el mismo código de un único resultado.
+  const dbAutoAddedRef = useRef<string | null>(null)
 
   // Busca el código en la tabla fijada cuando el usuario escribe/escanea (debounce).
+  // Comportamiento pedido:
+  //   · 1 coincidencia  → se AGREGA automáticamente el producto.
+  //   · varias          → se muestran para elegir la correcta.
+  //   · ninguna         → permite crearlo manualmente.
   useEffect(() => {
     if (!showAddProductModal) return
     const cfg = recordSettingsRef.current
     const cid = operation?.companyId || getCompanyId()
     const code = lbProductCode.trim()
+    // Al cambiar el texto, se permite volver a auto-agregar otro código distinto.
+    dbAutoAddedRef.current = null
     if (!cfg.dbSheetId || !cid || code.length < 1) { setDbLookup({ loading: false }); return }
     setDbLookup({ loading: true })
     const t = setTimeout(async () => {
@@ -1152,23 +1169,31 @@ export function WizardPage() {
           q: code,
           codeColumn: cols.codeColumn,
           descColumn: cols.extra[0] ?? cols.descColumn,
-          limit: 10,
+          limit: 25,
         })
-        // Elige la mejor coincidencia: código exacto si existe; si no, el primero.
-        const exact = r.results.find((it) => it.code.trim().toLowerCase() === code.toLowerCase())
-        const best = exact ?? r.results[0]
-        if (!best) {
-          setDbLookup({ loading: false, found: false })
+        if (r.total === 0 || r.results.length === 0) {
+          setDbLookup({ loading: false, found: false, total: 0, results: [], headers: r.headers ?? [] })
           return
         }
-        // Compone la descripción con TODAS las columnas configuradas de la DATA.
-        const composed = composeDbDescription(best, r.headers ?? [])
-        const descripcion = composed || best.descripcion || ''
-        setDbLookup({ loading: false, found: true, descripcion, data: best.data })
-        // Precarga la descripción compuesta en labelData para crear el producto con ella.
-        if (descripcion) {
-          setLbLabelData((prev) => ({ ...(prev ?? {}), descripcion }))
+
+        // ── 1 coincidencia → agregar automáticamente ──
+        if (r.total === 1) {
+          const only = r.results[0]
+          const composed = composeDbDescription(only, r.headers ?? [])
+          setDbLookup({ loading: false, found: true, total: 1, results: r.results, headers: r.headers ?? [], descripcion: composed || only.descripcion, data: only.data })
+          // Evita re-agregar el mismo código repetidamente (debounce/re-render).
+          if (dbAutoAddedRef.current !== only.code.toLowerCase()) {
+            dbAutoAddedRef.current = only.code.toLowerCase()
+            await addProductFromDbItem(only, r.headers ?? [])
+          }
+          return
         }
+
+        // ── Varias coincidencias → mostrar lista para elegir ──
+        const exact = r.results.find((it) => it.code.trim().toLowerCase() === code.toLowerCase())
+        const best = exact ?? r.results[0]
+        const composed = composeDbDescription(best, r.headers ?? [])
+        setDbLookup({ loading: false, found: true, total: r.total, results: r.results, headers: r.headers ?? [], descripcion: composed || best.descripcion, data: best.data })
       } catch {
         setDbLookup({ loading: false })
       }
@@ -1210,6 +1235,44 @@ export function WizardPage() {
       setFeedback(`✓ Producto ${code.trim()} agregado. Ya puedes añadir fotos.`)
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error.')
+    } finally {
+      setLbAdding(false)
+    }
+  }
+
+  /**
+   * Agrega al registro un producto encontrado en la DATA (item + columnas
+   * configuradas). Si ya existe en la operación, solo lo activa. Cierra el modal
+   * de "Agregar producto" al terminar. Se usa para el auto-agregado (1 resultado)
+   * y para la selección manual (varios resultados).
+   */
+  const addProductFromDbItem = async (item: SheetSearchItem, headers: string[]) => {
+    if (!trackingCode) return
+    const code = (item.code || '').trim()
+    if (!code) { setFeedback('El producto encontrado no tiene código.'); return }
+    // Ya existe en esta operación → solo activarlo.
+    if (lbProducts.some((p) => p.productCode.toLowerCase() === code.toLowerCase())) {
+      setActiveLbProduct(code)
+      setShowAddProductModal(false)
+      setLbProductCode(''); setLbLabelData(null)
+      setFeedback(`✓ ${code} ya está en el registro. Ya puedes añadir fotos.`)
+      return
+    }
+    setLbAdding(true)
+    setFeedback(null)
+    try {
+      const descripcion = composeDbDescription(item, headers)
+      await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
+        method: 'POST',
+        body: { productCode: code, labelData: descripcion ? { descripcion } : undefined, isLineaBlanca: false },
+      })
+      setActiveLbProduct(code)
+      setShowAddProductModal(false)
+      setLbProductCode(''); setLbLabelData(null)
+      await loadOperation()
+      setFeedback(`✓ ${code} agregado desde la base de datos. Ya puedes añadir fotos.`)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al agregar el producto.')
     } finally {
       setLbAdding(false)
     }
@@ -2618,17 +2681,46 @@ export function WizardPage() {
 
               {/* Datos traídos de la BASE DE DATOS fijada en el registro */}
               {recordSettings.dbSheetId && lbProductCode.trim().length >= 1 && (
-                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 space-y-1">
-                  <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 uppercase">
-                    <Database className="w-3 h-3" />
-                    {dbLookup.loading
-                      ? 'Buscando en la base de datos…'
-                      : dbLookup.found
-                        ? `Encontrado en ${recordSettings.dbSheetName ?? 'la base de datos'}`
-                        : 'Sin coincidencia en la base de datos'}
-                  </div>
-                  {!dbLookup.loading && dbLookup.found && (
-                    <div className="space-y-0.5">
+                <>
+                  {dbLookup.loading ? (
+                    <div className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50 text-[11px] font-semibold text-emerald-700 uppercase">
+                      <Database className="w-3 h-3" /> Buscando en la base de datos…
+                    </div>
+                  ) : (dbLookup.total ?? 0) > 1 ? (
+                    /* Varias coincidencias → elegir la correcta */
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2 space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 uppercase px-1">
+                        <Database className="w-3 h-3" />
+                        {dbLookup.total} coincidencias · elige el correcto
+                      </div>
+                      <div className="max-h-56 overflow-y-auto space-y-1">
+                        {(dbLookup.results ?? []).map((it) => (
+                          <button
+                            key={it.rowIndex}
+                            type="button"
+                            disabled={lbAdding}
+                            onClick={() => void addProductFromDbItem(it, dbLookup.headers ?? [])}
+                            className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg bg-white border border-gray-100 text-left hover:border-emerald-300 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                          >
+                            <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-gray-800 truncate">{it.code || '(sin código)'}</p>
+                              {composeDbDescription(it, dbLookup.headers ?? []) && (
+                                <p className="text-[11px] text-gray-500 truncate">{composeDbDescription(it, dbLookup.headers ?? [])}</p>
+                              )}
+                            </div>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium flex-shrink-0">Usar</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : dbLookup.found ? (
+                    /* 1 coincidencia → se agrega automáticamente; se muestra la info */
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2.5 space-y-1">
+                      <div className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-700 uppercase">
+                        <Database className="w-3 h-3" />
+                        {lbAdding ? 'Agregando producto…' : `Encontrado en ${recordSettings.dbSheetName ?? 'la base de datos'}`}
+                      </div>
                       {dbLookup.descripcion && (
                         <p className="text-xs text-gray-700"><span className="font-medium">Descripción:</span> {dbLookup.descripcion}</p>
                       )}
@@ -2640,8 +2732,12 @@ export function WizardPage() {
                         </div>
                       )}
                     </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-gray-200 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase">
+                      <Database className="w-3 h-3" /> Sin coincidencia en la base de datos
+                    </div>
                   )}
-                </div>
+                </>
               )}
 
               {/* Estado: ya existe en esta operación */}
