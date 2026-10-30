@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
-import { apiRequest, fileToBase64, lookupInSheet, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
+import { apiRequest, fileToBase64, searchInSheet, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { DbProductSearch } from '../components/DbProductSearch'
@@ -1143,26 +1143,30 @@ export function WizardPage() {
     const t = setTimeout(async () => {
       try {
         const cols = getDbCols()
-        const r = await lookupInSheet({
+        // Usa el buscador (parcial + por cualquier celda) en lugar del lookup
+        // exacto: así encuentra el producto aunque la columna de código no esté
+        // configurada o el valor no coincida exactamente.
+        const r = await searchInSheet({
           sheetId: cfg.dbSheetId!,
           companyId: cid,
-          code,
+          q: code,
           codeColumn: cols.codeColumn,
           descColumn: cols.extra[0] ?? cols.descColumn,
+          limit: 10,
         })
-        // Compone la descripción con TODAS las columnas configuradas de la DATA
-        // (no solo la columna de descripción), si hay fila.
-        let descripcion = r.descripcion ?? ''
-        if (r.found && r.row) {
-          const item: SheetSearchItem = {
-            rowIndex: -1, code: r.code || code, descripcion: r.descripcion ?? '', row: r.row, data: r.data ?? {},
-          }
-          const composed = composeDbDescription(item, r.headers ?? [])
-          if (composed) descripcion = composed
+        // Elige la mejor coincidencia: código exacto si existe; si no, el primero.
+        const exact = r.results.find((it) => it.code.trim().toLowerCase() === code.toLowerCase())
+        const best = exact ?? r.results[0]
+        if (!best) {
+          setDbLookup({ loading: false, found: false })
+          return
         }
-        setDbLookup({ loading: false, found: r.found, descripcion, data: r.data })
+        // Compone la descripción con TODAS las columnas configuradas de la DATA.
+        const composed = composeDbDescription(best, r.headers ?? [])
+        const descripcion = composed || best.descripcion || ''
+        setDbLookup({ loading: false, found: true, descripcion, data: best.data })
         // Precarga la descripción compuesta en labelData para crear el producto con ella.
-        if (r.found && descripcion) {
+        if (descripcion) {
           setLbLabelData((prev) => ({ ...(prev ?? {}), descripcion }))
         }
       } catch {

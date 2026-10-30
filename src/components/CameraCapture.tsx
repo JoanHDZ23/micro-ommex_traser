@@ -5,7 +5,7 @@ import { ImageEditor } from './ImageEditor'
 import { BarcodeScanner } from './BarcodeScanner'
 import { DbProductSearch } from './DbProductSearch'
 import { drawStampOnCanvas, getAddress, getAddressNow, getCoordsNow, primeCoords } from '../lib/photo-stamp'
-import { lookupInSheet, type SheetSearchItem } from '../lib/api'
+import { searchInSheet, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 
 /** Foto capturada dentro de la bandeja de la cámara (modo multi-captura). */
@@ -569,23 +569,20 @@ export function CameraCapture({
             registerProduct(clean)
             closeScanner()
             // Si hay DATA configurada, busca la fila para traer TODAS las columnas.
+            // Usa el buscador (parcial/por cualquier celda) para no depender de
+            // una coincidencia exacta en la columna de código.
             if (dbConfig?.sheetId) {
               const cid = getCompanyId()
               if (cid) {
-                void lookupInSheet({
-                  sheetId: dbConfig.sheetId, companyId: cid, code: clean,
-                  codeColumn: dbConfig.codeColumn ?? 0, descColumn: dbConfig.descColumn,
+                void searchInSheet({
+                  sheetId: dbConfig.sheetId, companyId: cid, q: clean,
+                  codeColumn: dbConfig.codeColumn ?? 0, descColumn: dbConfig.descColumn, limit: 10,
                 }).then((r) => {
-                  if (r.found && r.row) {
-                    const item: SheetSearchItem = {
-                      rowIndex: -1,
-                      code: r.code || clean,
-                      descripcion: r.descripcion ?? '',
-                      row: r.row,
-                      data: r.data ?? {},
-                    }
+                  const exact = r.results.find((it) => it.code.trim().toLowerCase() === clean.toLowerCase())
+                  const best = exact ?? r.results[0]
+                  if (best) {
                     // Adjunta los datos al MISMO código escaneado (sin cambiar el activo).
-                    registerProduct(clean, item, r.headers ?? [], false)
+                    registerProduct(clean, best, r.headers ?? [], false)
                   }
                 }).catch(() => { /* sin datos: queda solo el código */ })
               }
