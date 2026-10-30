@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2,
@@ -31,6 +31,12 @@ interface SheetsModalProps {
    * la tabla arranca filtrada por este valor para encontrar el producto rápido.
    */
   initialFilter?: string
+  /**
+   * Si viene, al abrir el modal se entra DIRECTO al visor de esa tabla (para
+   * filtrar/buscar/marcar sin pasar por el listado). Útil cuando el registro
+   * tiene una DATA fijada.
+   */
+  initialSheetId?: string
   /**
    * Si es `true`, se renderiza como VISTA de página completa (no como modal con
    * overlay). Usado por la ruta /documentos. El Wizard lo deja en `false` para
@@ -699,7 +705,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
  * con filtro por columna, crear un Google Sheet filtrable y gestionar
  * (listar / verificar en la app / eliminar) las hojas creadas por la empresa.
  */
-export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, initialFilter, asPage = false }: SheetsModalProps) {
+export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, initialFilter, initialSheetId, asPage = false }: SheetsModalProps) {
   const navigate = useNavigate()
   const titleId = useId()
   // Si no viene companyId (p. ej. abriendo la app directamente para probar),
@@ -988,12 +994,18 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     }
   }
 
+  // Evita auto-abrir la tabla fijada más de una vez por apertura del modal.
+  const autoOpenedRef = useRef(false)
+
   // Cargar listado al abrir
   useEffect(() => {
     if (!open || !companyId) return
     void loadSheets()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, companyId])
+
+  // Al cerrar el modal, resetea la bandera de auto-apertura.
+  useEffect(() => { if (!open) autoOpenedRef.current = false }, [open])
 
   const loadSheets = async () => {
     setLoadingList(true)
@@ -1004,6 +1016,11 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       const ids = new Set((res.sheets ?? []).map((s) => s.id))
       const merged = [...(res.sheets ?? []), ...local.filter((l) => !ids.has(l.id))]
       setSheets(merged)
+      // Si el registro tiene una DATA fijada, entra directo a su visor.
+      if (initialSheetId && !autoOpenedRef.current && !viewing) {
+        const target = merged.find((s) => s.id === initialSheetId)
+        if (target) { autoOpenedRef.current = true; void handleView(target) }
+      }
     } catch {
       // Sin backend: mostrar solo las locales para poder probar
       setSheets(local)
