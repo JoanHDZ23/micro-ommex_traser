@@ -37,6 +37,17 @@ if ('serviceWorker' in navigator && (import.meta.env.PROD || import.meta.env.VIT
   }).catch(() => { /* dev mode sin SW */ })
 }
 
+// Si un import dinámico (chunk lazy) falla al precargar —típico tras un nuevo
+// deploy mientras el Service Worker sirve el index viejo— Vite emite este
+// evento. Recargamos una sola vez para traer el build nuevo y evitar la
+// pantalla en blanco. (La ErrorBoundary cubre el resto de casos.)
+window.addEventListener('vite:preloadError', () => {
+  if (!sessionStorage.getItem('ommex_tracer_chunk_reloaded')) {
+    sessionStorage.setItem('ommex_tracer_chunk_reloaded', '1')
+    window.location.reload()
+  }
+})
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

@@ -3,6 +3,7 @@ import { Suspense, lazy, useEffect, useState } from 'react'
 import { Layout } from './components/Layout'
 import { HomePage } from './pages/HomePage'
 import { LoadingState } from './components/ui'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { invalidateTracerFeaturesCache } from './lib/tracer-features'
 import { apiRequest } from './lib/api'
 import { getCompanyId } from './lib/context'
@@ -75,6 +76,7 @@ export default function App() {
           </div>
         </div>
       )}
+      <ErrorBoundary>
       <Suspense fallback={<div className="flex-1 flex items-center justify-center p-8"><LoadingState label="Cargando…" /></div>}>
         <Routes>
           {/* Public share route — no auth needed */}
@@ -95,6 +97,7 @@ export default function App() {
           </Route>
         </Routes>
       </Suspense>
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }
