@@ -327,26 +327,47 @@ function retryMongo() {
 }
 
 /**
- * Programa la limpieza automática SOLO si está explícitamente habilitada por
- * la variable de entorno ENABLE_AUTO_CLEANUP=true.
+ * Programa la limpieza automática.
  *
- * Por seguridad está DESACTIVADA por defecto: el job envía carpetas de Drive
- * (con sus imágenes) a la papelera por antigüedad, y debe activarse de forma
- * consciente. El endpoint manual POST /api/admin/cleanup sigue disponible.
+ * El job SOLO elimina operaciones de empresas que activaron explícitamente la
+ * limpieza (`cleanupEnabled = true`) desde Configuración, respetando sus días.
+ * Por eso el barrido corre por DEFECTO: la decisión real la toma cada empresa
+ * con el interruptor de la app.
+ *
+ * Interruptor de emergencia (ops): define ENABLE_AUTO_CLEANUP=false para
+ * desactivar por completo el barrido programado (p. ej. durante un incidente).
+ * El endpoint manual GET/POST /api/admin/cleanup sigue disponible igualmente.
+ *
+ * Nota: la eliminación es definitiva en el almacenamiento (R2 y/o GitHub) y en
+ * MongoDB; los registros se pueden recuperar durante 30 días desde la app.
  */
+/** Evita programar el barrido más de una vez (reintentos de conexión a Mongo). */
+let cleanupScheduled = false
 function scheduleCleanup() {
-  if (process.env.ENABLE_AUTO_CLEANUP !== 'true') {
-    console.log('[ommex-tracer] Limpieza automática DESACTIVADA (define ENABLE_AUTO_CLEANUP=true para habilitarla).')
+  // Opt-out: solo se desactiva si se pone explícitamente en 'false'.
+  if (process.env.ENABLE_AUTO_CLEANUP === 'false') {
+    console.log('[ommex-tracer] Limpieza automática DESACTIVADA por ENABLE_AUTO_CLEANUP=false.')
     return
   }
+  // Evita programar dos barridos si scheduleCleanup se llama más de una vez
+  // (p. ej. por un reintento de conexión a Mongo).
+  if (cleanupScheduled) return
+  cleanupScheduled = true
+
   const CHECK_INTERVAL = 60 * 60 * 1000 // cada 1 hora
   const check = async () => {
-    try { await runCleanupOldOperations() } catch { /* silent */ }
+    try {
+      const { deleted, skipped } = await runCleanupOldOperations()
+      if (deleted > 0) console.log(`[cleanup] Barrido completado: ${deleted} operación(es) eliminada(s).`)
+      else if (skipped) console.log(`[cleanup] Barrido sin cambios: ${skipped}`)
+    } catch (err) {
+      console.warn('[cleanup] Error en el barrido programado:', err instanceof Error ? err.message : err)
+    }
     setTimeout(check, CHECK_INTERVAL)
   }
-  // Primera comprobación al iniciar (con un pequeño delay)
-  setTimeout(check, 5 * 60 * 1000)
-  console.log('[ommex-tracer] Limpieza automática ACTIVADA (ENABLE_AUTO_CLEANUP=true).')
+  // Primera comprobación poco después de iniciar (1 min), luego cada hora.
+  setTimeout(() => { void check() }, 60 * 1000)
+  console.log('[ommex-tracer] Limpieza automática ACTIVADA (se aplica solo a empresas con el interruptor encendido).')
 }
 
 start().catch((err) => {
