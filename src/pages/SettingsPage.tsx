@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Activity, ArrowRight, CheckCircle2, FileSpreadsheet, Save, Trash2 } from 'lucide-react'
+import { Activity, ArrowRight, CheckCircle2, FileSpreadsheet, Save, Trash2, Camera, Package, Share2, type LucideIcon } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
@@ -21,6 +21,34 @@ const SETTINGS_GUIDE: GuideStep[] = [
 ]
 
 const DAYS_OPTIONS = [7, 14, 20, 30, 45, 60, 90]
+
+/** Encabezado de un grupo de funciones dentro de la tarjeta de trazabilidad. */
+function GroupHeader({ icon: Icon, title }: { icon: LucideIcon; title: string }) {
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <Icon className="w-4 h-4 text-indigo-500" />
+      <h4 className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-2)]">{title}</h4>
+    </div>
+  )
+}
+
+/** Fila de toggle reutilizable (etiqueta + descripción + interruptor). */
+function ToggleRow({
+  label, description, checked, onToggle,
+}: { label: string; description?: string; checked: boolean; onToggle: () => void }) {
+  return (
+    <div className="space-y-0.5">
+      <label className="flex items-center justify-between gap-3 cursor-pointer">
+        <span className="text-sm font-medium text-[var(--color-text)]">{label}</span>
+        <div className="relative flex-shrink-0" onClick={onToggle}>
+          <div className={`w-11 h-6 rounded-full transition-colors ${checked ? 'bg-indigo-600' : 'bg-gray-300'}`} />
+          <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
+        </div>
+      </label>
+      {description && <p className="text-[11px] text-[var(--color-text-3)]">{description}</p>}
+    </div>
+  )
+}
 
 export function SettingsPage() {
   const navigate = useNavigate()
@@ -346,144 +374,113 @@ export function SettingsPage() {
       {/* ── Subconfiguración de Trazabilidad ──
           Solo se muestra si el root permitió al menos una de estas funciones. */}
       {canAny('activityLog', 'registrarActividad', 'sendEmail', 'whatsappUnified', 'whatsappAudio', 'whatsappCatalog', 'whatsappDocument', 'markerEditor') && (<>
-      <Card as="section" className="space-y-3">
+      <Card as="section" className="space-y-4">
         <div className="flex items-center gap-2">
           <Activity className="w-5 h-5 text-indigo-600" />
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Opciones de Trazabilidad</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-text)]">Funciones de Trazabilidad</h3>
         </div>
         <p className="text-xs text-[var(--color-text-2)]">
-          Habilita funciones adicionales dentro del módulo de trazabilidad para esta empresa.
+          Activa o desactiva cada función según lo que necesite tu empresa. Están agrupadas por tipo.
         </p>
 
-        {/* Registro de actividades */}
-        {can('activityLog') && (<>
-        <label className="flex items-center justify-between gap-3 cursor-pointer">
-          <span className="text-sm font-medium text-[var(--color-text)]">Registro de actividades</span>
-          <div className="relative flex-shrink-0" onClick={() => setActivityLog((v) => !v)}>
-            <div className={`w-11 h-6 rounded-full transition-colors ${activityLog ? 'bg-indigo-600' : 'bg-gray-300'}`} />
-            <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${activityLog ? 'translate-x-5' : 'translate-x-0'}`} />
+        {/* ── Grupo: Captura y edición de fotos ── */}
+        {can('markerEditor') && (
+          <div className="space-y-2.5">
+            <GroupHeader icon={Camera} title="Captura y edición de fotos" />
+            <ToggleRow
+              label="Editor de imágenes"
+              description="Permite dibujar/rayar sobre las fotos antes de guardarlas (estilo WhatsApp)."
+              checked={markerEditor}
+              onToggle={() => setMarkerEditor((v) => !v)}
+            />
           </div>
-        </label>
-        <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
-          Muestra un historial de acciones (creación, finalización, envíos) en la pantalla principal.
-        </p>
-        </>)}
+        )}
 
-        {/* Registrar actividad manual */}
-        {can('registrarActividad') && (<>
-        <label className="flex items-center justify-between gap-3 cursor-pointer">
-          <span className="text-sm font-medium text-[var(--color-text)]">Registrar actividad manual</span>
-          <div className="relative flex-shrink-0" onClick={() => setRegistrarActividad((v) => !v)}>
-            <div className={`w-11 h-6 rounded-full transition-colors ${registrarActividad ? 'bg-indigo-600' : 'bg-gray-300'}`} />
-            <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${registrarActividad ? 'translate-x-5' : 'translate-x-0'}`} />
+        {/* ── Grupo: Productos y datos ── */}
+        {can('whatsappCatalog') && (
+          <div className="space-y-2.5 pt-1 border-t border-[var(--color-border)]">
+            <GroupHeader icon={Package} title="Productos y datos" />
+            <ToggleRow
+              label="Catálogo de productos"
+              description="Permite seleccionar productos del catálogo en los registros."
+              checked={whatsappCatalog}
+              onToggle={() => setWhatsappCatalog((v) => !v)}
+            />
           </div>
-        </label>
-        <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
-          Permite anotar actividades manualmente dentro de cada operación (ej. novedades, observaciones).
-        </p>
-        </>)}
+        )}
 
-        {/* Enviar por correo */}
-        {can('sendEmail') && (<>
-        <label className="flex items-center justify-between gap-3 cursor-pointer">
-          <span className="text-sm font-medium text-[var(--color-text)]">Enviar por correo</span>
-          <div className="relative flex-shrink-0" onClick={() => setSendEmail((v) => !v)}>
-            <div className={`w-11 h-6 rounded-full transition-colors ${sendEmail ? 'bg-indigo-600' : 'bg-gray-300'}`} />
-            <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${sendEmail ? 'translate-x-5' : 'translate-x-0'}`} />
+        {/* ── Grupo: Registro de actividad ── */}
+        {canAny('activityLog', 'registrarActividad') && (
+          <div className="space-y-2.5 pt-1 border-t border-[var(--color-border)]">
+            <GroupHeader icon={Activity} title="Registro de actividad" />
+            {can('activityLog') && (
+              <ToggleRow
+                label="Historial de actividades"
+                description="Muestra un historial de acciones (creación, finalización, envíos) en la pantalla principal."
+                checked={activityLog}
+                onToggle={() => setActivityLog((v) => !v)}
+              />
+            )}
+            {can('registrarActividad') && (
+              <ToggleRow
+                label="Registrar actividad manual"
+                description="Permite anotar actividades manualmente dentro de cada operación (ej. novedades, observaciones)."
+                checked={registrarActividad}
+                onToggle={() => setRegistrarActividad((v) => !v)}
+              />
+            )}
           </div>
-        </label>
-        <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
-          Envía automáticamente cada registro completado por correo electrónico.
-        </p>
+        )}
 
-        {/* Campo de correo destinatario */}
-        <div className={`space-y-2 transition-opacity ${sendEmail ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-          <Input
-            type="email"
-            label="Correo(s) destinatario(s)"
-            value={emailTo}
-            onChange={(e) => setEmailTo(e.target.value)}
-            placeholder="correo@empresa.com (o varios separados por coma)"
-          />
-          <p className="text-[10px] text-[var(--color-text-3)]">
-            Los registros completados se enviarán a este correo. Para varios destinatarios, sepáralos con coma.
-          </p>
-        </div>
-        </>)}
-
-        {/* ── Funciones adicionales (habilitar/deshabilitar) ── */}
-        {canAny('whatsappUnified', 'whatsappAudio', 'whatsappCatalog', 'whatsappDocument', 'markerEditor') && (
-        <div className="pt-2 mt-1 border-t border-[var(--color-border)] space-y-3">
-          {/* Cuenta de WhatsApp unificada */}
-          {can('whatsappUnified') && (<>
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <span className="text-sm font-medium text-[var(--color-text)]">Usar WhatsApp de Turnos</span>
-            <div className="relative flex-shrink-0" onClick={() => setWhatsappUnified((v) => !v)}>
-              <div className={`w-11 h-6 rounded-full transition-colors ${whatsappUnified ? 'bg-indigo-600' : 'bg-gray-300'}`} />
-              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${whatsappUnified ? 'translate-x-5' : 'translate-x-0'}`} />
-            </div>
-          </label>
-          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
-            Usa la misma cuenta de WhatsApp de Turnos para enviar los registros de trazabilidad.
-          </p>
-          </>)}
-
-          {/* Notas de voz */}
-          {can('whatsappAudio') && (<>
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <span className="text-sm font-medium text-[var(--color-text)]">Notas de voz</span>
-            <div className="relative flex-shrink-0" onClick={() => setWhatsappAudio((v) => !v)}>
-              <div className={`w-11 h-6 rounded-full transition-colors ${whatsappAudio ? 'bg-indigo-600' : 'bg-gray-300'}`} />
-              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${whatsappAudio ? 'translate-x-5' : 'translate-x-0'}`} />
-            </div>
-          </label>
-          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
-            Permite adjuntar notas de voz en los registros (estilo WhatsApp).
-          </p>
-          </>)}
-
-          {/* Catálogo de productos */}
-          {can('whatsappCatalog') && (<>
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <span className="text-sm font-medium text-[var(--color-text)]">Catálogo de productos</span>
-            <div className="relative flex-shrink-0" onClick={() => setWhatsappCatalog((v) => !v)}>
-              <div className={`w-11 h-6 rounded-full transition-colors ${whatsappCatalog ? 'bg-indigo-600' : 'bg-gray-300'}`} />
-              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${whatsappCatalog ? 'translate-x-5' : 'translate-x-0'}`} />
-            </div>
-          </label>
-          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
-            Permite seleccionar productos del catálogo en los registros.
-          </p>
-          </>)}
-
-          {/* Adjuntar documentos */}
-          {can('whatsappDocument') && (<>
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <span className="text-sm font-medium text-[var(--color-text)]">Adjuntar documentos</span>
-            <div className="relative flex-shrink-0" onClick={() => setWhatsappDocument((v) => !v)}>
-              <div className={`w-11 h-6 rounded-full transition-colors ${whatsappDocument ? 'bg-indigo-600' : 'bg-gray-300'}`} />
-              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${whatsappDocument ? 'translate-x-5' : 'translate-x-0'}`} />
-            </div>
-          </label>
-          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
-            Permite adjuntar archivos (PDF, Excel, etc.) en los registros.
-          </p>
-          </>)}
-
-          {/* Editor de imágenes (marcador) */}
-          {can('markerEditor') && (<>
-          <label className="flex items-center justify-between gap-3 cursor-pointer">
-            <span className="text-sm font-medium text-[var(--color-text)]">Editor de imágenes</span>
-            <div className="relative flex-shrink-0" onClick={() => setMarkerEditor((v) => !v)}>
-              <div className={`w-11 h-6 rounded-full transition-colors ${markerEditor ? 'bg-indigo-600' : 'bg-gray-300'}`} />
-              <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${markerEditor ? 'translate-x-5' : 'translate-x-0'}`} />
-            </div>
-          </label>
-          <p className="text-[11px] text-[var(--color-text-3)] -mt-1">
-            Permite dibujar/rayar sobre las fotos antes de guardarlas (estilo WhatsApp).
-          </p>
-          </>)}
-        </div>
+        {/* ── Grupo: Compartir y envío ── */}
+        {canAny('whatsappUnified', 'whatsappAudio', 'whatsappDocument', 'sendEmail') && (
+          <div className="space-y-2.5 pt-1 border-t border-[var(--color-border)]">
+            <GroupHeader icon={Share2} title="Compartir y envío" />
+            {can('whatsappUnified') && (
+              <ToggleRow
+                label="Usar WhatsApp de Turnos"
+                description="Usa la misma cuenta de WhatsApp de Turnos para enviar los registros de trazabilidad."
+                checked={whatsappUnified}
+                onToggle={() => setWhatsappUnified((v) => !v)}
+              />
+            )}
+            {can('whatsappAudio') && (
+              <ToggleRow
+                label="Notas de voz"
+                description="Permite adjuntar notas de voz en los registros (estilo WhatsApp)."
+                checked={whatsappAudio}
+                onToggle={() => setWhatsappAudio((v) => !v)}
+              />
+            )}
+            {can('whatsappDocument') && (
+              <ToggleRow
+                label="Adjuntar documentos"
+                description="Permite adjuntar archivos (PDF, Excel, etc.) en los registros."
+                checked={whatsappDocument}
+                onToggle={() => setWhatsappDocument((v) => !v)}
+              />
+            )}
+            {can('sendEmail') && (<>
+              <ToggleRow
+                label="Enviar por correo"
+                description="Envía automáticamente cada registro completado por correo electrónico."
+                checked={sendEmail}
+                onToggle={() => setSendEmail((v) => !v)}
+              />
+              <div className={`space-y-2 transition-opacity ${sendEmail ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                <Input
+                  type="email"
+                  label="Correo(s) destinatario(s)"
+                  value={emailTo}
+                  onChange={(e) => setEmailTo(e.target.value)}
+                  placeholder="correo@empresa.com (o varios separados por coma)"
+                />
+                <p className="text-[10px] text-[var(--color-text-3)]">
+                  Los registros completados se enviarán a este correo. Para varios destinatarios, sepáralos con coma.
+                </p>
+              </div>
+            </>)}
+          </div>
         )}
       </Card>
 
