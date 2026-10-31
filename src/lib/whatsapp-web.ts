@@ -313,45 +313,48 @@ export async function sendAlbum(
 ): Promise<{ id: string | null; count: number }> {
   if (images.length === 0) return { id: null, count: 0 }
 
-  let firstId: string | null = null
-  let count = 0
-
+  // 1. Descarga TODAS las imágenes a Buffer primero (robusto). Las que no se
+  //    puedan descargar se omiten, pero no rompen el resto del álbum.
+  const buffers: Buffer[] = []
   for (let i = 0; i < images.length; i++) {
     const im = images[i]
-    // Descarga robusta a Buffer para URLs (evita fallos opacos de Baileys con
-    // enlaces de Drive/GitHub). Si no se puede descargar, se omite esa imagen.
-    let img: { url: string } | Buffer
     if (typeof im === 'string') {
       const buf = await fetchImageBuffer(im)
-      if (!buf) {
-        console.error(`[whatsapp-web] Imagen ${i} del álbum omitida: no se pudo descargar ${im}`)
-        if (i < images.length - 1) await new Promise((r) => setTimeout(r, 200))
-        continue
-      }
-      img = buf
+      if (buf) buffers.push(buf)
+      else console.error(`[whatsapp-web] Imagen ${i} del álbum omitida: no se pudo descargar ${im}`)
     } else {
-      img = im
+      buffers.push(im)
     }
+  }
+  if (buffers.length === 0) return { id: null, count: 0 }
 
+  // 2. Envío SECUENCIAL: cada imagen como un mensaje de imagen independiente.
+  //    NO se usa el "álbum nativo" de Baileys (expectedImageCount +
+  //    albumParentKey): en 7.0.0-rc14 WhatsApp recibe los eventos (los marca
+  //    como "N mensajes no leídos") pero NO renderiza las imágenes del álbum.
+  //    Enviar imágenes normales en secuencia es fiable y WhatsApp las agrupa
+  //    visualmente por sí mismo cuando llegan seguidas.
+  let firstId: string | null = null
+  let count = 0
+  for (let i = 0; i < buffers.length; i++) {
     try {
       const res = await sendMessageWithRetry<{ key: { id: string } }>(companyId, to, {
-        image: img,
+        image: buffers[i],
+        // El caption va en la PRIMERA imagen enviada con éxito.
         ...(count === 0 && caption ? { caption } : {}),
       })
       if (count === 0) firstId = res?.key?.id ?? null
       count++
     } catch (err) {
-      console.error(`[whatsapp-web] Fallo crítico al enviar imagen ${i} del álbum:`, err)
-      // Si falla una imagen del álbum, continuamos con las siguientes.
+      console.error(`[whatsapp-web] Fallo al enviar imagen ${i} del grupo:`, err)
     }
-    
-    // Pausa dinámica: más corta si hay muchas fotos, pero suficiente para agrupar.
-    if (i < images.length - 1) {
-      const delay = images.length > 5 ? 400 : 600
-      await new Promise(resolve => setTimeout(resolve, delay))
+    // Pausa breve entre imágenes: suficiente para que WhatsApp las agrupe sin
+    // saturar la conexión.
+    if (i < buffers.length - 1) {
+      const delay = buffers.length > 5 ? 400 : 600
+      await new Promise((resolve) => setTimeout(resolve, delay))
     }
   }
-
   return { id: firstId, count }
 }
 

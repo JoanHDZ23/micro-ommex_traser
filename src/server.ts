@@ -17,6 +17,11 @@ import { runCleanupOldOperations } from './jobs/cleanupOldOperations.js'
 const app = express()
 const PORT = Number(process.env.PORT) || 4000
 
+// Desactiva ETag: evita respuestas 304 Not Modified en los GET de la API, que
+// el cliente recibía con cuerpo vacío y trataba como "error 304". Esta API es
+// dinámica (polling de operaciones) y no se beneficia de la caché condicional.
+app.set('etag', false)
+
 app.use(cors({
   origin: [
     'http://localhost:5174',
