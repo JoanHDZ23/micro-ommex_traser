@@ -627,11 +627,10 @@ export function WizardPage() {
     // Fotos de PRODUCTO (Línea Blanca): subida directa.
     setChatMessage('')
 
-    // Comprime todas las imágenes (cliente) para subida rápida.
-    const base64s: string[] = []
-    for (const f of files) {
-      try { base64s.push(await compressImageToBase64(f, stampOpts)) } catch { setFeedback('Error al leer una imagen') }
-    }
+    // Comprime todas las imágenes EN PARALELO (subida más rápida).
+    const comp = await Promise.allSettled(files.map((f) => compressImageToBase64(f, stampOpts)))
+    const base64s = comp.filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled').map((r) => r.value)
+    if (comp.some((r) => r.status === 'rejected')) setFeedback('No se pudieron leer algunas imágenes')
     if (base64s.length === 0) return
 
     // Una sola foto → flujo simple; varias → batch de producto (sin carrera).
@@ -711,15 +710,18 @@ export function WizardPage() {
     const dest = resolveTrayDestination(trayProductRef.current, activeProductRef.current)
     if (dest) setTrayProductCode(dest)
     setShowCaptureTray(true)
-    for (const file of images) {
-      try {
-        // Respeta el ajuste de marca de agua del registro (vía ref siempre actual).
-        const base64 = await compressImageToBase64(file, stampOptsRef.current)
-        setCaptureTray((prev) => [...prev, `data:image/jpeg;base64,${base64}`])
-      } catch {
-        setFeedback('No se pudo procesar una imagen')
-      }
+    // Comprime TODAS las imágenes en paralelo (mucho más rápido que una por una).
+    const results = await Promise.allSettled(
+      images.map((file) => compressImageToBase64(file, stampOptsRef.current)),
+    )
+    const dataUrls: string[] = []
+    let failed = 0
+    for (const r of results) {
+      if (r.status === 'fulfilled') dataUrls.push(`data:image/jpeg;base64,${r.value}`)
+      else failed++
     }
+    if (dataUrls.length) setCaptureTray((prev) => [...prev, ...dataUrls])
+    if (failed) setFeedback(`No se pudieron procesar ${failed} imagen(es)`)
   }, [])
 
   const cancelCaptureTray = () => {
