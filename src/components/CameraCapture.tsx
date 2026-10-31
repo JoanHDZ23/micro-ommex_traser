@@ -286,15 +286,37 @@ export function CameraCapture({
     void startCamera(newFacing)
   }
 
-  const captureFrame = () => {
+  // Indica visualmente el "flash" en pantalla (para front camera o feedback).
+  const [flashing, setFlashing] = useState(false)
+
+  const captureFrame = async () => {
     const video = videoRef.current
     if (!video) return
+
+    // ── Flash al disparar (como la cámara del celular) ──
+    // Si el modo auto está activo, el dispositivo soporta linterna y la escena
+    // está oscura, encendemos la linterna justo antes de capturar y esperamos un
+    // instante para que el sensor ajuste la exposición. Luego restauramos.
+    let turnedTorchForShot = false
+    try {
+      const dark = estimateBrightness(video) < 70
+      if (autoTorchRef.current && torchSupported && dark && !torchOnRef.current) {
+        await setTorch(true)
+        turnedTorchForShot = true
+        // Espera breve para que el sensor se ajuste a la nueva iluminación.
+        await new Promise((r) => setTimeout(r, 350))
+      }
+    } catch { /* si el flash falla, se captura igual */ }
+
+    // Destello visual breve (feedback de obturador).
+    setFlashing(true)
+    setTimeout(() => setFlashing(false), 150)
 
     const canvas = document.createElement('canvas')
     canvas.width = video.videoWidth || 1280
     canvas.height = video.videoHeight || 720
     const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (!ctx) { if (turnedTorchForShot) void setTorch(false); return }
 
     // Captura el frame y estampa fecha/hora/ubicación AL INSTANTE con la última
     // posición y dirección ya conocidas (mantenidas por un watch en segundo
@@ -313,6 +335,11 @@ export function CameraCapture({
     // para subida la hace image-compress con marca de agua.
     setPreview(canvas.toDataURL('image/jpeg', 0.95))
     setShowCommentInput(true)
+
+    // Apaga la linterna si la encendimos solo para esta foto (flash, no linterna
+    // permanente). Si el usuario la tenía encendida a mano, se respeta.
+    if (turnedTorchForShot) { try { await setTorch(false) } catch { /* noop */ } }
+
     stopCamera()
   }
 
@@ -506,6 +533,10 @@ export function CameraCapture({
               className="pointer-events-none absolute w-16 h-16 -ml-8 -mt-8 rounded-full border-2 border-yellow-300 animate-ping"
               style={{ left: focusRing.x, top: focusRing.y }}
             />
+          )}
+          {/* Destello de obturador al capturar (feedback de flash). */}
+          {flashing && (
+            <div className="pointer-events-none absolute inset-0 bg-white/80 transition-opacity duration-150" />
           )}
           {/* Loading state while the camera initializes */}
           {initializing && (

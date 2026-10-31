@@ -69,7 +69,11 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
   const buildConfig = (tkn: string | null): RequestInit => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
     if (tkn && !isAuthEndpoint) headers.Authorization = `Bearer ${tkn}`
-    const cfg: RequestInit = { method, headers }
+    // `cache: 'no-store'` evita que el navegador mande If-None-Match y que el
+    // servidor (Express con ETag) responda 304 con cuerpo vacío, que rompía el
+    // parseo y daba "error 304" repetitivo. Gestionamos nuestra propia caché
+    // (localStorage) para offline, así que no necesitamos la caché HTTP.
+    const cfg: RequestInit = { method, headers, cache: 'no-store' }
     if (body) cfg.body = JSON.stringify(body)
     return cfg
   }
@@ -134,6 +138,17 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
         throw new Error('No se pudo reconectar la sesión. Intenta de nuevo.')
       }
     }
+  }
+
+  // 304 Not Modified (puede llegar de un proxy/CDN aunque pidamos no-store):
+  // NO es un error. El cuerpo viene vacío, así que devolvemos la copia cacheada
+  // del GET si la hay, o null, sin lanzar un "error 304".
+  if (response.status === 304) {
+    if (isGet && shouldCacheGet(endpoint)) {
+      const cached = readGetCache(endpoint)
+      if (cached !== undefined) return cached as T
+    }
+    return null as T
   }
 
   // Lee el cuerpo como texto y parsea de forma segura: así una respuesta vacía
