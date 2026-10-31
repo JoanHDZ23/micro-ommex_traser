@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Eraser, Pencil, RotateCcw, X } from 'lucide-react'
+import { Eraser, Pencil, X, Check, Undo2, MousePointer2 } from 'lucide-react'
 
 interface ImageEditorProps {
   imageSrc: string
@@ -18,7 +18,7 @@ const MARKER_COLORS = [
   '#a855f7',
 ]
 
-type Tool = 'pen' | 'eraser'
+type Tool = 'pen' | 'eraser' | 'blur'
 
 interface Stroke {
   tool: Tool
@@ -35,8 +35,9 @@ export function ImageEditor({ imageSrc, onConfirm, onCancel }: ImageEditorProps)
   const [activeStroke, setActiveStroke] = useState<Stroke | null>(null)
   const [imageLoaded, setImageLoaded] = useState(false)
 
-  const markerSize = 6
-  const eraserSize = 28
+  const markerSize = 5
+  const eraserSize = 30
+  const blurSize = 25
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -57,12 +58,19 @@ export function ImageEditor({ imageSrc, onConfirm, onCancel }: ImageEditorProps)
         ctx.lineCap = 'round'
         ctx.lineJoin = 'round'
         ctx.lineWidth = stroke.size
+        
         if (stroke.tool === 'eraser') {
           ctx.globalCompositeOperation = 'destination-out'
+        } else if (stroke.tool === 'blur') {
+          // Efecto de pixelado/desenfoque simple para privacidad
+          ctx.globalAlpha = 0.5
+          ctx.filter = 'blur(10px)'
+          ctx.strokeStyle = '#ffffff'
         } else {
           ctx.globalCompositeOperation = 'source-over'
           ctx.strokeStyle = stroke.color
         }
+        
         ctx.beginPath()
         ctx.moveTo(stroke.points[0].x, stroke.points[0].y)
         for (let i = 1; i < stroke.points.length; i++) {
@@ -104,7 +112,7 @@ export function ImageEditor({ imageSrc, onConfirm, onCancel }: ImageEditorProps)
     setActiveStroke({
       tool,
       color,
-      size: tool === 'eraser' ? eraserSize : markerSize,
+      size: tool === 'eraser' ? eraserSize : (tool === 'blur' ? blurSize : markerSize),
       points: [point, point],
     })
   }
@@ -130,95 +138,112 @@ export function ImageEditor({ imageSrc, onConfirm, onCancel }: ImageEditorProps)
   const handleConfirm = () => {
     const canvas = canvasRef.current
     if (!canvas) return
-    onConfirm(canvas.toDataURL('image/jpeg', 0.85))
+    onConfirm(canvas.toDataURL('image/jpeg', 0.9))
   }
 
-  const cursorClass = tool === 'eraser' ? 'cursor-cell' : 'cursor-crosshair'
-
   return (
-    <div className="fixed inset-0 z-[120] flex flex-col bg-black">
-      {/* Toolbar */}
-      <div className="flex items-center justify-between gap-2 px-4 py-3 bg-black/80 backdrop-blur">
+    <div className="fixed inset-0 z-[120] flex flex-col bg-black overflow-hidden">
+      {/* WhatsApp style Editor Header */}
+      <div className="flex items-center justify-between px-4 py-4 bg-gradient-to-b from-black/60 to-transparent">
         <button
           type="button"
           onClick={onCancel}
-          aria-label="Cancelar edición"
-          className="w-10 h-10 rounded-full bg-white/15 flex items-center justify-center text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center text-white active:scale-90 transition-transform"
         >
-          <X className="w-5 h-5" />
+          <X className="w-6 h-6" />
         </button>
 
-        <div className="flex items-center gap-1 bg-white/10 rounded-full p-1">
-          <button
-            type="button"
-            onClick={() => setTool('pen')}
-            aria-label="Marcador"
-            aria-pressed={tool === 'pen'}
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${tool === 'pen' ? 'bg-white text-black' : 'text-white/80 hover:bg-white/10'}`}
-          >
-            <Pencil className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setTool('eraser')}
-            aria-label="Borrador"
-            aria-pressed={tool === 'eraser'}
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${tool === 'eraser' ? 'bg-white text-black' : 'text-white/80 hover:bg-white/10'}`}
-          >
-            <Eraser className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-4">
           <button
             type="button"
             onClick={undo}
             disabled={strokes.length === 0}
-            aria-label="Deshacer"
-            className="w-10 h-10 rounded-full bg-white/15 flex items-center justify-center text-white disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+            className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center text-white disabled:opacity-30 active:scale-90 transition-transform"
           >
-            <RotateCcw className="w-5 h-5" />
+            <Undo2 className="w-5 h-5" />
           </button>
+          
+          <div className="flex items-center gap-1 bg-black/40 rounded-full p-1 border border-white/10">
+            <button
+              type="button"
+              onClick={() => setTool('pen')}
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${tool === 'pen' ? 'bg-white text-black' : 'text-white/80 hover:bg-white/10'}`}
+            >
+              <Pencil className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setTool('blur')}
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${tool === 'blur' ? 'bg-white text-black' : 'text-white/80 hover:bg-white/10'}`}
+            >
+              <MousePointer2 className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setTool('eraser')}
+              className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${tool === 'eraser' ? 'bg-white text-black' : 'text-white/80 hover:bg-white/10'}`}
+            >
+              <Eraser className="w-4 h-4" />
+            </button>
+          </div>
+          
           <button
             type="button"
             onClick={handleConfirm}
-            aria-label="Aplicar edición"
-            className="w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center text-white shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+            className="w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center text-white shadow-lg active:scale-90 transition-transform"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+            <Check className="w-6 h-6" />
           </button>
         </div>
       </div>
 
       {/* Canvas */}
-      <div className="flex-1 flex items-center justify-center overflow-hidden p-2">
+      <div className="flex-1 relative flex items-center justify-center p-2 overflow-hidden bg-black">
         <canvas
           ref={canvasRef}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
-          className={`max-w-full max-h-full object-contain touch-none ${cursorClass}`}
+          className="max-w-full max-h-full object-contain touch-none cursor-crosshair shadow-2xl"
           style={{ touchAction: 'none' }}
         />
+        
+        {/* Color slider (WhatsApp style vertical) */}
+        {tool === 'pen' && (
+          <div className="absolute right-6 top-1/2 -translate-y-1/2 flex flex-col items-center gap-3 py-4 px-2 rounded-full bg-black/40 border border-white/10 backdrop-blur-md">
+            <div className="w-1.5 h-48 rounded-full bg-gradient-to-b from-white via-red-500 via-yellow-500 via-green-500 via-blue-500 to-black relative">
+              <input 
+                type="range" 
+                min="0" 
+                max={MARKER_COLORS.length - 1} 
+                step="1"
+                value={MARKER_COLORS.indexOf(color)}
+                onChange={(e) => setColor(MARKER_COLORS[parseInt(e.target.value)])}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer orientation-vertical"
+                style={{ appearance: 'none', writingMode: 'bt-lr' } as any}
+              />
+              <div 
+                className="absolute left-1/2 -translate-x-1/2 w-4 h-4 rounded-full border-2 border-white shadow-md transition-all"
+                style={{ 
+                  backgroundColor: color,
+                  top: `${(MARKER_COLORS.indexOf(color) / (MARKER_COLORS.length - 1)) * 100}%`
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Color palette — only for pen */}
-      {tool === 'pen' && (
-        <div className="flex items-center justify-center gap-2 px-4 py-3 bg-black/80 backdrop-blur">
-          {MARKER_COLORS.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() => setColor(c)}
-              aria-label={`Color ${c}`}
-              aria-pressed={color === c}
-              className={`w-8 h-8 rounded-full border-2 transition-transform ${color === c ? 'border-white scale-110' : 'border-white/30'}`}
-              style={{ backgroundColor: c }}
-            />
-          ))}
-        </div>
-      )}
+      {/* Footer message / info */}
+      <div className="px-4 py-8 bg-gradient-to-t from-black/80 to-transparent flex flex-col items-center">
+        <p className="text-white/60 text-xs font-medium tracking-wide uppercase">
+          {tool === 'pen' ? 'Dibujar' : tool === 'blur' ? 'Desenfoque' : 'Borrador'}
+        </p>
+        <p className="text-white/30 text-[10px] mt-1">
+          Desliza para aplicar el efecto sobre la imagen
+        </p>
+      </div>
     </div>
   )
 }

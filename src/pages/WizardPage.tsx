@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { apiRequest, fileToBase64, makeClientKey, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
@@ -10,7 +10,7 @@ import { WhatsAppSendButton } from '../components/WhatsAppSendButton'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { CatalogPicker } from '../components/CatalogPicker'
 import { ImageEditor } from '../components/ImageEditor'
-import { Button, ErrorState, LoadingState, Modal } from '../components/ui'
+import { Button, ErrorState, LoadingState, Modal, ModalSurface } from '../components/ui'
 import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
@@ -19,6 +19,7 @@ import { BarcodeScanner } from '../components/BarcodeScanner'
 import type { PhotoRecord } from '../lib/api'
 import { useTracerFeatures } from '../lib/tracer-features'
 import { getCompanyId } from '../lib/context'
+import { touchActivity } from '../lib/auth'
 import { getRecordSettings, setRecordSettings, DEFAULT_RECORD_SETTINGS, type RecordSettings } from '../lib/record-settings'
 import { getPrimarySheetId, getSheetColumns, type SheetColumnSettings } from '../lib/db-settings'
 import { useOperationLive } from '../hooks/useOperationLive'
@@ -94,6 +95,95 @@ export function WizardPage() {
   const [showScanner, setShowScanner] = useState(false)
 
   const features = useTracerFeatures()
+
+  // ── Sesión persistente y carga optimizada ──
+  // Mantiene la sesión activa cada 2 min mientras la vista está abierta (Req 3.5).
+  useEffect(() => {
+    const id = setInterval(() => touchActivity(), 2 * 60 * 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Menú dinámico de acciones (basado en configuración y permisos)
+  const plusMenuItems = useMemo(() => {
+    const items = []
+    if (features.addProduct) {
+      items.push({
+        id: 'product',
+        label: 'Producto',
+        icon: Package,
+        color: 'bg-blue-500',
+        onClick: () => { setShowPlusMenu(false); setShowAddProductModal(true) }
+      })
+    }
+    if (features.sheetsEnabled) {
+      items.push({
+        id: 'database',
+        label: 'Base Datos',
+        icon: Database,
+        color: 'bg-emerald-600',
+        onClick: () => { setShowPlusMenu(false); setShowDbModal(true) }
+      })
+    }
+    if (features.selectImage) {
+      items.push({
+        id: 'gallery',
+        label: 'Galería',
+        icon: ImageIcon,
+        color: 'bg-purple-500',
+        onClick: () => { setShowPlusMenu(false); lbFileInputRef.current?.click() }
+      })
+    }
+    if (features.pasteImage) {
+      items.push({
+        id: 'paste',
+        label: 'Pegar',
+        icon: ClipboardPaste,
+        color: 'bg-sky-600',
+        onClick: () => { setShowPlusMenu(false); void pasteImageFromClipboard() }
+      })
+    }
+    if (features.whatsappAudio) {
+      items.push({
+        id: 'audio',
+        label: 'Audio',
+        icon: Mic,
+        color: 'bg-orange-500',
+        onClick: () => { setShowPlusMenu(false); setShowAudioRecorder(true) }
+      })
+    }
+    if (features.whatsappCatalog) {
+      items.push({
+        id: 'catalog',
+        label: 'Catálogo',
+        icon: Package,
+        color: 'bg-amber-600',
+        onClick: () => { setShowPlusMenu(false); setShowCatalogPicker(true) }
+      })
+    }
+    if (features.whatsappDocument) {
+      items.push({
+        id: 'document',
+        label: 'Documento',
+        icon: FileText,
+        color: 'bg-blue-600',
+        onClick: () => { document.getElementById('plus-menu-doc-input')?.click() }
+      })
+    }
+    if (features.registrarActividad) {
+      items.push({
+        id: 'activity',
+        label: 'Actividad',
+        icon: Activity,
+        color: 'bg-indigo-600',
+        onClick: () => { setShowPlusMenu(false); setShowActivityModal(true) }
+      })
+    }
+    return items
+    // `pasteImageFromClipboard` es un useCallback estable declarado más abajo;
+    // se referencia dentro del callback (resuelto en tiempo de ejecución), por
+    // eso NO va en el array de dependencias (evita el uso-antes-de-declarar).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [features])
 
   // ── Captura con la app de cámara del dispositivo (estilo WhatsApp) ──
   // Las fotos tomadas se acumulan aquí y se revisan antes de enviar.
@@ -2485,65 +2575,45 @@ export function WizardPage() {
       {/* Bottom input bar — sticky al fondo para que siga visible en móvil */}
       {!isCompleted && (
         <div className="relative flex-shrink-0 sticky bottom-0 z-20 bg-[var(--color-surface)] px-2 py-2 border-t border-[var(--color-border)] shadow-lg">
-          {/* Plus menu popup */}
-          {showPlusMenu && (
-            <div className="absolute bottom-full left-2 mb-2 bg-white rounded-xl shadow-lg border border-gray-200 p-1 min-w-[180px]">
-              {features.addProduct && (
-                <button onClick={() => { setShowPlusMenu(false); setShowAddProductModal(true) }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                  <Package className="w-4 h-4 text-[var(--color-primary)]" /> Agregar producto
+          {/* Menú "+" estilo WhatsApp */}
+          <ModalSurface
+            open={showPlusMenu}
+            onClose={() => setShowPlusMenu(false)}
+            size="sm"
+          >
+            <div className="grid grid-cols-4 gap-y-6 gap-x-2 py-4">
+              {plusMenuItems.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={item.onClick}
+                  className="flex flex-col items-center gap-2 group outline-none"
+                >
+                  <div className={`w-14 h-14 rounded-full ${item.color} flex items-center justify-center text-white shadow-md group-active:scale-95 transition-transform`}>
+                    <item.icon className="w-6 h-6" />
+                  </div>
+                  <span className="text-[11px] text-gray-600 font-medium text-center leading-tight">
+                    {item.label}
+                  </span>
                 </button>
-              )}
-              {features.sheetsEnabled && (
-                <button onClick={() => { setShowPlusMenu(false); setShowDbModal(true) }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                  <Database className="w-4 h-4 text-emerald-600" /> Base de datos
-                </button>
-              )}
-              {features.selectImage && (
-                <label className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
-                  <Camera className="w-4 h-4 text-emerald-500" /> Seleccionar imagen
-                  <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { setShowPlusMenu(false); void handleNativeCapture(e, false) }} />
-                </label>
-              )}
-              {features.pasteImage && (
-                <button onClick={() => { setShowPlusMenu(false); void pasteImageFromClipboard() }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                  <ClipboardPaste className="w-4 h-4 text-sky-600" /> Pegar imagen
-                </button>
-              )}
-              {features.whatsappAudio && (
-                <button onClick={() => { setShowPlusMenu(false); setShowAudioRecorder(true) }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                  <Mic className="w-4 h-4 text-rose-500" /> Grabar audio
-                </button>
-              )}
-              {features.whatsappCatalog && (
-                <button onClick={() => { setShowPlusMenu(false); setShowCatalogPicker(true) }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                  <Package className="w-4 h-4 text-amber-600" /> Catálogo de productos
-                </button>
-              )}
+              ))}
+              {/* Input oculto para documentos, si la función está activa */}
               {features.whatsappDocument && (
-                <label className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
-                  <FileText className="w-4 h-4 text-blue-500" /> Adjuntar documento
-                  <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" className="hidden"
-                    onChange={(e) => {
-                      setShowPlusMenu(false)
-                      const f = e.target.files?.[0]
-                      e.target.value = ''
-                      if (f) void attachToRecord('document', f)
-                    }} />
-                </label>
-              )}
-              {features.registrarActividad && (
-                <button onClick={() => { setShowPlusMenu(false); setShowActivityModal(true) }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                  <Activity className="w-4 h-4 text-indigo-600" /> Registrar actividad
-                </button>
+                <input
+                  type="file"
+                  id="plus-menu-doc-input"
+                  className="hidden"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+                  onChange={(e) => {
+                    setShowPlusMenu(false)
+                    const f = e.target.files?.[0]
+                    e.target.value = ''
+                    if (f) void attachToRecord('document', f)
+                  }}
+                />
               )}
             </div>
-          )}
+          </ModalSurface>
+
           {/* Templates panel */}
           {showTemplates && (
             <div className="mb-2 p-2 bg-gray-50 rounded-xl max-h-32 overflow-y-auto space-y-1 border border-gray-200">

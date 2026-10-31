@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Flashlight, FlashlightOff, MessageSquare, Package, Pencil, Plus, QrCode, RefreshCw, RotateCcw, Search, Send, X } from 'lucide-react'
+import { Check, Flashlight, MessageSquare, Package, Pencil, Plus, QrCode, RefreshCw, RotateCcw, Search, Send, X } from 'lucide-react'
 import { ErrorState, LoadingState } from './ui'
 import { ImageEditor } from './ImageEditor'
 import { BarcodeScanner } from './BarcodeScanner'
@@ -232,12 +232,6 @@ export function CameraCapture({
     } catch { /* torch no soportado en este dispositivo */ }
   }, [])
 
-  // Toggle manual: al tocarlo, desactiva el modo automático y fija el estado.
-  const toggleTorch = async () => {
-    setAutoTorch(false)
-    await setTorch(!torchOnRef.current)
-  }
-
   // Indicador visual del punto de enfoque al tocar la pantalla.
   const [focusRing, setFocusRing] = useState<{ x: number; y: number } | null>(null)
 
@@ -423,30 +417,18 @@ export function CameraCapture({
                     onClick={() => setAutoTorch((v) => !v)}
                     aria-label={autoTorch ? 'Flash automático activado' : 'Flash automático desactivado'}
                     aria-pressed={autoTorch}
-                    className={`relative w-11 h-11 rounded-full flex items-center justify-center text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${autoTorch ? 'bg-yellow-400 text-black' : 'bg-white/20 text-white'}`}
+                    className={`relative w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold transition-all active:scale-95 ${autoTorch ? 'bg-yellow-400 text-black' : 'bg-black/40 text-white'}`}
                   >
-                    <Flashlight className="w-4 h-4" />
+                    <Flashlight className="w-5 h-5" />
                     <span className="absolute -bottom-0.5 -right-0.5 bg-black/70 text-white rounded-full px-1 text-[8px] leading-tight">A</span>
                   </button>
-                )}
-                {/* Torch manual */}
-                {torchSupported && (
-                <button
-                  type="button"
-                  onClick={() => void toggleTorch()}
-                  aria-label={torchOn ? 'Apagar linterna' : 'Encender linterna'}
-                  aria-pressed={torchOn}
-                  className={`w-11 h-11 rounded-full flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${torchOn ? 'bg-yellow-400 text-black' : 'bg-white/20 text-white'}`}
-                >
-                  {torchOn ? <FlashlightOff className="w-5 h-5" /> : <Flashlight className="w-5 h-5" />}
-                </button>
                 )}
                 {/* Switch camera */}
                 <button
                   type="button"
                   onClick={switchCamera}
                   aria-label="Cambiar cámara"
-                  className="w-11 h-11 rounded-full bg-white/20 flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                  className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center transition-all active:scale-95"
                 >
                   <RefreshCw className="w-5 h-5 text-white" />
                 </button>
@@ -457,7 +439,7 @@ export function CameraCapture({
               type="button"
               onClick={onCancel}
               aria-label="Cerrar cámara"
-              className="w-11 h-11 rounded-full bg-white/20 backdrop-blur flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+              className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center transition-all active:scale-95"
             >
               <X className="w-5 h-5 text-white" />
             </button>
@@ -466,28 +448,28 @@ export function CameraCapture({
 
         {/* Barra de producto (modo multi): escanear / buscar en DATA sin salir. */}
         {multi && allowProductLink && !preview && !error && (
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex items-center gap-2 overflow-x-auto no-scrollbar">
             <button
               type="button"
               onClick={openScanner}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
+              className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/40 text-white text-[11px] font-medium active:scale-95"
             >
-              <QrCode className="w-4 h-4" /> Escanear
+              <QrCode className="w-3.5 h-3.5" /> Escanear
             </button>
             {dbConfig?.sheetId && (
               <button
                 type="button"
                 onClick={() => setShowProductPanel(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
+                className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-black/40 text-white text-[11px] font-medium active:scale-95"
               >
-                <Search className="w-4 h-4" /> Buscar producto
+                <Search className="w-3.5 h-3.5" /> Buscar producto
               </button>
             )}
             {productCode && (
               <button
                 type="button"
                 onClick={() => setProductCode(undefined)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-emerald-500/80 text-white text-xs font-medium"
+                className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-emerald-500/90 text-white text-[11px] font-medium active:scale-95"
               >
                 {productCode} <X className="w-3 h-3" />
               </button>
@@ -504,7 +486,9 @@ export function CameraCapture({
           </div>
         </div>
       ) : preview ? (
-        <img src={preview} alt="Preview" className="w-full h-full object-contain flex-1 bg-black" />
+        <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+          <img src={preview} alt="Preview" className="max-w-full max-h-full object-contain" />
+        </div>
       ) : (
         <>
           <video
@@ -544,11 +528,11 @@ export function CameraCapture({
       {/* Tira de miniaturas de la bandeja (modo multi, mientras la cámara está activa).
           Cada miniatura muestra a qué producto pertenece (o "General"). */}
       {multi && !preview && !error && tray.length > 0 && (
-        <div className="absolute left-0 right-0 bottom-[132px] z-10 px-3">
-          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        <div className="absolute left-0 right-0 bottom-[140px] z-10 px-3">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
             {tray.map((p, i) => (
               <div key={i} className="relative flex-shrink-0">
-                <img src={p.dataUrl} className="w-14 h-14 rounded-lg object-cover border-2 border-white/60" />
+                <img src={p.dataUrl} className="w-16 h-16 rounded-lg object-cover border-2 border-white/60" />
                 <span className={`absolute left-0 right-0 bottom-0 px-1 py-0.5 text-[8px] font-semibold text-white text-center truncate rounded-b-md ${p.productCode ? 'bg-emerald-600/90' : 'bg-black/60'}`}>
                   {p.productCode ?? 'General'}
                 </span>
@@ -570,135 +554,113 @@ export function CameraCapture({
       {!error && (
         <div className="camera-overlay__controls">
           {preview ? (
-            <div className="w-full space-y-3">
-              {/* Comment input */}
-              {showCommentInput && (
-                <div className="flex items-center gap-2 px-2">
-                  <MessageSquare className="w-4 h-4 text-white/70 flex-shrink-0" />
-                  <input
-                    type="text"
-                    value={comment}
-                    onChange={(e) => setComment(e.target.value)}
-                    placeholder="Agregar comentario (opcional)..."
-                    className="flex-1 px-3 py-2 rounded-lg bg-white/15 backdrop-blur border border-white/20 text-white text-sm placeholder:text-white/50 focus:outline-none focus:ring-1 focus:ring-white/40"
-                    autoFocus
-                  />
-                </div>
-              )}
-
-              {/* Vincular producto SIN interrumpir la secuencia: el panel se abre
-                  encima y la foto en revisión se conserva tal cual. */}
-              {multi && allowProductLink && (
-                <div className="flex items-center justify-center gap-2 px-2 flex-wrap">
+            <div className="w-full space-y-4">
+              {/* Barra superior del editor (confirmar/herramientas) */}
+              <div className="flex items-center justify-between px-2">
+                <button
+                  type="button"
+                  onClick={retake}
+                  className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center text-white active:scale-90 transition-transform"
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </button>
+                <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={openScanner}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
+                    onClick={() => setEditing(true)}
+                    className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center text-white active:scale-90 transition-transform"
                   >
-                    <QrCode className="w-4 h-4" /> Escanear producto
+                    <Pencil className="w-5 h-5" />
                   </button>
-                  {dbConfig?.sheetId && (
-                    <button
-                      type="button"
-                      onClick={() => setShowProductPanel(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/15 backdrop-blur text-white text-xs font-medium"
-                    >
-                      <Package className="w-4 h-4" /> Agregar producto
-                    </button>
-                  )}
-                  {productCode && (
-                    <button
-                      type="button"
-                      onClick={() => setProductCode(undefined)}
-                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-emerald-500/90 text-white text-xs font-medium"
-                    >
-                      <Package className="w-3 h-3" /> {productCode} <X className="w-3 h-3" />
-                    </button>
-                  )}
+                </div>
+              </div>
+
+              {/* Comment input style WhatsApp */}
+              {showCommentInput && (
+                <div className="flex items-center gap-2 px-2">
+                  <div className="flex-1 flex items-center gap-2 px-4 py-2.5 rounded-full bg-white/10 backdrop-blur border border-white/20">
+                    <MessageSquare className="w-4 h-4 text-white/70 flex-shrink-0" />
+                    <input
+                      type="text"
+                      value={comment}
+                      onChange={(e) => setComment(e.target.value)}
+                      placeholder="Añade un comentario..."
+                      className="flex-1 bg-transparent text-white text-sm placeholder:text-white/50 focus:outline-none"
+                      autoFocus
+                    />
+                  </div>
                 </div>
               )}
 
               {/* Action buttons */}
-              <div className="flex items-center justify-center gap-5">
+              <div className="flex items-center justify-between px-4 pb-2">
+                <div className="flex items-center gap-3">
+                  {multi && trayCount > 0 && (
+                    <div className="relative">
+                      <div className="w-12 h-12 rounded-lg bg-white/20 overflow-hidden border border-white/30">
+                        <img src={tray[0]?.dataUrl || preview} className="w-full h-full object-cover" />
+                      </div>
+                      <span className="absolute -top-2 -right-2 bg-emerald-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center border-2 border-black">
+                        {trayCount}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                
                 <button
                   type="button"
-                  onClick={retake}
-                  aria-label="Repetir captura"
-                  className="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                  onClick={multi ? addToTray : confirmSingle}
+                  className="w-14 h-14 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg active:scale-90 transition-transform"
                 >
-                  <RotateCcw className="w-5 h-5 text-white" />
+                  <Send className="w-6 h-6 text-white ml-0.5" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setEditing(true)}
-                  aria-label="Editar imagen (dibujar)"
-                  className="w-12 h-12 rounded-full bg-white/20 backdrop-blur flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                >
-                  <Pencil className="w-5 h-5 text-white" />
-                </button>
-                {multi ? (
-                  <>
-                    {/* Tomar otra: guarda en la bandeja y reabre la cámara. */}
-                    <button
-                      type="button"
-                      onClick={addToTray}
-                      aria-label="Tomar otra foto"
-                      className="w-16 h-16 rounded-full bg-white flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                    >
-                      <Plus className="w-7 h-7 text-gray-800" />
-                    </button>
-                    {/* Listo: finaliza la sesión con todas las fotos. */}
-                    <button
-                      type="button"
-                      onClick={finishMulti}
-                      disabled={finishing}
-                      aria-label="Terminar y enviar"
-                      className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-60"
-                    >
-                      <Send className="w-6 h-6 text-white" />
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={confirmSingle}
-                    aria-label={comment.trim() ? 'Enviar captura con comentario' : 'Confirmar captura'}
-                    className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-                  >
-                    {comment.trim() ? (
-                      <Send className="w-6 h-6 text-white" />
-                    ) : (
-                      <Check className="w-7 h-7 text-white" />
-                    )}
-                  </button>
-                )}
               </div>
             </div>
           ) : (
-            <div className="w-full flex items-center justify-center gap-6">
-              <button
-                type="button"
-                onClick={() => void captureFrame()}
-                aria-label="Capturar foto"
-                className="capture-btn"
-              >
-                <div className="capture-btn__inner" />
-              </button>
-              {/* En multi, botón "Listo" visible si ya hay fotos en la bandeja. */}
-              {multi && trayCount > 0 && (
+            <div className="w-full flex flex-col items-center gap-6">
+              {/* Selector de modo (Video / Foto) */}
+              <div className="flex items-center gap-8 text-[13px] font-semibold tracking-wide">
+                <button type="button" className="text-white/50 uppercase">Video</button>
+                <button type="button" className="text-white uppercase relative">
+                  Foto
+                  <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-1 h-1 bg-white rounded-full" />
+                </button>
+              </div>
+
+              <div className="w-full flex items-center justify-between px-8">
+                {/* Galería / Miniatura */}
+                <button className="w-12 h-12 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center overflow-hidden">
+                  {tray.length > 0 ? (
+                    <img src={tray[tray.length-1].dataUrl} className="w-full h-full object-cover" />
+                  ) : (
+                    <Plus className="w-6 h-6 text-white/70" />
+                  )}
+                </button>
+
+                {/* Shutter */}
                 <button
                   type="button"
-                  onClick={finishMulti}
-                  disabled={finishing}
-                  aria-label="Terminar y enviar"
-                  className="absolute right-6 w-14 h-14 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg disabled:opacity-60"
+                  onClick={() => void captureFrame()}
+                  aria-label="Capturar foto"
+                  className="w-20 h-20 rounded-full border-4 border-white p-1 active:scale-95 transition-transform"
                 >
-                  <div className="flex flex-col items-center">
-                    <Send className="w-5 h-5 text-white" />
-                    <span className="text-[10px] text-white font-bold leading-none mt-0.5">{trayCount}</span>
-                  </div>
+                  <div className="w-full h-full rounded-full bg-white" />
                 </button>
-              )}
+
+                {/* Finalizar multi-captura */}
+                {multi && trayCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={finishMulti}
+                    disabled={finishing}
+                    className="w-12 h-12 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg active:scale-90 transition-transform disabled:opacity-50"
+                  >
+                    <Check className="w-6 h-6 text-white" />
+                  </button>
+                ) : (
+                  <div className="w-12 h-12" />
+                )}
+              </div>
             </div>
           )}
         </div>

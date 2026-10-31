@@ -46,6 +46,19 @@ export function useOperationLive(trackingCode: string | undefined, opts: Options
   const fetchOnce = useCallback(async () => {
     if (!trackingCode || inFlightRef.current) return
     inFlightRef.current = true
+    
+    // Intenta cargar desde la caché local de apiRequest para respuesta instantánea (Req 1)
+    if (!operation) {
+      const cached = localStorage.getItem(`ommex_get_cache:/operations/${trackingCode}`)
+      if (cached) {
+        try { 
+          const data = JSON.parse(cached)
+          setOperation(data)
+          setLoading(false)
+        } catch { /* noop */ }
+      }
+    }
+
     try {
       const op = await apiRequest<Operation>(`/operations/${trackingCode}`)
       setOperation(op)

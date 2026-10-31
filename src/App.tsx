@@ -12,15 +12,48 @@ import { renewSession } from './lib/auth'
 // Code-splitting por ruta: cada pantalla se descarga solo cuando se visita, así
 // el arranque es más rápido y la primera vista (Home) carga menos JS. Las libs
 // pesadas (xlsx, pdf, barcode, OCR) viajan en los chunks de sus páginas.
-const NewOperationPage = lazy(() => import('./pages/NewOperationPage').then((m) => ({ default: m.NewOperationPage })))
-const WizardPage = lazy(() => import('./pages/WizardPage').then((m) => ({ default: m.WizardPage })))
-const HistoryPage = lazy(() => import('./pages/HistoryPage').then((m) => ({ default: m.HistoryPage })))
-const OperationDetailPage = lazy(() => import('./pages/OperationDetailPage').then((m) => ({ default: m.OperationDetailPage })))
-const SharePage = lazy(() => import('./pages/SharePage').then((m) => ({ default: m.SharePage })))
-const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
-const ProductsCatalogPage = lazy(() => import('./pages/ProductsCatalogPage').then((m) => ({ default: m.ProductsCatalogPage })))
-const DocumentsPage = lazy(() => import('./pages/DocumentsPage').then((m) => ({ default: m.DocumentsPage })))
-const PhotoUploadPage = lazy(() => import('./pages/PhotoUploadPage').then((m) => ({ default: m.PhotoUploadPage })))
+//
+// Los imports se declaran como funciones reutilizables para poder PRECARGAR los
+// chunks más visitados en tiempo de inactividad (requestIdleCallback), sin
+// penalizar el arranque: la navegación a esas vistas se siente instantánea.
+const importNewOperation = () => import('./pages/NewOperationPage')
+const importWizard = () => import('./pages/WizardPage')
+const importHistory = () => import('./pages/HistoryPage')
+const importOperationDetail = () => import('./pages/OperationDetailPage')
+const importShare = () => import('./pages/SharePage')
+const importSettings = () => import('./pages/SettingsPage')
+const importProductsCatalog = () => import('./pages/ProductsCatalogPage')
+const importDocuments = () => import('./pages/DocumentsPage')
+const importPhotoUpload = () => import('./pages/PhotoUploadPage')
+
+const NewOperationPage = lazy(() => importNewOperation().then((m) => ({ default: m.NewOperationPage })))
+const WizardPage = lazy(() => importWizard().then((m) => ({ default: m.WizardPage })))
+const HistoryPage = lazy(() => importHistory().then((m) => ({ default: m.HistoryPage })))
+const OperationDetailPage = lazy(() => importOperationDetail().then((m) => ({ default: m.OperationDetailPage })))
+const SharePage = lazy(() => importShare().then((m) => ({ default: m.SharePage })))
+const SettingsPage = lazy(() => importSettings().then((m) => ({ default: m.SettingsPage })))
+const ProductsCatalogPage = lazy(() => importProductsCatalog().then((m) => ({ default: m.ProductsCatalogPage })))
+const DocumentsPage = lazy(() => importDocuments().then((m) => ({ default: m.DocumentsPage })))
+const PhotoUploadPage = lazy(() => importPhotoUpload().then((m) => ({ default: m.PhotoUploadPage })))
+
+/**
+ * Precarga en segundo plano (cuando el navegador está ocioso) los chunks de las
+ * vistas a las que el usuario suele navegar desde Home. Reduce el tiempo de
+ * carga percibido al abrirlas. Falla en silencio si no hay red.
+ */
+function prefetchCommonRoutes(): void {
+  const idle = (cb: () => void) => {
+    const ric = (window as unknown as { requestIdleCallback?: (cb: () => void) => void }).requestIdleCallback
+    if (ric) ric(cb)
+    else setTimeout(cb, 1500)
+  }
+  idle(() => {
+    void importNewOperation().catch(() => {})
+    void importWizard().catch(() => {})
+    void importHistory().catch(() => {})
+    void importProductsCatalog().catch(() => {})
+  })
+}
 
 export default function App() {
   // Aviso cuando la sesión se cierra por inactividad (1 hora sin actividad).
@@ -50,6 +83,12 @@ export default function App() {
     window.addEventListener('session:expired', onExpired as EventListener)
     return () => window.removeEventListener('session:expired', onExpired as EventListener)
   }, [])
+
+  // Precarga ociosa de las vistas más visitadas (navegación instantánea).
+  useEffect(() => {
+    if (isShareRoute) return
+    prefetchCommonRoutes()
+  }, [isShareRoute])
 
   // Auto-sincroniza WhatsApp al iniciar la app: si ya hay sesión guardada,
   // reconecta sin pedir QR. Se omite en la ruta pública /share y falla en

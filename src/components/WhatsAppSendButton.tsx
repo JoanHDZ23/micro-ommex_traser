@@ -86,27 +86,53 @@ export function WhatsAppSendButton({ target, children, className, title, disable
   }
   const toggle = (to: string) => setSelected((prev) => { const n = new Set(prev); n.has(to) ? n.delete(to) : n.add(to); return n })
 
+  /**
+   * Envía por WhatsApp con reintento + backoff corto. Los endpoints de
+   * whatsapp-web no entran en la cola offline, así que un fallo transitorio
+   * (red intermitente o backend despertando) se reintenta aquí para que el
+   * envío sea fiable sin molestar al usuario.
+   */
+  const WA_RETRIES = 2
+  const WA_BACKOFF_MS = [1000, 2500]
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+  const sendWithRetry = async (endpoint: string, body: Record<string, unknown>): Promise<void> => {
+    let lastErr: unknown
+    for (let attempt = 0; attempt <= WA_RETRIES; attempt++) {
+      try {
+        await apiRequest(endpoint, { method: 'POST', body })
+        return
+      } catch (e) {
+        lastErr = e
+        // Sin red: no tiene sentido insistir en ráfaga; propaga el error.
+        if (typeof navigator !== 'undefined' && !navigator.onLine) break
+        if (attempt < WA_RETRIES) await sleep(WA_BACKOFF_MS[attempt] ?? 2500)
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error('No se pudo enviar por WhatsApp.')
+  }
+
   /** Ejecuta un envío a un chat concreto (o default del backend si to=null). */
   const sendOne = async (to: string | null): Promise<void> => {
     const t = target
     const toBody = to ? { to } : {}
     if (t.kind === 'product') {
-      await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode: t.trackingCode, productCode: t.productCode, ...toBody } })
+      await sendWithRetry('/whatsapp-web/send-product', { trackingCode: t.trackingCode, productCode: t.productCode, ...toBody })
     } else if (t.kind === 'album') {
-      await apiRequest('/whatsapp-web/send-photo-group', { method: 'POST', body: { trackingCode: t.trackingCode, photoIndices: t.photoIndices, ...toBody } })
+      await sendWithRetry('/whatsapp-web/send-photo-group', { trackingCode: t.trackingCode, photoIndices: t.photoIndices, ...toBody })
     } else if (t.kind === 'photos') {
       for (const idx of t.photoIndices) {
-        await apiRequest('/whatsapp-web/send-photo', { method: 'POST', body: { trackingCode: t.trackingCode, photoIndex: idx, ...toBody } })
+        await sendWithRetry('/whatsapp-web/send-photo', { trackingCode: t.trackingCode, photoIndex: idx, ...toBody })
       }
     } else if (t.kind === 'mixed') {
       for (const idx of t.photoIndices) {
-        await apiRequest('/whatsapp-web/send-photo', { method: 'POST', body: { trackingCode: t.trackingCode, photoIndex: idx, ...toBody } })
+        await sendWithRetry('/whatsapp-web/send-photo', { trackingCode: t.trackingCode, photoIndex: idx, ...toBody })
       }
       for (const code of t.productCodes) {
-        await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode: t.trackingCode, productCode: code, ...toBody } })
+        await sendWithRetry('/whatsapp-web/send-product', { trackingCode: t.trackingCode, productCode: code, ...toBody })
       }
     } else {
-      await apiRequest('/whatsapp-web/send-photo', { method: 'POST', body: { trackingCode: t.trackingCode, photoIndex: t.photoIndex, ...toBody } })
+      await sendWithRetry('/whatsapp-web/send-photo', { trackingCode: t.trackingCode, photoIndex: t.photoIndex, ...toBody })
     }
   }
 
@@ -124,13 +150,20 @@ export function WhatsAppSendButton({ target, children, className, title, disable
     setSending(true)
     notify('⏳ Enviando…')
     let ok = 0
+    let failed = 0
     let lastErr = ''
     for (const to of targets) {
-      try { await sendOne(to); ok++ } catch (e) { lastErr = e instanceof Error ? e.message : 'Error al enviar' }
+      try { await sendOne(to); ok++ } catch (e) { failed++; lastErr = e instanceof Error ? e.message : 'Error al enviar' }
     }
     setSending(false)
-    if (ok > 0) { notify(`✓ Enviado a ${ok} chat(s).`); onSent?.() }
-    else notify(lastErr || 'No se pudo enviar.')
+    if (ok > 0 && failed === 0) {
+      notify(`✓ Enviado a ${ok} chat(s).`); onSent?.()
+    } else if (ok > 0 && failed > 0) {
+      // Éxito parcial: informa claramente qué pasó sin ocultar el fallo.
+      notify(`✓ Enviado a ${ok} · ✗ ${failed} falló(s). ${lastErr}`); onSent?.()
+    } else {
+      notify(lastErr || 'No se pudo enviar.')
+    }
   }
 
   const manualDigits = manual.replace(/[^\d]/g, '')

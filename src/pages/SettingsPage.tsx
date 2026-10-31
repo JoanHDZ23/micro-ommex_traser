@@ -6,6 +6,7 @@ import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
 import { Button, Card, ErrorState, Input, LoadingState, SectionHeader } from '../components/ui'
+import { invalidateTracerFeaturesCache } from '../lib/tracer-features'
 
 const SETTINGS_GUIDE: GuideStep[] = [
   {
@@ -225,6 +226,7 @@ export function SettingsPage() {
       if (sendEmail) {
         await apiRequest('/settings/email', { method: 'PUT', body: { companyId, emailTo: emailTo.trim() } })
       }
+      invalidateTracerFeaturesCache()
       setFeedbackTracer('✓ Opciones de trazabilidad guardadas.')
     } catch (err) {
       setFeedbackTracer(err instanceof Error ? err.message : 'Error al guardar')

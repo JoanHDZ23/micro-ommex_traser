@@ -7,19 +7,21 @@
  *  - El token se guarda en memoria + sessionStorage y se inyecta en cada
  *    petición al API (Authorization: Bearer).
  *  - Mientras la app esté abierta y haya actividad, un "heartbeat" periódico
- *    mantiene viva la sesión (y despierto el backend). El heartbeat se PAUSA si
- *    el usuario lleva más de 1 hora sin interactuar.
- *  - Tras 1 hora de inactividad la sesión se cierra (local + servidor). La
- *    siguiente acción que requiera token re-creará la sesión automáticamente.
+ *    mantiene viva la sesión (y despierto el backend). Además, al volver el
+ *    foco/red se dispara un keep-alive inmediato para recuperar la sesión sin
+ *    esperar al siguiente tick.
+ *  - Tras el periodo de inactividad (ver INACTIVITY_MS) la sesión se cierra
+ *    (local + servidor). La siguiente acción que requiera token re-creará la
+ *    sesión automáticamente.
  */
 import { getCompanyId, getOperatorName, getUserRole } from './context'
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
-/** Inactividad máxima en el cliente: 1 hora (igual que el backend). */
-const INACTIVITY_MS = 60 * 60 * 1000
-/** Periodo del heartbeat para mantener viva la sesión/backend: 4 minutos. */
-const HEARTBEAT_MS = 4 * 60 * 1000
+/** Inactividad máxima en el cliente: 8 horas (protege sesiones largas de registro). */
+const INACTIVITY_MS = 8 * 60 * 60 * 1000
+/** Periodo del heartbeat para mantener viva la sesión/backend: 3 minutos. */
+const HEARTBEAT_MS = 3 * 60 * 1000
 
 const SS_TOKEN = 'ommex_tracer_token'
 const SS_LAST_ACTIVITY = 'ommex_tracer_last_activity'
@@ -53,7 +55,7 @@ function markActivity(): void {
 function getLastActivity(): number {
   try { return Number(sessionStorage.getItem(SS_LAST_ACTIVITY) || '0') } catch { return 0 }
 }
-/** True si el usuario lleva más de 1 hora sin interactuar. */
+/** True si el usuario superó el periodo de inactividad (INACTIVITY_MS). */
 function isInactive(): boolean {
   const last = getLastActivity()
   if (!last) return false
@@ -191,6 +193,24 @@ export function stopHeartbeat(): void {
   if (_heartbeatTimer) { clearInterval(_heartbeatTimer); _heartbeatTimer = null }
 }
 
+/**
+ * Al volver el foco o la red, verifica/mantiene viva la sesión de inmediato en
+ * vez de esperar al siguiente tick del heartbeat (hasta 3 min). Así, si el
+ * backend reinició o la sesión expiró, el usuario activo la recupera al instante
+ * sin encontrarse la app "colgada".
+ */
+function keepAliveNow(): void {
+  markActivity()
+  const token = readStoredToken()
+  if (token) {
+    // Sesión viva: un heartbeat inmediato confirma/renueva en el servidor.
+    void sendHeartbeat()
+  } else if (getCompanyId()) {
+    // Sin token pero con identidad: re-crea la sesión en segundo plano.
+    void ensureSession()
+  }
+}
+
 /** Escucha interacciones del usuario para refrescar la marca de actividad. */
 function bindActivityListeners(): void {
   if (_activityBound || typeof window === 'undefined') return
@@ -198,10 +218,15 @@ function bindActivityListeners(): void {
   const onActivity = () => markActivity()
   const events: (keyof WindowEventMap)[] = ['click', 'keydown', 'pointerdown', 'touchstart']
   for (const ev of events) window.addEventListener(ev, onActivity, { passive: true })
-  // visibilitychange vive en document: al volver a la pestaña cuenta como actividad.
+  // visibilitychange vive en document: al volver a la pestaña cuenta como
+  // actividad y dispara un keep-alive inmediato (sesión o backend dormido).
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') markActivity()
+    if (document.visibilityState === 'visible') keepAliveNow()
   })
+  // Al recuperar la red, revalida la sesión de inmediato.
+  window.addEventListener('online', keepAliveNow)
+  // Al volver el foco a la ventana (p. ej. desde otra app) también.
+  window.addEventListener('focus', keepAliveNow)
 }
 
 /**
