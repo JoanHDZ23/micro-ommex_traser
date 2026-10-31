@@ -4,6 +4,7 @@ import { generateTrackingCode } from '../lib/tracking-code.js'
 import { uploadToDrive, deletePhotoStorage } from '../lib/drive-upload.js'
 import { sendOperationEmail } from '../lib/email.js'
 import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, normalizeClientTimestamp, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
+import { existingClientKeys, isDuplicateKey } from '../lib/photo-dedupe.js'
 
 export const operationsRouter = Router()
 
@@ -836,7 +837,7 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
  */
 operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (req, res) => {
   const { trackingCode, productCode } = req.params
-  const { stepIndex, base64Image, mimeType, comment, clientTimestamp } = req.body ?? {}
+  const { stepIndex, base64Image, mimeType, comment, clientTimestamp, groupId, clientKey } = req.body ?? {}
 
   if (stepIndex === undefined || stepIndex === null) {
     res.status(400).json({ message: 'stepIndex es requerido.' })
@@ -871,6 +872,15 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
     }
 
     const product = products[productIdx]
+
+    // Dedupe idempotente: si este clientKey ya está en el producto, no re-subir.
+    if (clientKey) {
+      const existing = (product.photos ?? []).find((p) => p.clientKey === clientKey)
+      if (existing) {
+        res.json({ message: 'Foto ya registrada (idempotente).', photo: existing, duplicate: true, progress: { current: product.photos?.length ?? 0, total: 0 } })
+        return
+      }
+    }
     // Producto completado manualmente por el usuario — puede seguir agregando fotos
     // (se reabre automáticamente al agregar más)
     if (product.status === 'COMPLETADO') {
@@ -917,6 +927,8 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
       fileId,
       productCode,
       ...(comment?.trim() ? { comment: comment.trim() } : {}),
+      ...(groupId ? { groupId: String(groupId) } : {}),
+      ...(clientKey ? { clientKey: String(clientKey) } : {}),
       photoType: 'producto',
       timestamp: normalizeClientTimestamp(clientTimestamp),
     }
@@ -978,6 +990,143 @@ operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo', async (r
   } catch (err) {
     console.error('[linea-blanca] Error:', err)
     res.status(500).json({ message: 'Error al procesar foto de línea blanca.' })
+  }
+})
+
+/**
+ * POST /api/operations/:trackingCode/linea-blanca/:productCode/photo-batch
+ * Sube VARIAS fotos de un producto en una sola tanda, con UN solo $push ($each)
+ * para evitar la condición de carrera que duplicaba/perdía fotos al subirlas en
+ * paralelo. Deduplica por `clientKey` (idempotente ante reintentos).
+ * Body: { groupId?, comment?, clientTimestamp?, mimeType?, photos: [{ base64Image, comment?, clientTimestamp?, clientKey? }] }
+ */
+operationsRouter.post('/:trackingCode/linea-blanca/:productCode/photo-batch', async (req, res) => {
+  const { trackingCode, productCode } = req.params
+  const { groupId, comment, clientTimestamp, mimeType, photos } = req.body ?? {}
+
+  if (!Array.isArray(photos) || photos.length === 0) {
+    res.status(400).json({ message: 'photos (arreglo) es requerido.' }); return
+  }
+
+  try {
+    const col = getOperationsCollection()
+    const operation = await col.findOne({ trackingCode })
+    if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    const products = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
+    const productIdx = products.findIndex((p) => p.productCode === productCode)
+    if (productIdx === -1) {
+      res.status(404).json({ message: `Producto "${productCode}" no encontrado en esta operación.` }); return
+    }
+
+    const product = products[productIdx]
+    // Reabrir si estaba completado (permite seguir agregando fotos).
+    if (product.status === 'COMPLETADO') {
+      await col.updateOne({ trackingCode }, { $set: { [`lineaBlanca.${productIdx}.status`]: 'EN_PROCESO' } })
+    }
+
+    const { uploadToDrive } = await import('../lib/drive-upload.js')
+    const vehicleFolder = operation.vehiclePlate
+      ? `${operation.operationType}_${operation.vehiclePlate}`
+      : `${operation.operationType}_${trackingCode}`
+    const stepName = LINEA_BLANCA_STEPS[0] ?? 'Registro fotográfico'
+    const safeStepName = stepName.replace(/[^a-zA-Z0-9]/g, '_')
+
+    // Claves de idempotencia ya presentes en el producto.
+    const existingKeys = existingClientKeys(product.photos ?? [])
+    let photoNo = (product.photos ?? []).length
+
+    const records: PhotoRecord[] = []
+    const errors: string[] = []
+    let skipped = 0
+
+    // Subir en SECUENCIA; un solo $push al final.
+    for (let i = 0; i < photos.length; i++) {
+      const item = photos[i] ?? {}
+      const base64Image = item.base64Image
+      if (!base64Image) { errors.push(`Foto ${i + 1}: sin imagen`); continue }
+
+      const itemKey = item.clientKey ? String(item.clientKey) : ''
+      if (isDuplicateKey(existingKeys, itemKey)) { skipped++; continue }
+
+      const fileName = `${trackingCode}_LB_${productCode}_foto${photoNo + 1}_${safeStepName}.jpg`
+      const driveResult = await uploadToDrive({
+        base64Image,
+        fileName,
+        mimeType: mimeType || 'image/jpeg',
+        subfolderName: vehicleFolder,
+        subSubfolderName: productCode,
+        companyId: operation.companyId as string | undefined,
+      })
+
+      if (driveResult.status === 'error' && (driveResult.message ?? '').includes('no configurado')) {
+        res.status(502).json({ message: 'Almacenamiento no configurado en el servidor (R2 o GitHub).' }); return
+      }
+
+      const fileId = driveResult.fileId || 'pending'
+      const driveUrl = driveResult.driveUrl || 'pending-verification'
+      const photoComment = (item.comment ?? (i === 0 ? comment : '') ?? '').trim()
+
+      records.push({
+        stepIndex: 0,
+        stepName,
+        driveUrl,
+        fileId,
+        productCode,
+        ...(photoComment ? { comment: photoComment } : {}),
+        ...(groupId ? { groupId: String(groupId) } : {}),
+        ...(itemKey ? { clientKey: itemKey } : {}),
+        photoType: 'producto',
+        timestamp: normalizeClientTimestamp(item.clientTimestamp ?? clientTimestamp),
+      })
+      if (itemKey) existingKeys.add(itemKey)
+      photoNo++
+    }
+
+    if (records.length === 0) {
+      if (skipped > 0) { res.json({ message: 'Fotos ya registradas (idempotente).', count: 0, skipped, errors }); return }
+      res.status(422).json({ message: 'No se pudo procesar ninguna foto.', errors }); return
+    }
+
+    // UN SOLO push con todas las fotos del producto (evita carrera).
+    await col.updateOne(
+      { trackingCode, 'lineaBlanca.productCode': productCode },
+      {
+        $push: { [`lineaBlanca.${productIdx}.photos`]: { $each: records } },
+        $set: { updatedAt: new Date().toISOString() },
+      } as unknown as Record<string, unknown>,
+    )
+
+    // Sincronizar a operaciones vinculadas (si las hay), evitando duplicados por clientKey/timestamp.
+    const currentLinkedTo = product.linkedTo ?? []
+    for (const linkedTrackingCode of currentLinkedTo) {
+      try {
+        const linkedOp = await col.findOne({ trackingCode: linkedTrackingCode })
+        if (!linkedOp) continue
+        const linkedProducts = (linkedOp.lineaBlanca as LineaBlancaProduct[]) ?? []
+        const linkedProductIdx = linkedProducts.findIndex((p) => p.productCode === productCode)
+        if (linkedProductIdx === -1) continue
+        const existing = linkedProducts[linkedProductIdx].photos ?? []
+        const existKeys = new Set(existing.map((p) => p.clientKey).filter(Boolean) as string[])
+        const existTs = new Set(existing.map((p) => p.timestamp))
+        const toSync = records.filter((r) => (r.clientKey ? !existKeys.has(r.clientKey) : !existTs.has(r.timestamp)))
+        if (toSync.length === 0) continue
+        await col.updateOne(
+          { trackingCode: linkedTrackingCode, 'lineaBlanca.productCode': productCode },
+          {
+            $push: { [`lineaBlanca.${linkedProductIdx}.photos`]: { $each: toSync } },
+            $set: { updatedAt: new Date().toISOString() },
+          } as unknown as Record<string, unknown>,
+        )
+      } catch (syncErr) {
+        console.warn(`[linea-blanca] Error al sincronizar batch a ${linkedTrackingCode}:`, syncErr)
+      }
+    }
+
+    res.json({ message: `${records.length} foto(s) registrada(s).`, count: records.length, skipped, errors, synced: currentLinkedTo.length })
+  } catch (err) {
+    console.error('[linea-blanca] Error en photo-batch:', err)
+    res.status(500).json({ message: 'Error al procesar las fotos del producto.' })
   }
 })
 

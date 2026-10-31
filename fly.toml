@@ -1,0 +1,22 @@
+# Configuración de Fly.io para el backend de Trazabilidad.
+# Sin add-ons (no se usa Tigris/Postgres/Redis): el estado está en MongoDB + R2.
+app = "micro-traser"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "4000"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

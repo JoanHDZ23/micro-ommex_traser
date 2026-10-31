@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { uploadToDrive, deletePhotoStorage } from '../lib/drive-upload.js'
 import { getOperationsCollection } from '../lib/mongodb.js'
 import { getStepsForType, MULTI_PHOTO_STEPS, OPTIONAL_STEPS, FREE_STEPS, PRODUCT_CODE_STEPS, OPTIONAL_PRODUCT_CODE_STEPS, normalizeClientTimestamp, type OperationType, type PhotoRecord } from '../types.js'
+import { existingClientKeys, isDuplicateKey } from '../lib/photo-dedupe.js'
 
 export const photosRouter = Router()
 
@@ -65,7 +66,7 @@ photosRouter.patch('/:trackingCode/:photoIndex', async (req, res) => {
  * POST /api/photos/upload
  */
 photosRouter.post('/upload', async (req, res) => {
-  const { trackingCode, stepIndex, base64Image, mimeType, productCode, comment, clientTimestamp, groupId } = req.body ?? {}
+  const { trackingCode, stepIndex, base64Image, mimeType, productCode, comment, clientTimestamp, groupId, clientKey } = req.body ?? {}
 
   if (!trackingCode) { res.status(400).json({ message: 'trackingCode es requerido.' }); return }
   if (stepIndex === undefined || stepIndex === null) { res.status(400).json({ message: 'stepIndex es requerido.' }); return }
@@ -75,6 +76,16 @@ photosRouter.post('/upload', async (req, res) => {
     const col = getOperationsCollection()
     const operation = await col.findOne({ trackingCode })
     if (!operation) { res.status(404).json({ message: 'Operación no encontrada.' }); return }
+
+    // Dedupe idempotente: si ya existe una foto con este clientKey, no insertar
+    // de nuevo (reintentos / envíos concurrentes). Se devuelve la ya guardada.
+    if (clientKey) {
+      const existing = ((operation.photos as PhotoRecord[]) ?? []).find((p) => p.clientKey === clientKey)
+      if (existing) {
+        res.json({ message: 'Foto ya registrada (idempotente).', photo: existing, duplicate: true, progress: { current: 0, total: 1 } })
+        return
+      }
+    }
 
     const opType = operation.operationType as OperationType
     const steps = getStepsForType(opType)
@@ -132,6 +143,7 @@ photosRouter.post('/upload', async (req, res) => {
       ...(isMultiPhotoStep ? { photoIndex } : {}),
       ...(comment?.trim() ? { comment: comment.trim() } : {}),
       ...(groupId ? { groupId: String(groupId) } : {}),
+      ...(clientKey ? { clientKey: String(clientKey) } : {}),
       photoType: 'proceso',
       timestamp: normalizeClientTimestamp(clientTimestamp),
     }
@@ -182,16 +194,23 @@ photosRouter.post('/upload-batch', async (req, res) => {
       : `${operation.operationType}_${trackingCode}`
 
     const existingPhotos = (operation.photos as PhotoRecord[]) ?? []
+    // Claves de idempotencia ya presentes, para no re-subir duplicados.
+    const existingKeys = existingClientKeys(existingPhotos)
     let photoIndex = existingPhotos.filter((p) => p.stepIndex === idx).length
 
     const records: PhotoRecord[] = []
     const errors: string[] = []
+    let skipped = 0
 
     // Subir en SECUENCIA y acumular; un solo $push al final.
     for (let i = 0; i < photos.length; i++) {
       const item = photos[i] ?? {}
       const base64Image = item.base64Image
       if (!base64Image) { errors.push(`Foto ${i + 1}: sin imagen`); continue }
+
+      // Dedupe idempotente por clientKey (reintentos de red / envíos repetidos).
+      const itemKey = item.clientKey ? String(item.clientKey) : ''
+      if (isDuplicateKey(existingKeys, itemKey)) { skipped++; continue }
 
       const fileName = `${trackingCode}_paso${idx + 1}_${cleanStepName}_${photoIndex + 1}.jpg`
       const driveResult = await uploadToDrive({
@@ -219,13 +238,17 @@ photosRouter.post('/upload-batch', async (req, res) => {
         photoIndex,
         ...(photoComment ? { comment: photoComment } : {}),
         ...(groupId ? { groupId: String(groupId) } : {}),
+        ...(itemKey ? { clientKey: itemKey } : {}),
         photoType: 'proceso',
         timestamp: normalizeClientTimestamp(item.clientTimestamp ?? clientTimestamp),
       })
+      if (itemKey) existingKeys.add(itemKey)
       photoIndex++
     }
 
     if (records.length === 0) {
+      // Si todo se omitió por idempotencia, es un reintento ya aplicado: 200.
+      if (skipped > 0) { res.json({ message: 'Fotos ya registradas (idempotente).', count: 0, skipped, errors }); return }
       res.status(422).json({ message: 'No se pudo procesar ninguna foto.', errors }); return
     }
 
@@ -235,7 +258,7 @@ photosRouter.post('/upload-batch', async (req, res) => {
       { $push: { photos: { $each: records } }, $set: { updatedAt: new Date().toISOString() } } as unknown as Record<string, unknown>,
     )
 
-    res.json({ message: `${records.length} foto(s) registrada(s).`, count: records.length, errors })
+    res.json({ message: `${records.length} foto(s) registrada(s).`, count: records.length, skipped, errors })
   } catch (err) {
     console.error('[photos] Error en upload-batch:', err)
     res.status(500).json({ message: 'Error interno al procesar las fotos.' })

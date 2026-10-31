@@ -1,5 +1,9 @@
 import { Router } from 'express'
 import { getDb } from '../lib/mongodb.js'
+import {
+  FEATURE_KEYS, DEFAULT_OPERATION_TYPES_LIMIT, TURNOS_API_URL,
+  readAllowed, type FeatureKey,
+} from '../lib/features.js'
 
 export const settingsRouter = Router()
 
@@ -214,33 +218,6 @@ settingsRouter.put('/cleanup', async (req, res) => {
  * GET /api/settings/features?companyId=xxx
  * Devuelve los flags de funciones habilitadas para la empresa.
  */
-/** Claves de funciones de trazabilidad que el root puede permitir/denegar. */
-const FEATURE_KEYS = [
-  'sheetsEnabled', 'activityLog', 'sendEmail', 'whatsappTrazabilidad', 'whatsappUnified',
-  'whatsappAudio', 'whatsappCatalog', 'whatsappDocument', 'markerEditor', 'registrarActividad',
-] as const
-type FeatureKey = typeof FEATURE_KEYS[number]
-
-/** Límite por defecto de tipos de operación personalizados (0 = sin límite). */
-const DEFAULT_OPERATION_TYPES_LIMIT = 0
-
-/**
- * Devuelve el mapa de funciones PERMITIDAS por el root.
- * El panel root es la autoridad: una función solo está permitida si el root la
- * activó explícitamente. Por defecto (sin configurar o clave ausente) NO se
- * permite, de modo que el admin principal no ve ni puede activar nada que el
- * root no haya habilitado. Lo único siempre disponible es iniciar operaciones
- * (el registro base), que no forma parte de estas claves.
- */
-function readAllowed(doc: Record<string, unknown> | null): Record<FeatureKey, boolean> {
-  const stored = (doc?.allowedFeatures ?? null) as Record<string, unknown> | null
-  const out = {} as Record<FeatureKey, boolean>
-  for (const k of FEATURE_KEYS) {
-    out[k] = stored ? stored[k] === true : false
-  }
-  return out
-}
-
 settingsRouter.get('/features', async (req, res) => {
   const { companyId } = req.query as Record<string, string>
   if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
@@ -269,6 +246,9 @@ settingsRouter.get('/features', async (req, res) => {
       // `allowed`: qué funciones concedió el root (para que el panel del cliente
       // oculte/bloquee las no permitidas, incluso para el admin principal).
       allowed,
+      // Estado EFECTIVO del vínculo con turnos: solo activo si el root lo
+      // permitió (whatsappUnified) Y existe TURNOS_API_URL (Req 7.4, 7.5).
+      integrations: { turnos: { linked: eff('whatsappUnified') && Boolean(TURNOS_API_URL) } },
     })
   } catch (err) {
     console.error('[settings] Error al leer features:', err)

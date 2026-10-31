@@ -18,6 +18,7 @@ import {
   listGroups, resolveGroupInvite, clearSession, toJid, sendAudio, sendDocument,
 } from '../lib/whatsapp-web.js'
 import { isGitHubConfigured } from '../lib/github-storage.js'
+import { shouldForwardToTurnos } from '../lib/turnos-link.js'
 
 export const whatsappWebRouter = Router()
 
@@ -26,10 +27,11 @@ const COLLECTION = 'whatsapp_messages'
 const TURNOS_API_URL = (process.env.TURNOS_API_URL || '').replace(/\/$/, '')
 
 async function isUnifiedMode(companyId?: string): Promise<boolean> {
-  if (!companyId || !TURNOS_API_URL) return false
+  // Corte rápido sin tocar la DB: sin TURNOS_API_URL o sin companyId, jamás reenvía.
+  if (!shouldForwardToTurnos({ turnosApiUrl: TURNOS_API_URL, companyId, whatsappUnified: true })) return false
   try {
     const doc = await getDb().collection('company_settings').findOne({ companyId })
-    return doc?.whatsappUnified === true
+    return shouldForwardToTurnos({ turnosApiUrl: TURNOS_API_URL, companyId, whatsappUnified: doc?.whatsappUnified })
   } catch {
     return false
   }
@@ -58,13 +60,31 @@ async function forwardToTurnos(
   return { status: res.status, data }
 }
 
-let unifiedCache: Record<string, boolean> = {}
+// Caché corta del valor efectivo de `whatsappUnified` por empresa. Tiene TTL
+// para que un cambio del ROOT (vincular/desvincular turnos) surta efecto sin
+// necesidad de reiniciar ni de hacer logout.
+const UNIFIED_TTL_MS = 30 * 1000
+let unifiedCache: Record<string, { value: boolean; at: number }> = {}
+
+/**
+ * True SOLO si la empresa optó por el vínculo con turnos (`whatsappUnified===true`)
+ * Y existe `TURNOS_API_URL`. Por defecto NO reenvía (Req 7.1, 7.3, 7.5; Property 4).
+ */
 async function isUnified(companyId?: string): Promise<boolean> {
   if (!companyId || !TURNOS_API_URL) return false
-  if (unifiedCache[companyId] !== undefined) return unifiedCache[companyId]
+  const hit = unifiedCache[companyId]
+  if (hit && Date.now() - hit.at < UNIFIED_TTL_MS) return hit.value
   const v = await isUnifiedMode(companyId)
-  unifiedCache[companyId] = v
+  unifiedCache[companyId] = { value: v, at: Date.now() }
   return v
+}
+
+/**
+ * Estado del vínculo con turnos para una empresa (para exponerlo en settings/
+ * mfe). Es `false` si no hay `TURNOS_API_URL` o si la empresa no optó (Req 7.4).
+ */
+export async function isTurnosLinked(companyId?: string): Promise<boolean> {
+  return isUnifiedMode(companyId)
 }
 
 export function resetUnifiedCache() { unifiedCache = {} }
@@ -419,7 +439,15 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
     //    con el título del producto y las observaciones como texto único al final.
     const products = (op.lineaBlanca as Array<{ productCode: string; labelData?: { descripcion?: string }; photos: Photo[] }>) ?? []
     for (const prod of products) {
-      const sendable = (prod.photos ?? []).filter(isSendable)
+      // Dedupe por URL dentro del envío del producto.
+      const seenProdUrls = new Set<string>()
+      const sendable = (prod.photos ?? []).filter((p) => {
+        if (!isSendable(p)) return false
+        const u = p.driveUrl as string
+        if (seenProdUrls.has(u)) return false
+        seenProdUrls.add(u)
+        return true
+      })
       if (sendable.length === 0) continue
 
       const desc = prod.labelData?.descripcion ? `\n${prod.labelData.descripcion}` : ''
@@ -473,7 +501,16 @@ whatsappWebRouter.post('/send-product', async (req, res) => {
     const prod = products.find((p) => p.productCode === productCode)
     if (!prod) { res.status(404).json({ message: `Producto "${productCode}" no encontrado.` }); return }
 
-    const sendable = (prod.photos ?? []).filter(isSendable)
+    // Dedupe por URL dentro del envío: evita reenviar la misma imagen dos veces
+    // si por datos heredados hubiera fotos con el mismo driveUrl.
+    const seenUrls = new Set<string>()
+    const sendable = (prod.photos ?? []).filter((p) => {
+      if (!isSendable(p)) return false
+      const u = p.driveUrl as string
+      if (seenUrls.has(u)) return false
+      seenUrls.add(u)
+      return true
+    })
     if (sendable.length === 0) { res.status(400).json({ message: 'El producto no tiene fotos subidas para enviar.' }); return }
 
     const desc = prod.labelData?.descripcion ? `\n${prod.labelData.descripcion}` : ''
@@ -515,9 +552,19 @@ whatsappWebRouter.post('/send-photo-group', async (req, res) => {
 
     type Photo = { driveUrl?: string; comment?: string; stepName?: string }
     const photos = (op.photos as Photo[]) ?? []
+    // Dedupe por índice y por URL dentro del envío (una imagen → un solo envío).
+    const seenIdx = new Set<number>()
+    const seenUrls = new Set<string>()
     const sendable = (photoIndices as number[])
+      .filter((idx) => { if (seenIdx.has(idx)) return false; seenIdx.add(idx); return true })
       .map((idx) => photos[idx])
-      .filter((p) => p && p.driveUrl && p.driveUrl !== 'pending-verification' && /^https?:\/\//.test(p.driveUrl ?? ''))
+      .filter((p) => {
+        if (!(p && p.driveUrl && p.driveUrl !== 'pending-verification' && /^https?:\/\//.test(p.driveUrl ?? ''))) return false
+        const u = p.driveUrl as string
+        if (seenUrls.has(u)) return false
+        seenUrls.add(u)
+        return true
+      })
     if (sendable.length === 0) { res.status(400).json({ message: 'Ninguna de las fotos seleccionadas está disponible para envío.' }); return }
 
     const caption = sendable.find((p) => p.comment ?? p.stepName)

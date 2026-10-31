@@ -66,6 +66,12 @@ export interface PhotoRecord {
   timestamp: string
   /** Agrupa fotos tomadas juntas (una misma tanda) para mostrarlas como un álbum. */
   groupId?: string
+  /**
+   * Clave de idempotencia generada por el cliente (`${trackingCode}:${clientTimestamp}:${rand}`).
+   * Permite deduplicar subidas (reintentos/envíos concurrentes) y que el cliente
+   * reconcilie su marcador local con la foto confirmada por el servidor.
+   */
+  clientKey?: string
 }
 
 // ── Datos de etiqueta ───────────────────────────────────────────────────
