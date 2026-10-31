@@ -46,13 +46,31 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
       try {
         const detector = new BD({ formats: ['code_128', 'code_39', 'code_93', 'ean_13', 'ean_8', 'itf', 'codabar', 'upc_a', 'upc_e', 'qr_code', 'data_matrix'] })
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          // Mayor resolución + enfoque continuo = código más nítido y lectura
+          // más rápida y precisa.
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            focusMode: { ideal: 'continuous' },
+          } as MediaTrackConstraints,
         })
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return true }
         streamRef.current = stream
         if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play() }
+        // Fuerza enfoque continuo si el dispositivo lo soporta (precisión).
+        try {
+          const track = stream.getVideoTracks()[0]
+          const caps = track?.getCapabilities?.() as (MediaTrackCapabilities & Record<string, unknown>) | undefined
+          if (caps && Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+            await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet] })
+          }
+        } catch { /* sin soporte: se ignora */ }
         if (!cancelled) setInitializing(false)
 
+        // Confirmación de doble lectura: solo acepta un código tras leer el MISMO
+        // valor 2 veces seguidas, evitando falsos positivos sin perder velocidad.
+        let lastValue: string | null = null
         const scanLoop = async () => {
           if (cancelled || !videoRef.current || videoRef.current.readyState < 2) {
             if (!cancelled) animRef.current = requestAnimationFrame(() => void scanLoop())
@@ -60,12 +78,16 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
           }
           try {
             const barcodes = await detector.detect(videoRef.current)
-            if (barcodes.length > 0 && !cancelled) {
-              setScanning(false)
-              stream.getTracks().forEach((t) => t.stop())
-              streamRef.current = null
-              onResult(barcodes[0].rawValue)
-              return
+            const value = barcodes[0]?.rawValue?.trim()
+            if (value && !cancelled) {
+              if (value === lastValue) {
+                setScanning(false)
+                stream.getTracks().forEach((t) => t.stop())
+                streamRef.current = null
+                onResult(value)
+                return
+              }
+              lastValue = value
             }
           } catch { /* detection failed this frame */ }
           if (!cancelled) animRef.current = requestAnimationFrame(() => void scanLoop())
@@ -89,21 +111,26 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
         ])
         hints.set(DecodeHintType.TRY_HARDER, true)
 
-        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 100 })
+        // delayBetweenScanAttempts más bajo = más intentos por segundo (más rápido).
+        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 60 })
         if (cancelled || !videoRef.current) return
 
+        // Confirmación de doble lectura para precisión (mismo valor 2 veces).
+        let lastValue: string | null = null
         const controls = await reader.decodeFromConstraints(
-          { video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } },
+          { video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, focusMode: { ideal: 'continuous' } } as MediaTrackConstraints },
           videoRef.current,
           (result) => {
             if (result && !cancelled) {
+              const value = result.getText().trim()
+              if (value !== lastValue) { lastValue = value; return }
               setScanning(false)
               controls.stop()
               controlsRef.current = null
               const s = videoRef.current?.srcObject as MediaStream | null
               s?.getTracks().forEach((t) => t.stop())
               streamRef.current = null
-              onResult(result.getText())
+              onResult(value)
             }
           },
         )

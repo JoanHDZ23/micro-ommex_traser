@@ -954,9 +954,19 @@ export function WizardPage() {
    * Sube todas las fotos en lote; si se vinculó un producto, las anexa a él
    * (creándolo en la operación si aún no existe).
    */
+  // Guard anti doble-procesamiento: si el handler ya está corriendo para esta
+  // tanda, ignora llamadas repetidas (p. ej. doble toque en "enviar").
+  const multiCaptureBusyRef = useRef(false)
+
   const handleMultiCapture = async ({ photos, products }: MultiCaptureResult) => {
+    // Cierra AMBAS cámaras (general y de producto) de inmediato para que el
+    // overlay no quede abierto invitando a reenviar.
     setShowCamera(false)
+    setLbCameraOpen(false)
     if (!trackingCode || photos.length === 0) return
+    // Evita que un segundo disparo (doble toque) procese la misma tanda otra vez.
+    if (multiCaptureBusyRef.current) return
+    multiCaptureBusyRef.current = true
     const clientTimestamp = new Date().toISOString()
 
     // Agrupa las fotos por producto (undefined = generales), conservando el orden.
@@ -1019,6 +1029,9 @@ export function WizardPage() {
       setFeedback(`✓ ${photos.length} foto(s) enviada(s)`)
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
+    } finally {
+      // Libera el guard al terminar (éxito o error) para permitir nuevas tandas.
+      multiCaptureBusyRef.current = false
     }
   }
 
@@ -2473,22 +2486,30 @@ export function WizardPage() {
           {/* Plus menu popup */}
           {showPlusMenu && (
             <div className="absolute bottom-full left-2 mb-2 bg-white rounded-xl shadow-lg border border-gray-200 p-1 min-w-[180px]">
-              <button onClick={() => { setShowPlusMenu(false); setShowAddProductModal(true) }}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                <Package className="w-4 h-4 text-[var(--color-primary)]" /> Agregar producto
-              </button>
-              <button onClick={() => { setShowPlusMenu(false); setShowDbModal(true) }}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                <Database className="w-4 h-4 text-emerald-600" /> Base de datos
-              </button>
-              <label className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
-                <Camera className="w-4 h-4 text-emerald-500" /> Seleccionar imagen
-                <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { setShowPlusMenu(false); void handleNativeCapture(e, false) }} />
-              </label>
-              <button onClick={() => { setShowPlusMenu(false); void pasteImageFromClipboard() }}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                <ClipboardPaste className="w-4 h-4 text-sky-600" /> Pegar imagen
-              </button>
+              {features.addProduct && (
+                <button onClick={() => { setShowPlusMenu(false); setShowAddProductModal(true) }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                  <Package className="w-4 h-4 text-[var(--color-primary)]" /> Agregar producto
+                </button>
+              )}
+              {features.sheetsEnabled && (
+                <button onClick={() => { setShowPlusMenu(false); setShowDbModal(true) }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                  <Database className="w-4 h-4 text-emerald-600" /> Base de datos
+                </button>
+              )}
+              {features.selectImage && (
+                <label className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                  <Camera className="w-4 h-4 text-emerald-500" /> Seleccionar imagen
+                  <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { setShowPlusMenu(false); void handleNativeCapture(e, false) }} />
+                </label>
+              )}
+              {features.pasteImage && (
+                <button onClick={() => { setShowPlusMenu(false); void pasteImageFromClipboard() }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                  <ClipboardPaste className="w-4 h-4 text-sky-600" /> Pegar imagen
+                </button>
+              )}
               {features.whatsappAudio && (
                 <button onClick={() => { setShowPlusMenu(false); setShowAudioRecorder(true) }}
                   className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
@@ -2906,7 +2927,8 @@ export function WizardPage() {
             Nota: el sello se graba al momento de capturar/agregar la foto. Las fotos ya guardadas no cambian.
           </p>
 
-          {/* ── Base de datos del registro (DATA) ── */}
+          {/* ── Base de datos del registro (DATA) — solo si la función está activa ── */}
+          {features.sheetsEnabled && (
           <div className="pt-3 border-t border-gray-200 space-y-3">
             <div className="flex items-center gap-2">
               <Database className="w-4 h-4 text-emerald-600" />
@@ -2947,6 +2969,7 @@ export function WizardPage() {
               </p>
             </div>
           </div>
+          )}
         </div>
       </Modal>
 

@@ -14,6 +14,10 @@ export type TracerFeatures = {
   whatsappDocument: boolean
   markerEditor: boolean
   registrarActividad: boolean
+  /** Acciones del menú "+" del registro (default-on). */
+  addProduct: boolean
+  selectImage: boolean
+  pasteImage: boolean
   loading: boolean
 }
 
@@ -45,7 +49,10 @@ export function useTracerFeatures(): TracerFeatures {
     return {
       sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
       whatsappTrazabilidad: false, whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
-      whatsappDocument: false, markerEditor: false, registrarActividad: false, loading: true,
+      whatsappDocument: false, markerEditor: false, registrarActividad: false,
+      // Acciones base: default-on mientras carga, para no "parpadear" ocultándolas.
+      addProduct: true, selectImage: true, pasteImage: true,
+      loading: true,
     }
   })
 
@@ -60,6 +67,7 @@ export function useTracerFeatures(): TracerFeatures {
             whatsappTrazabilidad?: boolean
             whatsappUnified?: boolean; whatsappAudio?: boolean; whatsappCatalog?: boolean
             whatsappDocument?: boolean; markerEditor?: boolean; registrarActividad?: boolean
+            addProduct?: boolean; selectImage?: boolean; pasteImage?: boolean
           }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`),
         ])
@@ -75,6 +83,10 @@ export function useTracerFeatures(): TracerFeatures {
           whatsappDocument: feat.whatsappDocument ?? false,
           markerEditor: feat.markerEditor ?? false,
           registrarActividad: feat.registrarActividad ?? false,
+          // Acciones base: default-on (si el backend no las envía, se asumen activas).
+          addProduct: feat.addProduct ?? true,
+          selectImage: feat.selectImage ?? true,
+          pasteImage: feat.pasteImage ?? true,
           loading: false,
         }
         cached = next
@@ -94,7 +106,8 @@ export function useTracerFeatures(): TracerFeatures {
       setFeatures({
         sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
         whatsappTrazabilidad: false, whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
-        whatsappDocument: false, markerEditor: false, registrarActividad: false, loading: false,
+        whatsappDocument: false, markerEditor: false, registrarActividad: false,
+        addProduct: true, selectImage: true, pasteImage: true, loading: false,
       })
       return () => { cancelled = true; subscribers.delete(onInvalidate) }
     }

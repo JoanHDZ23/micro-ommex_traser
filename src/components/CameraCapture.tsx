@@ -78,6 +78,51 @@ interface CameraCaptureProps {
   initialProductCode?: string
 }
 
+/**
+ * Aplica ajustes avanzados de cámara si el dispositivo/navegador los soporta:
+ * enfoque continuo, exposición y balance de blancos automáticos, y máximo zoom
+ * de nitidez. Silencioso: si algo no está soportado, se ignora sin romper.
+ */
+async function applyAdvancedCameraSettings(stream: MediaStream): Promise<void> {
+  const track = stream.getVideoTracks()[0]
+  if (!track || typeof track.getCapabilities !== 'function') return
+  try {
+    const caps = track.getCapabilities() as MediaTrackCapabilities & Record<string, unknown>
+    const advanced: MediaTrackConstraintSet[] = []
+    if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+      advanced.push({ focusMode: 'continuous' } as MediaTrackConstraintSet)
+    }
+    if (Array.isArray(caps.exposureMode) && caps.exposureMode.includes('continuous')) {
+      advanced.push({ exposureMode: 'continuous' } as MediaTrackConstraintSet)
+    }
+    if (Array.isArray(caps.whiteBalanceMode) && caps.whiteBalanceMode.includes('continuous')) {
+      advanced.push({ whiteBalanceMode: 'continuous' } as MediaTrackConstraintSet)
+    }
+    if (advanced.length) await track.applyConstraints({ advanced })
+  } catch { /* capacidades no soportadas: se ignora */ }
+}
+
+/** Mide el brillo promedio de un frame de video (0–255). Para auto-flash. */
+function estimateBrightness(video: HTMLVideoElement): number {
+  try {
+    const w = 64, h = 48
+    const c = document.createElement('canvas')
+    c.width = w; c.height = h
+    const ctx = c.getContext('2d', { willReadFrequently: true })
+    if (!ctx) return 255
+    ctx.drawImage(video, 0, 0, w, h)
+    const { data } = ctx.getImageData(0, 0, w, h)
+    let sum = 0
+    for (let i = 0; i < data.length; i += 4) {
+      // Luminancia perceptual (Rec. 601).
+      sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+    }
+    return sum / (data.length / 4)
+  } catch {
+    return 255
+  }
+}
+
 export function CameraCapture({
   stepName,
   stepIndex,
@@ -99,6 +144,14 @@ export function CameraCapture({
   const [comment, setComment] = useState('')
   const [showCommentInput, setShowCommentInput] = useState(false)
   const [torchOn, setTorchOn] = useState(false)
+  const [torchSupported, setTorchSupported] = useState(false)
+  // Flash automático: enciende la linterna cuando hay poca luz (como la cámara
+  // del celular). El usuario puede alternarlo con el ícono "A".
+  const [autoTorch, setAutoTorch] = useState(true)
+  const autoTorchRef = useRef(true)
+  useEffect(() => { autoTorchRef.current = autoTorch }, [autoTorch])
+  const torchOnRef = useRef(false)
+  useEffect(() => { torchOnRef.current = torchOn }, [torchOn])
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment')
   const [editing, setEditing] = useState(false)
 
@@ -110,6 +163,10 @@ export function CameraCapture({
   const [products, setProducts] = useState<Record<string, CapturedProduct>>({})
   const [showProductPanel, setShowProductPanel] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
+  // Guard anti doble-envío: una vez que se finaliza la sesión, no se vuelve a
+  // disparar onCaptureMulti/onCapture aunque el usuario toque el botón otra vez.
+  const finishedRef = useRef(false)
+  const [finishing, setFinishing] = useState(false)
 
   const startCamera = useCallback(async (facing?: 'environment' | 'user') => {
     try {
@@ -122,9 +179,15 @@ export function CameraCapture({
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: facing ?? facingMode,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
+          // Pide la mayor resolución posible para fotos nítidas (el navegador
+          // ajusta a la máxima soportada por el sensor).
+          width: { ideal: 4096 },
+          height: { ideal: 2160 },
+          // Enfoque y exposición continuos: la imagen se mantiene nítida y
+          // bien expuesta como en la cámara nativa del celular.
           focusMode: { ideal: 'continuous' },
+          exposureMode: { ideal: 'continuous' },
+          whiteBalanceMode: { ideal: 'continuous' },
         } as MediaTrackConstraints,
         audio: false,
       })
@@ -132,6 +195,14 @@ export function CameraCapture({
       if (videoRef.current) {
         videoRef.current.srcObject = stream
       }
+      // Aplica mejoras avanzadas si el dispositivo las soporta (sin romper si no).
+      await applyAdvancedCameraSettings(stream)
+      // Detecta si el dispositivo soporta linterna (torch) para el flash auto/manual.
+      try {
+        const track = stream.getVideoTracks()[0]
+        const caps = track?.getCapabilities?.() as (MediaTrackCapabilities & { torch?: boolean }) | undefined
+        setTorchSupported(Boolean(caps?.torch))
+      } catch { setTorchSupported(false) }
       setTorchOn(false)
     } catch {
       setInitializing(false)
@@ -151,16 +222,69 @@ export function CameraCapture({
     return () => stopCamera()
   }, [startCamera, stopCamera])
 
-  const toggleTorch = async () => {
-    const stream = streamRef.current
-    if (!stream) return
-    const track = stream.getVideoTracks()[0]
+  // Enciende/apaga la linterna físicamente (si el dispositivo la soporta).
+  const setTorch = useCallback(async (on: boolean) => {
+    const track = streamRef.current?.getVideoTracks()[0]
     if (!track) return
     try {
-      await track.applyConstraints({ advanced: [{ torch: !torchOn } as MediaTrackConstraintSet] })
-      setTorchOn(!torchOn)
-    } catch { /* torch not supported on this device */ }
+      await track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] })
+      setTorchOn(on)
+    } catch { /* torch no soportado en este dispositivo */ }
+  }, [])
+
+  // Toggle manual: al tocarlo, desactiva el modo automático y fija el estado.
+  const toggleTorch = async () => {
+    setAutoTorch(false)
+    await setTorch(!torchOnRef.current)
   }
+
+  // Indicador visual del punto de enfoque al tocar la pantalla.
+  const [focusRing, setFocusRing] = useState<{ x: number; y: number } | null>(null)
+
+  // Tap-to-focus (como la cámara del celular): al tocar el video, reenfoca en ese
+  // punto si el dispositivo lo soporta; si no, al menos re-dispara el autoenfoque.
+  const focusAtPoint = useCallback(async (clientX: number, clientY: number) => {
+    const video = videoRef.current
+    const track = streamRef.current?.getVideoTracks()[0]
+    if (!video || !track || typeof track.getCapabilities !== 'function') return
+    const rect = video.getBoundingClientRect()
+    const x = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
+    const y = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height))
+    setFocusRing({ x: clientX - rect.left, y: clientY - rect.top })
+    setTimeout(() => setFocusRing(null), 700)
+    try {
+      const caps = track.getCapabilities() as MediaTrackCapabilities & Record<string, unknown>
+      const advanced: MediaTrackConstraintSet[] = []
+      // Punto de interés de enfoque/exposición (soportado en algunos Android).
+      if ('pointsOfInterest' in caps) {
+        advanced.push({ pointsOfInterest: [{ x, y }] } as unknown as MediaTrackConstraintSet)
+      }
+      if (Array.isArray(caps.focusMode) && caps.focusMode.includes('single-shot')) {
+        advanced.push({ focusMode: 'single-shot' } as MediaTrackConstraintSet)
+      } else if (Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
+        advanced.push({ focusMode: 'continuous' } as MediaTrackConstraintSet)
+      }
+      if (advanced.length) await track.applyConstraints({ advanced })
+    } catch { /* sin soporte: se ignora */ }
+  }, [])
+
+  // Auto-flash: mientras la cámara está activa (sin preview) y el modo auto está
+  // encendido, mide el brillo cada 1.2 s y enciende/apaga la linterna según la
+  // luz ambiental, imitando el comportamiento de la cámara del celular.
+  useEffect(() => {
+    if (preview || error || !torchSupported) return
+    const LOW = 60   // umbral de poca luz (enciende)
+    const HIGH = 95  // umbral de buena luz (apaga) — histéresis anti-parpadeo
+    const id = setInterval(() => {
+      if (!autoTorchRef.current) return
+      const video = videoRef.current
+      if (!video || video.readyState < 2) return
+      const b = estimateBrightness(video)
+      if (b < LOW && !torchOnRef.current) void setTorch(true)
+      else if (b > HIGH && torchOnRef.current) void setTorch(false)
+    }, 1200)
+    return () => clearInterval(id)
+  }, [preview, error, torchSupported, setTorch])
 
   const switchCamera = () => {
     const newFacing = facingMode === 'environment' ? 'user' : 'environment'
@@ -191,7 +315,9 @@ export function CameraCapture({
         if (coords && !address) void getAddress(coords) // precarga para la próxima
       } catch { /* si falla la marca, se conserva la foto sin sello */ }
     }
-    setPreview(canvas.toDataURL('image/jpeg', 0.85))
+    // Mayor calidad JPEG (0.95) para fotos más nítidas; la compresión final
+    // para subida la hace image-compress con marca de agua.
+    setPreview(canvas.toDataURL('image/jpeg', 0.95))
     setShowCommentInput(true)
     stopCamera()
   }
@@ -205,7 +331,8 @@ export function CameraCapture({
 
   // Captura simple (flujo anterior): entrega la foto y cierra.
   const confirmSingle = () => {
-    if (!preview) return
+    if (!preview || finishedRef.current) return
+    finishedRef.current = true
     const base64 = preview.split(',')[1] ?? ''
     onCapture?.(base64, comment.trim())
   }
@@ -227,13 +354,17 @@ export function CameraCapture({
   }
 
   // Confirma toda la sesión multi-captura (incluye la foto en preview si existe).
+  // Guard anti doble-click: solo se envía UNA vez por sesión.
   const finishMulti = () => {
+    if (finishedRef.current) return
     const photos = [...tray]
     if (preview) {
       const base64 = preview.split(',')[1] ?? ''
       photos.push({ base64, dataUrl: preview, comment: comment.trim(), productCode })
     }
     if (photos.length === 0) { onCancel(); return }
+    finishedRef.current = true
+    setFinishing(true)
     stopCamera()
     onCaptureMulti?.({ photos, products: Object.values(products) })
   }
@@ -285,7 +416,21 @@ export function CameraCapture({
           <div className="flex items-center gap-2">
             {!preview && !error && (
               <>
-                {/* Torch */}
+                {/* Flash automático (sensor de luz): A = auto, se ilumina si está activo */}
+                {torchSupported && (
+                  <button
+                    type="button"
+                    onClick={() => setAutoTorch((v) => !v)}
+                    aria-label={autoTorch ? 'Flash automático activado' : 'Flash automático desactivado'}
+                    aria-pressed={autoTorch}
+                    className={`relative w-11 h-11 rounded-full flex items-center justify-center text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 ${autoTorch ? 'bg-yellow-400 text-black' : 'bg-white/20 text-white'}`}
+                  >
+                    <Flashlight className="w-4 h-4" />
+                    <span className="absolute -bottom-0.5 -right-0.5 bg-black/70 text-white rounded-full px-1 text-[8px] leading-tight">A</span>
+                  </button>
+                )}
+                {/* Torch manual */}
+                {torchSupported && (
                 <button
                   type="button"
                   onClick={() => void toggleTorch()}
@@ -295,6 +440,7 @@ export function CameraCapture({
                 >
                   {torchOn ? <FlashlightOff className="w-5 h-5" /> : <Flashlight className="w-5 h-5" />}
                 </button>
+                )}
                 {/* Switch camera */}
                 <button
                   type="button"
@@ -367,8 +513,16 @@ export function CameraCapture({
             playsInline
             muted
             onLoadedMetadata={() => setInitializing(false)}
+            onClick={(e) => void focusAtPoint(e.clientX, e.clientY)}
             className="w-full h-full object-cover flex-1"
           />
+          {/* Anillo de enfoque al tocar (feedback visual tipo cámara de celular). */}
+          {focusRing && (
+            <div
+              className="pointer-events-none absolute w-16 h-16 -ml-8 -mt-8 rounded-full border-2 border-yellow-300 animate-ping"
+              style={{ left: focusRing.x, top: focusRing.y }}
+            />
+          )}
           {/* Loading state while the camera initializes */}
           {initializing && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/60">
@@ -497,8 +651,9 @@ export function CameraCapture({
                     <button
                       type="button"
                       onClick={finishMulti}
+                      disabled={finishing}
                       aria-label="Terminar y enviar"
-                      className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+                      className="w-16 h-16 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 disabled:opacity-60"
                     >
                       <Send className="w-6 h-6 text-white" />
                     </button>
@@ -534,8 +689,9 @@ export function CameraCapture({
                 <button
                   type="button"
                   onClick={finishMulti}
+                  disabled={finishing}
                   aria-label="Terminar y enviar"
-                  className="absolute right-6 w-14 h-14 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg"
+                  className="absolute right-6 w-14 h-14 rounded-full bg-emerald-500 flex items-center justify-center shadow-lg disabled:opacity-60"
                 >
                   <div className="flex flex-col items-center">
                     <Send className="w-5 h-5 text-white" />

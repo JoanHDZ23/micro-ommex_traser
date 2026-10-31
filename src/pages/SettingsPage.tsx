@@ -85,6 +85,10 @@ export function SettingsPage() {
   const [whatsappCatalog, setWhatsappCatalog] = useState(false)
   const [whatsappDocument, setWhatsappDocument] = useState(false)
   const [markerEditor, setMarkerEditor] = useState(false)
+  // Acciones del menú "+" del registro (default-on).
+  const [addProduct, setAddProduct] = useState(true)
+  const [selectImage, setSelectImage] = useState(true)
+  const [pasteImage, setPasteImage] = useState(true)
   const [savingTracer, setSavingTracer] = useState(false)
   const [feedbackTracer, setFeedbackTracer] = useState<string | null>(null)
   // Funciones permitidas por el panel root. Si una no está permitida, el admin
@@ -159,6 +163,7 @@ export function SettingsPage() {
           apiRequest<{
             sheetsEnabled: boolean; activityLog: boolean; registrarActividad?: boolean; sendEmail: boolean
             whatsappUnified?: boolean; whatsappAudio?: boolean; whatsappCatalog?: boolean; whatsappDocument?: boolean; markerEditor?: boolean
+            addProduct?: boolean; selectImage?: boolean; pasteImage?: boolean
             allowed?: Record<string, boolean>
           }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`),
@@ -175,6 +180,9 @@ export function SettingsPage() {
         setWhatsappCatalog(featuresData.whatsappCatalog ?? false)
         setWhatsappDocument(featuresData.whatsappDocument ?? false)
         setMarkerEditor(featuresData.markerEditor ?? false)
+        setAddProduct(featuresData.addProduct ?? true)
+        setSelectImage(featuresData.selectImage ?? true)
+        setPasteImage(featuresData.pasteImage ?? true)
         setEmailTo(emailData.emailTo ?? '')
       } catch { /* no settings yet */ }
       finally { setLoading(false) }
@@ -212,7 +220,7 @@ export function SettingsPage() {
     try {
       await apiRequest('/settings/features', {
         method: 'PUT',
-        body: { companyId, activityLog, registrarActividad, sendEmail, whatsappUnified, whatsappAudio, whatsappCatalog, whatsappDocument, markerEditor },
+        body: { companyId, activityLog, registrarActividad, sendEmail, whatsappUnified, whatsappAudio, whatsappCatalog, whatsappDocument, markerEditor, addProduct, selectImage, pasteImage },
       })
       if (sendEmail) {
         await apiRequest('/settings/email', { method: 'PUT', body: { companyId, emailTo: emailTo.trim() } })
@@ -406,6 +414,37 @@ export function SettingsPage() {
               checked={whatsappCatalog}
               onToggle={() => setWhatsappCatalog((v) => !v)}
             />
+          </div>
+        )}
+
+        {/* ── Grupo: Acciones del registro (menú +) ── */}
+        {canAny('addProduct', 'selectImage', 'pasteImage') && (
+          <div className="space-y-2.5 pt-1 border-t border-[var(--color-border)]">
+            <GroupHeader icon={Package} title="Acciones del registro" />
+            {can('addProduct') && (
+              <ToggleRow
+                label="Agregar producto"
+                description="Muestra la acción para agregar productos dentro del registro."
+                checked={addProduct}
+                onToggle={() => setAddProduct((v) => !v)}
+              />
+            )}
+            {can('selectImage') && (
+              <ToggleRow
+                label="Seleccionar imagen"
+                description="Permite elegir imágenes de la galería dentro del registro."
+                checked={selectImage}
+                onToggle={() => setSelectImage((v) => !v)}
+              />
+            )}
+            {can('pasteImage') && (
+              <ToggleRow
+                label="Pegar imagen"
+                description="Permite pegar imágenes del portapapeles dentro del registro."
+                checked={pasteImage}
+                onToggle={() => setPasteImage((v) => !v)}
+              />
+            )}
           </div>
         )}
 
