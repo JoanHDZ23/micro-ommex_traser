@@ -19,7 +19,6 @@ const OperationDetailPage = lazy(() => import('./pages/OperationDetailPage').the
 const SharePage = lazy(() => import('./pages/SharePage').then((m) => ({ default: m.SharePage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((m) => ({ default: m.SettingsPage })))
 const ProductsCatalogPage = lazy(() => import('./pages/ProductsCatalogPage').then((m) => ({ default: m.ProductsCatalogPage })))
-const RecoveryPage = lazy(() => import('./pages/RecoveryPage').then((m) => ({ default: m.RecoveryPage })))
 const DocumentsPage = lazy(() => import('./pages/DocumentsPage').then((m) => ({ default: m.DocumentsPage })))
 const PhotoUploadPage = lazy(() => import('./pages/PhotoUploadPage').then((m) => ({ default: m.PhotoUploadPage })))
 
@@ -117,7 +116,6 @@ export default function App() {
             <Route path="/products" element={<ProductsCatalogPage />} />
             <Route path="/documentos" element={<DocumentsPage />} />
             <Route path="/foto" element={<PhotoUploadPage />} />
-            <Route path="/recovery" element={<RecoveryPage />} />
             <Route path="/operation/:trackingCode" element={<OperationDetailPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

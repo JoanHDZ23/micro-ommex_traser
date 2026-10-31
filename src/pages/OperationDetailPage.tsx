@@ -182,10 +182,6 @@ export function OperationDetailPage() {
         </Button>
       )}
 
-      {/* Sync button — visible when photos have pending fileIds */}
-      {operation.photos.some((p) => p.fileId === 'pending') && (
-        <SyncButton trackingCode={operation.trackingCode} onSynced={load} />
-      )}
 
       {/* Sincronizar WhatsApp de la empresa (QR) — solo si el root habilitó WhatsApp de Trazabilidad */}
       {whatsappTrazabilidad && (
@@ -633,42 +629,6 @@ function DeleteButton({ trackingCode }: { trackingCode: string }) {
     >
       Eliminar operación
     </Button>
-  )
-}
-
-function SyncButton({ trackingCode, onSynced }: { trackingCode: string; onSynced: () => void }) {
-  const [syncing, setSyncing] = useState(false)
-  const [result, setResult] = useState<string | null>(null)
-
-  const handleSync = async () => {
-    setSyncing(true)
-    setResult(null)
-    try {
-      const data = await apiRequest<{ message: string; updated: number }>(`/photos/sync/${trackingCode}`, { method: 'POST' })
-      setResult(`✓ ${data.message}`)
-      if (data.updated > 0) onSynced()
-    } catch (err) {
-      setResult(err instanceof Error ? err.message : 'Error al sincronizar')
-    } finally {
-      setSyncing(false)
-    }
-  }
-
-  return (
-    <div className="space-y-2">
-      <Button
-        onClick={() => void handleSync()}
-        loading={syncing}
-        fullWidth
-        leftIcon={<ExternalLink className="w-4 h-4" />}
-        className="bg-blue-500 hover:bg-blue-500 text-white"
-      >
-        {syncing ? 'Sincronizando...' : 'Sincronizar fotos con Drive'}
-      </Button>
-      {result && (
-        <p className={`text-xs text-center ${result.startsWith('✓') ? 'text-emerald-600' : 'text-red-600'}`}>{result}</p>
-      )}
-    </div>
   )
 }
 

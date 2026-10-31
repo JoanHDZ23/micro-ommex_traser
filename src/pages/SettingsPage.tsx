@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Activity, ArrowRight, CheckCircle2, FileSpreadsheet, Save, Trash2, Camera, Package, Share2, type LucideIcon } from 'lucide-react'
+import { Activity, CheckCircle2, FileSpreadsheet, Save, Trash2, Camera, Package, Share2, type LucideIcon } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
@@ -630,21 +630,8 @@ export function SettingsPage() {
         Guardar tipos de operación
       </Button>
 
-      {/* ── Herramientas ── */}
-      <div className="pt-2 border-t border-[var(--color-border)]">
-        <p className="text-xs text-[var(--color-text-3)] mb-2">Herramientas</p>
-        <button onClick={() => navigate('/recovery')}
-          className="w-full flex items-center justify-between px-4 py-3 bg-[var(--color-surface)] rounded-[var(--radius)] border border-amber-200 hover:bg-amber-50 transition-colors">
-          <div className="flex items-center gap-3">
-            <span className="text-amber-500 text-lg">🗂️</span>
-            <div className="text-left">
-              <p className="text-sm font-medium text-[var(--color-text)]">Recuperar registros eliminados</p>
-              <p className="text-[10px] text-[var(--color-text-3)]">Restaura operaciones borradas por la limpieza automática</p>
-            </div>
-          </div>
-          <ArrowRight className="w-4 h-4 text-[var(--color-text-3)]" />
-        </button>
-      </div>
+      {/* Sección "Recuperar registros desde Drive" eliminada: el almacenamiento
+          de fotos ya no usa Google Drive. */}
     </div>
   )
 }
