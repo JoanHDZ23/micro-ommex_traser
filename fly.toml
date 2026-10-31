@@ -13,8 +13,11 @@ primary_region = "iad"
 [http_service]
   internal_port = 4000
   force_https = true
-  # Mantener 1 máquina viva evita el cold start (primera petición fallando).
-  auto_stop_machines = "suspend"
+  # Always-on: la máquina NUNCA se apaga ni se suspende por inactividad.
+  #  - auto_stop_machines = "off"  → desactiva el autostop/suspend.
+  #  - min_machines_running = 1    → mantiene siempre 1 máquina corriendo.
+  #  - auto_start_machines = true  → por si se detuviera manualmente, revive al recibir tráfico.
+  auto_stop_machines = "off"
   auto_start_machines = true
   min_machines_running = 1
 
