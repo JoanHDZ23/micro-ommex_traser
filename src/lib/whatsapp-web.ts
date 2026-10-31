@@ -313,6 +313,10 @@ export async function sendAlbum(
 ): Promise<{ id: string | null; count: number }> {
   if (images.length === 0) return { id: null, count: 0 }
 
+  // 0. Falla rápido si WhatsApp Web no está conectado: así el endpoint no
+  //    reporta "0 fotos" como éxito. ensureOpen lanza un error claro con guía.
+  ensureOpen(companyId)
+
   // 1. Descarga TODAS las imágenes a Buffer primero (robusto). Las que no se
   //    puedan descargar se omiten, pero no rompen el resto del álbum.
   const buffers: Buffer[] = []
@@ -355,6 +359,9 @@ export async function sendAlbum(
       await new Promise((resolve) => setTimeout(resolve, delay))
     }
   }
+  // Si no se pudo enviar NINGUNA imagen (p. ej. conexión caída a mitad), es un
+  // fallo real: no lo reportes como éxito con 0 fotos.
+  if (count === 0) throw new Error('No se pudo enviar ninguna foto del grupo. Revisa la conexión de WhatsApp.')
   return { id: firstId, count }
 }
 
