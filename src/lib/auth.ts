@@ -70,9 +70,47 @@ export function touchActivity(): void {
   markActivity()
 }
 
+/** Reintentos para crear la sesión ante red intermitente o cold start del backend. */
+const SESSION_RETRIES = 3
+/** Esperas crecientes entre reintentos (backoff corto). */
+const SESSION_BACKOFF_MS = [800, 1600, 3000]
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Pide un token a POST /auth/session con reintento + backoff corto.
+ * Devuelve el token o null si tras todos los intentos no se obtuvo.
+ */
+async function requestSessionToken(companyId: string): Promise<string | null> {
+  for (let attempt = 0; attempt <= SESSION_RETRIES; attempt++) {
+    try {
+      const res = await fetch(`${BASE_URL}/auth/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId, user: getOperatorName(), role: getUserRole() }),
+      })
+      if (res.ok) {
+        const data = (await res.json()) as { token?: string }
+        if (data.token) return data.token
+      }
+      // 4xx distinto de problemas de red: no tiene sentido insistir salvo 408/429.
+      if (res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429) {
+        return null
+      }
+    } catch {
+      // Error de red o backend dormido (cold start): se reintenta tras esperar.
+    }
+    if (attempt < SESSION_RETRIES) {
+      await sleep(SESSION_BACKOFF_MS[attempt] ?? 3000)
+    }
+  }
+  return null
+}
+
 /**
  * Crea (o recupera) la sesión pidiendo un token al backend con la identidad
- * actual. Deduplica llamadas concurrentes. Devuelve el token o null si falla.
+ * actual. Deduplica llamadas concurrentes y reintenta con backoff ante fallos
+ * de red o cold start, sin bloquear la UI. Devuelve el token o null si falla.
  */
 export async function ensureSession(): Promise<string | null> {
   const existing = readStoredToken()
@@ -82,26 +120,19 @@ export async function ensureSession(): Promise<string | null> {
   _creating = (async () => {
     const companyId = getCompanyId()
     if (!companyId) return null
-    try {
-      const res = await fetch(`${BASE_URL}/auth/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ companyId, user: getOperatorName(), role: getUserRole() }),
-      })
-      if (!res.ok) return null
-      const data = (await res.json()) as { token?: string }
-      if (!data.token) return null
-      storeToken(data.token)
-      markActivity()
-      startHeartbeat()
-      return data.token
-    } catch {
-      return null
-    } finally {
-      _creating = null
-    }
+    const token = await requestSessionToken(companyId)
+    if (!token) return null
+    storeToken(token)
+    markActivity()
+    startHeartbeat()
+    return token
   })()
-  return _creating
+  try {
+    return await _creating
+  } finally {
+    // Liberar el dedupe SOLO al resolver (éxito o fallo), no en medio del flujo.
+    _creating = null
+  }
 }
 
 /** Fuerza re-crear la sesión (p. ej. tras un 401 por token inválido/expirado). */

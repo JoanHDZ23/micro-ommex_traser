@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
-import { apiRequest, fileToBase64, searchInSheet, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
+import { apiRequest, fileToBase64, makeClientKey, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { DbProductSearch } from '../components/DbProductSearch'
@@ -21,6 +21,9 @@ import { useTracerFeatures } from '../lib/tracer-features'
 import { getCompanyId } from '../lib/context'
 import { getRecordSettings, setRecordSettings, DEFAULT_RECORD_SETTINGS, type RecordSettings } from '../lib/record-settings'
 import { getPrimarySheetId, getSheetColumns, type SheetColumnSettings } from '../lib/db-settings'
+import { useOperationLive } from '../hooks/useOperationLive'
+import { collectAllServerPhotos, pendingLocalPhotos } from '../lib/photo-reconcile'
+import { canReadClipboard, onlyImageFiles, resolveTrayDestination } from '../lib/tray-destination'
 
 /** URL directa de R2: driveUrl http(s) que no es de Google. */
 function directUrl(photo: Pick<PhotoRecord, 'driveUrl'>): string | null {
@@ -567,12 +570,16 @@ export function WizardPage() {
     if (!base64 || !trackingCode) return
     const productCode = isProduct ? productCodeArg ?? activeLbProduct ?? undefined : undefined
 
-    // 1. Cache local (instantáneo)
-    const cached = await cachePhoto({ trackingCode, base64, comment, productCode })
+    // Clave de idempotencia (dedupe en el servidor + reconciliación local).
+    const clientTimestamp = new Date().toISOString()
+    const clientKey = makeClientKey(trackingCode, `${clientTimestamp}:${Math.random().toString(36).slice(2, 8)}`)
+
+    // 1. Cache local (instantáneo), con el clientKey para reconciliar.
+    const cached = await cachePhoto({ trackingCode, base64, comment, productCode, clientKey })
     setLocalPhotos((prev) => [...prev, cached])
     // Hora real de captura en el dispositivo (para que el registro muestre la
     // hora correcta y no la del servidor al subir en segundo plano).
-    const clientTimestamp = new Date(cached.timestamp).toISOString()
+    const ts = new Date(cached.timestamp).toISOString()
 
     // 2. Upload en background
     void (async () => {
@@ -580,12 +587,12 @@ export function WizardPage() {
         if (productCode) {
           await apiRequest<UploadPhotoResponse>(
             `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo`,
-            { method: 'POST', body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp } },
+            { method: 'POST', body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp: ts, groupId, clientKey } },
           )
         } else {
           await apiRequest<UploadPhotoResponse>('/photos/upload', {
             method: 'POST',
-            body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp, groupId },
+            body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp: ts, groupId, clientKey },
           })
         }
         await markAsUploaded(cached.id)
@@ -603,41 +610,56 @@ export function WizardPage() {
     const files = Array.from(e.target.files ?? [])
     e.target.value = '' // reset para permitir volver a elegir la misma imagen
     if (files.length === 0) return
+    if (!trackingCode) return
 
     // Producto destino: el pasado explícitamente o el activo (evita condiciones de carrera)
     const targetProduct = isProduct ? productCodeArg ?? activeLbProduct ?? undefined : undefined
     const comment = chatMessage.trim()
 
     // Fotos GENERALES desde galería → van a la bandeja de revisión (estilo
-    // WhatsApp): ahí se pueden editar/marcar, escribir un mensaje y enviar.
+    // WhatsApp) a través de la ruta unificada, que aplica compresión + marca de
+    // agua y resuelve el destino (producto activo o generales, Req 4.4/4.8).
     if (!isProduct) {
-      try {
-        const dataUrls: string[] = []
-        for (const f of files) {
-          const base64 = await compressImageToBase64(f, stampOpts)
-          dataUrls.push(`data:image/jpeg;base64,${base64}`)
-        }
-        setCaptureTray((prev) => [...prev, ...dataUrls])
-        setShowCaptureTray(true)
-      } catch {
-        setFeedback('Error al leer una imagen')
-      }
+      await addImageFilesToTray(files)
       return
     }
 
     // Fotos de PRODUCTO (Línea Blanca): subida directa.
     setChatMessage('')
-    setFeedback(files.length > 1 ? `✓ Procesando ${files.length} fotos...` : '✓ Foto guardada')
 
-    for (let i = 0; i < files.length; i++) {
-      try {
-        // Comprime/redimensiona en el cliente para que la subida sea mucho más rápida
-        const base64 = await compressImageToBase64(files[i], stampOpts)
-        // El comentario solo se aplica a la primera foto
-        await uploadSinglePhoto(base64, i === 0 ? comment : '', isProduct, targetProduct)
-      } catch {
-        setFeedback('Error al leer una imagen')
+    // Comprime todas las imágenes (cliente) para subida rápida.
+    const base64s: string[] = []
+    for (const f of files) {
+      try { base64s.push(await compressImageToBase64(f, stampOpts)) } catch { setFeedback('Error al leer una imagen') }
+    }
+    if (base64s.length === 0) return
+
+    // Una sola foto → flujo simple; varias → batch de producto (sin carrera).
+    if (base64s.length === 1) {
+      setFeedback('✓ Foto guardada')
+      await uploadSinglePhoto(base64s[0], comment, true, targetProduct)
+      return
+    }
+
+    setFeedback(`⏳ Subiendo ${base64s.length} fotos a ${targetProduct ?? 'el producto'}…`)
+    const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const clientTimestamp = new Date().toISOString()
+    const items = base64s.map((base64, i) => ({
+      base64Image: base64,
+      comment: i === 0 ? comment : '',
+      clientTimestamp,
+      clientKey: makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`),
+    }))
+    try {
+      if (targetProduct) {
+        await uploadProductPhotosBatch({ trackingCode, productCode: targetProduct, groupId, comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
+      } else {
+        await uploadPhotosBatch({ trackingCode, groupId, comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
       }
+      await loadOperation()
+      setFeedback(`✓ ${base64s.length} foto(s) enviada(s)`)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
     }
   }
 
@@ -671,11 +693,23 @@ export function WizardPage() {
   }
 
   // Agrega uno o varios File de imagen a la bandeja (reutilizable: drop, galería, pegar).
+  // Refs al producto vinculado/activo para resolver el destino de las imágenes
+  // dentro de callbacks estables (sin recrearlos en cada render).
+  const trayProductRef = useRef<string | null>(null)
+  const activeProductRef = useRef<string | null>(null)
+  useEffect(() => { trayProductRef.current = trayProductCode }, [trayProductCode])
+  useEffect(() => { activeProductRef.current = activeLbProduct }, [activeLbProduct])
+
   // Cada imagen se comprime y se le graba la marca de agua (fecha/hora/ubicación),
-  // igual que las fotos tomadas con la cámara.
+  // igual que las fotos tomadas con la cámara. Si hay un producto activo o la
+  // bandeja ya está vinculada, las imágenes se asocian a ese producto (Req 4.4);
+  // si no, van solo a fotos generales (Req 4.8).
   const addImageFilesToTray = useCallback(async (files: File[]) => {
-    const images = files.filter((f) => f.type.startsWith('image/'))
+    const images = onlyImageFiles(files)
     if (images.length === 0) return
+    // Resuelve el destino (producto vinculado > producto activo > generales).
+    const dest = resolveTrayDestination(trayProductRef.current, activeProductRef.current)
+    if (dest) setTrayProductCode(dest)
     setShowCaptureTray(true)
     for (const file of images) {
       try {
@@ -701,7 +735,7 @@ export function WizardPage() {
   // (tocar el botón) y permiso del portapapeles.
   const pasteImageFromClipboard = useCallback(async () => {
     // Navegadores sin soporte de lectura del portapapeles (p. ej. Firefox móvil).
-    if (typeof navigator === 'undefined' || !navigator.clipboard || !('read' in navigator.clipboard)) {
+    if (!canReadClipboard()) {
       setFeedback('Este navegador no permite pegar desde el portapapeles. Usa Galería.')
       return
     }
@@ -726,10 +760,10 @@ export function WizardPage() {
     }
   }, [addImageFilesToTray])
 
-  // Mientras la bandeja está abierta, pegar (Ctrl+V) una imagen la agrega,
-  // sin importar dónde esté el foco dentro del modal.
+  // Pegar (Ctrl+V) una imagen la agrega a la bandeja desde CUALQUIER lugar del
+  // registro (no solo con la bandeja abierta). Ignora si el foco está en un
+  // campo de texto para no interferir al escribir.
   useEffect(() => {
-    if (!showCaptureTray) return
     const onPaste = (e: ClipboardEvent) => {
       const items = Array.from(e.clipboardData?.items ?? [])
       const imageItems = items.filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
@@ -740,7 +774,28 @@ export function WizardPage() {
     }
     window.addEventListener('paste', onPaste)
     return () => window.removeEventListener('paste', onPaste)
-  }, [showCaptureTray, addImageFilesToTray])
+  }, [addImageFilesToTray])
+
+  // Arrastrar y soltar imágenes sobre el registro las agrega a la bandeja,
+  // igual que pegarlas (Req 4.7). Se escucha a nivel de ventana.
+  useEffect(() => {
+    const onDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types?.includes('Files')) e.preventDefault()
+    }
+    const onDrop = (e: DragEvent) => {
+      const files = Array.from(e.dataTransfer?.files ?? [])
+      const images = onlyImageFiles(files)
+      if (images.length === 0) return
+      e.preventDefault()
+      void addImageFilesToTray(images)
+    }
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [addImageFilesToTray])
 
   // Envía todas las fotos de la bandeja. Una sola foto → flujo normal.
   // Varias → UNA sola petición batch con el mismo groupId, para que se guarden
@@ -801,18 +856,18 @@ export function WizardPage() {
           })
         }
         setFeedback(`⏳ Subiendo ${photos.length} foto(s) al producto ${linkedProduct}…`)
-        // Subida SECUENCIAL con espera real (sin fire-and-forget) para evitar
-        // la condición de carrera del $push concurrente que perdía fotos.
+        // UNA sola petición batch (atómica e idempotente) para todas las fotos.
         const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const clientTimestamp = new Date().toISOString()
-        for (let i = 0; i < photos.length; i++) {
-          const base64 = photos[i].split(',')[1] ?? ''
-          if (!base64) continue
-          await apiRequest<UploadPhotoResponse>(
-            `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(linkedProduct)}/photo`,
-            { method: 'POST', body: { stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment: i === 0 ? message : '', clientTimestamp, groupId } },
-          )
-        }
+        const items = photos
+          .map((p, i) => ({
+            base64Image: p.split(',')[1] ?? '',
+            comment: i === 0 ? message : '',
+            clientTimestamp,
+            clientKey: makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`),
+          }))
+          .filter((it) => it.base64Image)
+        await uploadProductPhotosBatch({ trackingCode, productCode: linkedProduct, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
         setActiveLbProduct(linkedProduct)
         await loadOperation()
         setFeedback(`✓ ${photos.length} foto(s) vinculada(s) a ${linkedProduct}`)
@@ -825,36 +880,26 @@ export function WizardPage() {
     }
 
     try {
-      if (photos.length === 1) {
-        const base64 = photos[0].split(',')[1] ?? ''
-        await uploadSinglePhoto(base64, message, false)
-        setFeedback('✓ Foto enviada')
-      } else {
-        const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        const clientTimestamp = new Date().toISOString()
-        const cachedIds: string[] = []
-        for (let i = 0; i < photos.length; i++) {
-          const base64 = photos[i].split(',')[1] ?? ''
-          const cached = await cachePhoto({ trackingCode, base64, comment: i === 0 ? message : '' })
-          setLocalPhotos((prev) => [...prev, cached])
-          cachedIds.push(cached.id)
-        }
-        setFeedback(`⏳ Subiendo ${photos.length} fotos...`)
-        await apiRequest<{ count: number }>('/photos/upload-batch', {
-          method: 'POST',
-          body: {
-            trackingCode,
-            groupId,
-            comment: message,
-            clientTimestamp,
-            mimeType: 'image/jpeg',
-            photos: photos.map((p) => ({ base64Image: p.split(',')[1] ?? '' })),
-          },
-        })
-        for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
-        await loadOperation()
-        setFeedback(`✓ ${photos.length} fotos enviadas`)
+      const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      const clientTimestamp = new Date().toISOString()
+      // Cache local + clientKey por foto (reconciliación y dedupe).
+      const cachedIds: string[] = []
+      const items = [] as import('../lib/api').BatchPhotoItem[]
+      for (let i = 0; i < photos.length; i++) {
+        const base64 = photos[i].split(',')[1] ?? ''
+        if (!base64) continue
+        const clientKey = makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`)
+        const cached = await cachePhoto({ trackingCode, base64, comment: i === 0 ? message : '', clientKey })
+        setLocalPhotos((prev) => [...prev, cached])
+        cachedIds.push(cached.id)
+        items.push({ base64Image: base64, comment: i === 0 ? message : '', clientTimestamp, clientKey })
       }
+      setFeedback(photos.length > 1 ? `⏳ Subiendo ${photos.length} fotos...` : '⏳ Subiendo foto...')
+      // SIEMPRE batch (una sola petición atómica e idempotente).
+      await uploadPhotosBatch({ trackingCode, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
+      for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
+      await loadOperation()
+      setFeedback(`✓ ${photos.length} foto(s) enviada(s)`)
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
     } finally {
@@ -868,22 +913,24 @@ export function WizardPage() {
   const lbProducts = operation?.lineaBlanca ?? []
   const activeLbData = lbProducts.find((p) => p.productCode === activeLbProduct)
 
-  const loadOperation = useCallback(async () => {
-    if (!trackingCode) return
-    // Solo mostrar loading en la carga inicial (cuando no hay operación aún)
-    setOperation((prev) => { if (!prev) setLoading(true); return prev })
-    try {
-      const op = await apiRequest<Operation>(`/operations/${trackingCode}`)
-      setOperation(op)
-      setError(null)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al cargar operación.')
-    } finally {
-      setLoading(false)
-    }
-  }, [trackingCode])
+  // Refresco en tiempo real estilo WhatsApp (Req 2): polling con pausa por
+  // visibilidad. El hook mantiene `operation` al día sin tocar el estado de UI
+  // (input, modales, selección); la reconciliación local se hace en su efecto.
+  const live = useOperationLive(trackingCode, { intervalMs: 5000 })
 
-  useEffect(() => { void loadOperation() }, [loadOperation])
+  // El hook es la fuente de datos; aquí solo se refleja en el estado local que
+  // consume el resto del componente, sin tocar input/modales/selección.
+  useEffect(() => {
+    if (live.operation) setOperation(live.operation)
+    setLoading(live.operation ? false : live.loading)
+    setError(live.operation ? null : live.error)
+  }, [live.operation, live.loading, live.error])
+
+  // Mantiene el nombre `loadOperation` para los flujos existentes: fuerza un
+  // refresco inmediato reutilizando el polling del hook (misma fuente de datos).
+  const loadOperation = useCallback(async () => {
+    await live.refreshNow()
+  }, [live])
 
   // ── Local photo cache ──
   const [localPhotos, setLocalPhotos] = useState<CachedPhoto[]>([])
@@ -891,14 +938,14 @@ export function WizardPage() {
   // Clean expired photos on mount
   useEffect(() => { void cleanExpiredPhotos() }, [])
 
-  // When operation loads from server, remove local photos that are already uploaded
+  // Reconciliación local↔servidor por `clientKey` (Req 2.7, 2.8; Property 3):
+  // deja visibles SOLO las fotos locales que aún no llegaron al servidor,
+  // emparejando por clientKey (y por timestamp como respaldo para las antiguas).
   useEffect(() => {
     if (!operation || !trackingCode) return
     void getCachedPhotos(trackingCode).then((cached) => {
-      // Only keep photos that are NOT yet on the server (still pending)
-      const serverTimestamps = new Set(operation.photos.map((p) => p.timestamp))
-      const pending = cached.filter((c) => !c.uploaded && !serverTimestamps.has(new Date(c.timestamp).toISOString()))
-      setLocalPhotos(pending)
+      const serverPhotos = collectAllServerPhotos(operation)
+      setLocalPhotos(pendingLocalPhotos(cached, serverPhotos))
     })
   }, [operation, trackingCode])
 
@@ -926,33 +973,25 @@ export function WizardPage() {
     try {
       for (const [key, groupPhotos] of groups) {
         const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        // Clave de idempotencia por foto (dedupe en el servidor + reconciliación).
+        const items = groupPhotos.map((p) => ({
+          base64Image: p.base64,
+          comment: p.comment,
+          clientTimestamp,
+          clientKey: makeClientKey(trackingCode, `${clientTimestamp}:${Math.random().toString(36).slice(2, 8)}`),
+        }))
 
         // ── Fotos GENERALES (sin producto) ──
         if (key === '__general__') {
+          // Cache local inmediato (con clientKey para reconciliar luego).
           const cachedIds: string[] = []
-          for (const p of groupPhotos) {
-            const cached = await cachePhoto({ trackingCode, base64: p.base64, comment: p.comment })
+          for (let i = 0; i < groupPhotos.length; i++) {
+            const cached = await cachePhoto({ trackingCode, base64: groupPhotos[i].base64, comment: groupPhotos[i].comment, clientKey: items[i].clientKey })
             setLocalPhotos((prev) => [...prev, cached])
             cachedIds.push(cached.id)
           }
-          if (groupPhotos.length === 1) {
-            await apiRequest<UploadPhotoResponse>('/photos/upload', {
-              method: 'POST',
-              body: { trackingCode, stepIndex: 0, base64Image: groupPhotos[0].base64, mimeType: 'image/jpeg', comment: groupPhotos[0].comment, clientTimestamp },
-            })
-          } else {
-            await apiRequest<{ count: number }>('/photos/upload-batch', {
-              method: 'POST',
-              body: {
-                trackingCode,
-                groupId,
-                comment: groupPhotos[0].comment,
-                clientTimestamp,
-                mimeType: 'image/jpeg',
-                photos: groupPhotos.map((p) => ({ base64Image: p.base64, comment: p.comment })),
-              },
-            })
-          }
+          // SIEMPRE batch (una sola petición atómica e idempotente).
+          await uploadPhotosBatch({ trackingCode, groupId, comment: groupPhotos[0].comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
           for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
           continue
         }
@@ -971,12 +1010,8 @@ export function WizardPage() {
             body: { productCode, labelData: descripcion ? { descripcion } : undefined },
           })
         }
-        for (const p of groupPhotos) {
-          await apiRequest<UploadPhotoResponse>(
-            `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo`,
-            { method: 'POST', body: { stepIndex: 0, base64Image: p.base64, mimeType: 'image/jpeg', comment: p.comment, clientTimestamp, groupId } },
-          )
-        }
+        // UNA sola petición batch para TODAS las fotos del producto (sin carrera).
+        await uploadProductPhotosBatch({ trackingCode, productCode, groupId, comment: groupPhotos[0].comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
         lastProduct = productCode
       }
       if (lastProduct) setActiveLbProduct(lastProduct)
@@ -1899,8 +1934,8 @@ export function WizardPage() {
                                   <CheckCircle2 className="w-3.5 h-3.5" />
                                 </button>
                               </div>
-                              {/* Editar imagen (solo si no es audio ni documento) */}
-                              {photo.mediaType !== 'audio' && photo.mediaType !== 'document' && (
+                              {/* Editar imagen (solo si la función del editor está activa) */}
+                              {features.markerEditor && photo.mediaType !== 'audio' && photo.mediaType !== 'document' && (
                                 <button
                                   onClick={() => { setEditingPhotoIdx(null); openPhotoReEdit(i) }}
                                   className="w-full flex items-center justify-center gap-1.5 py-1 rounded-lg border border-orange-200 bg-orange-50 text-orange-600 text-[11px] font-medium hover:bg-orange-100 transition-colors">
@@ -2009,7 +2044,7 @@ export function WizardPage() {
                               )}
                               {!isCompleted && !selectMode && (
                                 <div className="absolute top-0.5 right-0.5 flex gap-0.5">
-                                  {ph.mediaType !== 'audio' && ph.mediaType !== 'document' && (
+                                  {features.markerEditor && ph.mediaType !== 'audio' && ph.mediaType !== 'document' && (
                                     <button onClick={() => openPhotoReEdit(phIdx)}
                                       className="w-5 h-5 rounded-full bg-black/60 flex items-center justify-center"
                                       title="Editar imagen">
@@ -3147,10 +3182,12 @@ export function WizardPage() {
                 {captureTray.map((src, i) => (
                   <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
                     <img src={src} className="w-full h-full object-cover" />
-                    <button onClick={() => setTrayEditIdx(i)} aria-label="Editar foto"
-                      className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
-                      <Pencil className="w-3.5 h-3.5 text-white" />
-                    </button>
+                    {features.markerEditor && (
+                      <button onClick={() => setTrayEditIdx(i)} aria-label="Editar foto"
+                        className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
+                        <Pencil className="w-3.5 h-3.5 text-white" />
+                      </button>
+                    )}
                     <button onClick={() => removeTrayPhoto(i)} aria-label="Quitar foto"
                       className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
                       <X className="w-3.5 h-3.5 text-white" />

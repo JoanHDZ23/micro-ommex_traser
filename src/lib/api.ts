@@ -192,6 +192,8 @@ export interface PhotoRecord {
   timestamp: string
   /** Agrupa fotos tomadas juntas (una misma tanda) para mostrarlas como un álbum. */
   groupId?: string
+  /** Clave de idempotencia del cliente (dedupe + reconciliación local↔servidor). */
+  clientKey?: string
 }
 
 export interface LabelData {
@@ -352,6 +354,61 @@ export async function searchInSheet(params: {
   if (typeof params.descColumn === 'number' && params.descColumn >= 0) qs.set('descColumn', String(params.descColumn))
   if (params.limit) qs.set('limit', String(params.limit))
   return apiRequest<SheetSearchResult>(`/sheets/${encodeURIComponent(params.sheetId)}/search?${qs.toString()}`)
+}
+
+/**
+ * Genera una clave de idempotencia para una foto. El servidor la guarda y la
+ * devuelve (eco); se usa para deduplicar reintentos y reconciliar el marcador
+ * local con la foto confirmada. Formato: `${trackingCode}:${clientTimestamp}:${rand}`.
+ */
+export function makeClientKey(trackingCode: string, clientTimestamp: string): string {
+  const rand = Math.random().toString(36).slice(2, 10)
+  return `${trackingCode}:${clientTimestamp}:${rand}`
+}
+
+/** Foto de una tanda batch (general o de producto). */
+export interface BatchPhotoItem {
+  base64Image: string
+  comment?: string
+  clientTimestamp?: string
+  clientKey?: string
+}
+
+/** Respuesta de los endpoints batch de fotos. */
+export interface BatchUploadResponse {
+  message: string
+  count: number
+  skipped?: number
+  errors?: string[]
+}
+
+/** Sube varias fotos GENERALES en una sola petición batch (atómica, idempotente). */
+export function uploadPhotosBatch(params: {
+  trackingCode: string
+  groupId?: string
+  comment?: string
+  clientTimestamp?: string
+  mimeType?: string
+  photos: BatchPhotoItem[]
+}): Promise<BatchUploadResponse> {
+  return apiRequest<BatchUploadResponse>('/photos/upload-batch', { method: 'POST', body: params })
+}
+
+/** Sube varias fotos de un PRODUCTO en una sola petición batch (atómica, idempotente). */
+export function uploadProductPhotosBatch(params: {
+  trackingCode: string
+  productCode: string
+  groupId?: string
+  comment?: string
+  clientTimestamp?: string
+  mimeType?: string
+  photos: BatchPhotoItem[]
+}): Promise<BatchUploadResponse> {
+  const { trackingCode, productCode, ...body } = params
+  return apiRequest<BatchUploadResponse>(
+    `/operations/${trackingCode}/linea-blanca/${encodeURIComponent(productCode)}/photo-batch`,
+    { method: 'POST', body },
+  )
 }
 
 /** Lee un File como base64 (sin el prefijo data URL). */

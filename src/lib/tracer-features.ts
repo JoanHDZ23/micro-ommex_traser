@@ -25,10 +25,12 @@ const subscribers = new Set<() => void>()
  * Invalida la caché de features y notifica a los hooks activos para que
  * vuelvan a consultar el backend. Se usa cuando el panel root envía una
  * señal de refresco por postMessage.
+ *
+ * Nota (Req 5.8): NO se borra la caché aquí. Solo se dispara la recarga; la
+ * caché se reemplaza únicamente si la recarga tiene éxito. Así, si la red
+ * falla, se conserva la última copia válida en vez de caer a estado vacío.
  */
 export function invalidateTracerFeaturesCache() {
-  cached = null
-  cacheCompanyId = ''
   for (const fn of subscribers) fn()
 }
 
@@ -83,11 +85,9 @@ export function useTracerFeatures(): TracerFeatures {
       }
     }
 
-    const onInvalidate = () => {
-      cached = null
-      cacheCompanyId = ''
-      void load()
-    }
+    // Recarga en caliente SIN borrar la caché previa: load() solo reemplaza
+    // `cached` si la petición tiene éxito; ante fallo se conserva lo anterior.
+    const onInvalidate = () => { void load() }
     subscribers.add(onInvalidate)
 
     if (!companyId) {

@@ -20,6 +20,9 @@ export interface CachedPhoto {
   productCode?: string
   timestamp: number
   uploaded: boolean
+  /** Clave de idempotencia enviada al servidor; sirve para reconciliar la foto
+   *  local con la confirmada por el servidor (match por clientKey). */
+  clientKey?: string
 }
 
 function openDB(): Promise<IDBDatabase> {
