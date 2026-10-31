@@ -19,6 +19,7 @@ import makeWASocket, {
 import QRCode from 'qrcode'
 import { useMongoAuthState } from './baileys-auth-mongo.js'
 import { getDb } from './mongodb.js'
+import { toDirectImageUrl } from './image-url.js'
 
 const MESSAGES_COLLECTION = 'whatsapp_messages'
 
@@ -165,57 +166,117 @@ function ensureOpen(companyId?: string): WASocket {
   return S.sock
 }
 
+/**
+ * Envía un mensaje con reintentos automáticos ante fallos temporales de red
+ * o saturación del socket.
+ */
+async function sendMessageWithRetry<T>(
+  companyId: string | undefined,
+  to: string,
+  content: Record<string, unknown>,
+  options: Record<string, unknown> = {},
+  retries = 2
+): Promise<T> {
+  const sock = ensureOpen(companyId)
+  const jid = toJid(to)
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await sock.sendMessage(jid, content as any, options as any)
+      return res as T
+    } catch (err) {
+      const isLast = attempt === retries
+      const delay = (attempt + 1) * 1500
+      console.warn(`[whatsapp-web] Error al enviar a ${to} (intento ${attempt + 1}/${retries + 1}):`, err)
+      if (isLast) throw err
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
+  }
+  throw new Error('Fallo al enviar tras reintentos')
+}
+
 /** Envía texto a un número o grupo. */
 export async function sendText(to: string, text: string, companyId?: string): Promise<{ id: string | null }> {
-  const sock = ensureOpen(companyId)
-  const res = await sock.sendMessage(toJid(to), { text })
+  const res = await sendMessageWithRetry<{ key: { id: string } }>(companyId, to, { text })
   return { id: res?.key?.id ?? null }
+}
+
+/**
+ * Descarga una imagen a un Buffer con reintentos y validación de contenido.
+ * En vez de dejar que Baileys haga el fetch interno (que falla de forma opaca
+ * con ciertas URLs), traemos los bytes aquí: así validamos que sea una imagen
+ * real y damos un error claro/logueable cuando no lo es.
+ */
+async function fetchImageBuffer(url: string, retries = 2): Promise<Buffer | null> {
+  const direct = toDirectImageUrl(url)
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(direct, {
+        redirect: 'follow',
+        headers: { 'User-Agent': 'Mozilla/5.0 (OmmexTracer)' },
+        signal: AbortSignal.timeout(20_000),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const ct = (res.headers.get('content-type') || '').toLowerCase()
+      const buf = Buffer.from(await res.arrayBuffer())
+      // Rechaza respuestas que claramente NO son imagen (HTML de login/404 de
+      // Drive, páginas de error), que son las que rompían el envío.
+      const looksHtml = ct.includes('text/html') || buf.slice(0, 15).toString('utf8').trim().toLowerCase().startsWith('<!doctype')
+      if (looksHtml || buf.length < 100) throw new Error(`contenido no-imagen (${ct || 'desconocido'}, ${buf.length}B)`)
+      return buf
+    } catch (err) {
+      console.warn(`[whatsapp-web] fetch imagen falló (intento ${attempt + 1}/${retries + 1}) ${direct}:`, err instanceof Error ? err.message : err)
+      if (attempt < retries) await new Promise((r) => setTimeout(r, (attempt + 1) * 1000))
+    }
+  }
+  return null
 }
 
 /** Envía una imagen (desde Buffer o URL) a un número o grupo, con caption opcional. */
 export async function sendImage(to: string, image: Buffer | string, caption?: string, companyId?: string): Promise<{ id: string | null }> {
-  const sock = ensureOpen(companyId)
-  const img = typeof image === 'string' ? { url: image } : image
-  const res = await sock.sendMessage(toJid(to), { image: img, caption })
+  // Si es URL, descargamos los bytes nosotros (robusto) antes de enviar; si
+  // falla la descarga, caemos al método anterior (Baileys hace el fetch) para
+  // no perder el caso en que la URL sí sea descargable solo por Baileys.
+  let img: { url: string } | Buffer
+  if (typeof image === 'string') {
+    const buf = await fetchImageBuffer(image)
+    img = buf ?? { url: toDirectImageUrl(image) }
+  } else {
+    img = image
+  }
+  const res = await sendMessageWithRetry<{ key: { id: string } }>(companyId, to, { image: img, caption })
   return { id: res?.key?.id ?? null }
 }
 
 /** Envía un audio (desde Buffer o URL) a un número o grupo. */
 export async function sendAudio(to: string, audio: Buffer | string, companyId?: string, mimetype?: string): Promise<{ id: string | null }> {
-  const sock = ensureOpen(companyId)
   const aud = typeof audio === 'string' ? { url: audio } : audio
   const jid = toJid(to)
   const m = (mimetype || '').toLowerCase()
   const url = typeof audio === 'string' ? audio : ''
 
-  // WhatsApp reproduce como NOTA DE VOZ sólo contenedores ogg/opus o mp4/m4a.
-  // El webm/opus de Chrome NO lo reproduce (aunque se declare como ogg: el
-  // contenedor es distinto y llega "dañado"). Detectamos el formato real por
-  // el mimetype o por la extensión de la URL subida.
   const looksOgg = m.includes('ogg') || m.includes('opus') || /\.ogg(\?|$)/i.test(url)
   const looksMp4 = m.includes('mp4') || m.includes('m4a') || /\.(m4a|mp4)(\?|$)/i.test(url)
   const looksWebm = m.includes('webm') || /\.webm(\?|$)/i.test(url)
 
   if (looksOgg || looksMp4) {
     const finalMime = looksMp4 ? 'audio/mp4' : 'audio/ogg; codecs=opus'
-    const res = await sock.sendMessage(jid, { audio: aud, mimetype: finalMime, ptt: true })
+    const res = await sendMessageWithRetry<{ key: { id: string } }>(companyId, to, { audio: aud, mimetype: finalMime, ptt: true })
     return { id: res?.key?.id ?? null }
   }
 
-  // webm u otro contenedor no reproducible como nota de voz: se envía como
-  // DOCUMENTO para que llegue íntegro y se pueda abrir/descargar (no corrupto).
   if (looksWebm || !looksOgg) {
     const fileName = `audio.${looksWebm ? 'webm' : 'bin'}`
-    const res = await sock.sendMessage(jid, {
+    const res = await sendMessageWithRetry<{ key: { id: string } }>(companyId, to, {
       document: aud,
       fileName,
       mimetype: m || 'audio/webm',
       caption: '🎤 Audio',
-    } as never)
+    })
     return { id: res?.key?.id ?? null }
   }
 
-  const res = await sock.sendMessage(jid, { audio: aud, mimetype: 'audio/ogg; codecs=opus', ptt: true })
+  const res = await sendMessageWithRetry<{ key: { id: string } }>(companyId, to, { audio: aud, mimetype: 'audio/ogg; codecs=opus', ptt: true })
   return { id: res?.key?.id ?? null }
 }
 
@@ -226,18 +287,19 @@ export async function sendDocument(
   opts: { fileName?: string; caption?: string; mimetype?: string } = {},
   companyId?: string,
 ): Promise<{ id: string | null }> {
-  const sock = ensureOpen(companyId)
   const doc = typeof document === 'string' ? { url: document } : document
   const docMessage: Record<string, unknown> = { document: doc, fileName: opts.fileName ?? 'documento' }
   if (opts.caption) docMessage.caption = opts.caption
   if (opts.mimetype) docMessage.mimetype = opts.mimetype
-  const res = await sock.sendMessage(toJid(to), docMessage as never)
+  const res = await sendMessageWithRetry<{ key: { id: string } }>(companyId, to, docMessage)
   return { id: res?.key?.id ?? null }
 }
 
 /**
  * Envía varias imágenes como un ÁLBUM (agrupadas, como una galería en WhatsApp)
  * con un único texto (caption) que aparece una sola vez al final del grupo.
+ *
+ * WhatsApp agrupa automáticamente las imágenes enviadas en secuencia rápida.
  *
  * @param to       número o JID de grupo
  * @param images   URLs (o Buffers) de las imágenes
@@ -249,38 +311,48 @@ export async function sendAlbum(
   caption?: string,
   companyId?: string,
 ): Promise<{ id: string | null; count: number }> {
-  const sock = ensureOpen(companyId)
-  const jid = toJid(to)
+  if (images.length === 0) return { id: null, count: 0 }
 
-  // Si es una sola imagen, no tiene sentido el álbum: envío normal.
-  if (images.length <= 1) {
-    const only = images[0]
-    if (only === undefined) return { id: null, count: 0 }
-    const img = typeof only === 'string' ? { url: only } : only
-    const res = await sock.sendMessage(jid, { image: img, caption })
-    return { id: res?.key?.id ?? null, count: 1 }
-  }
-
-  // 1. Mensaje de álbum "padre" que declara cuántas imágenes vienen.
-  const parent = await sock.sendMessage(jid, {
-    album: { expectedImageCount: images.length, expectedVideoCount: 0 },
-  } as never)
-  const albumParentKey = parent?.key
-
-  // 2. Cada imagen asociada al álbum. El caption va solo en la primera.
+  let firstId: string | null = null
   let count = 0
+
   for (let i = 0; i < images.length; i++) {
     const im = images[i]
-    const img = typeof im === 'string' ? { url: im } : im
-    await sock.sendMessage(jid, {
-      image: img,
-      ...(i === 0 && caption ? { caption } : {}),
-      albumParentKey,
-    } as never)
-    count++
+    // Descarga robusta a Buffer para URLs (evita fallos opacos de Baileys con
+    // enlaces de Drive/GitHub). Si no se puede descargar, se omite esa imagen.
+    let img: { url: string } | Buffer
+    if (typeof im === 'string') {
+      const buf = await fetchImageBuffer(im)
+      if (!buf) {
+        console.error(`[whatsapp-web] Imagen ${i} del álbum omitida: no se pudo descargar ${im}`)
+        if (i < images.length - 1) await new Promise((r) => setTimeout(r, 200))
+        continue
+      }
+      img = buf
+    } else {
+      img = im
+    }
+
+    try {
+      const res = await sendMessageWithRetry<{ key: { id: string } }>(companyId, to, {
+        image: img,
+        ...(count === 0 && caption ? { caption } : {}),
+      })
+      if (count === 0) firstId = res?.key?.id ?? null
+      count++
+    } catch (err) {
+      console.error(`[whatsapp-web] Fallo crítico al enviar imagen ${i} del álbum:`, err)
+      // Si falla una imagen del álbum, continuamos con las siguientes.
+    }
+    
+    // Pausa dinámica: más corta si hay muchas fotos, pero suficiente para agrupar.
+    if (i < images.length - 1) {
+      const delay = images.length > 5 ? 400 : 600
+      await new Promise(resolve => setTimeout(resolve, delay))
+    }
   }
 
-  return { id: parent?.key?.id ?? null, count }
+  return { id: firstId, count }
 }
 
 /**
