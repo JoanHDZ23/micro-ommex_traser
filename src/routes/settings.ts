@@ -230,6 +230,11 @@ settingsRouter.get('/features', async (req, res) => {
     // activa en el cliente de inmediato (sin depender de un flag secundario que
     // el admin pudiera haber dejado en false). Si el root la apaga, desaparece.
     const eff = (k: FeatureKey) => allowed[k] === true
+    // Acciones base del registro: activas por defecto. Solo se consideran
+    // desactivadas si el ROOT las apagó EXPLÍCITAMENTE (clave === false).
+    // Así, empresas existentes (sin estas claves) las siguen viendo.
+    const storedAllowed = (doc?.allowedFeatures ?? null) as Record<string, unknown> | null
+    const effDefaultOn = (k: FeatureKey) => storedAllowed?.[k] !== false
     const opLimit = typeof doc?.operationTypesLimit === 'number' ? doc.operationTypesLimit : DEFAULT_OPERATION_TYPES_LIMIT
     res.json({
       sheetsEnabled: eff('sheetsEnabled'),
@@ -242,6 +247,9 @@ settingsRouter.get('/features', async (req, res) => {
       whatsappDocument: eff('whatsappDocument'),
       markerEditor: eff('markerEditor'),
       registrarActividad: eff('registrarActividad'),
+      addProduct: effDefaultOn('addProduct'),
+      selectImage: effDefaultOn('selectImage'),
+      pasteImage: effDefaultOn('pasteImage'),
       operationTypesLimit: opLimit,
       // `allowed`: qué funciones concedió el root (para que el panel del cliente
       // oculte/bloquee las no permitidas, incluso para el admin principal).

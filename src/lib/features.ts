@@ -8,6 +8,8 @@
 export const FEATURE_KEYS = [
   'sheetsEnabled', 'activityLog', 'sendEmail', 'whatsappTrazabilidad', 'whatsappUnified',
   'whatsappAudio', 'whatsappCatalog', 'whatsappDocument', 'markerEditor', 'registrarActividad',
+  // Acciones del menú "+" del registro, activables/desactivables por empresa.
+  'addProduct', 'selectImage', 'pasteImage',
 ] as const
 export type FeatureKey = typeof FEATURE_KEYS[number]
 
@@ -22,11 +24,21 @@ export const TURNOS_API_URL = (process.env.TURNOS_API_URL || '').replace(/\/$/, 
  * autoridad: una función solo está permitida si el root la activó. Por defecto
  * (sin configurar o clave ausente) NO se permite.
  */
+/** Acciones base del registro: permitidas por defecto (default-on). Solo se
+ *  consideran denegadas si el ROOT las apaga explícitamente (=== false). */
+export const DEFAULT_ON_KEYS: readonly FeatureKey[] = ['addProduct', 'selectImage', 'pasteImage']
+
 export function readAllowed(doc: Record<string, unknown> | null): Record<FeatureKey, boolean> {
   const stored = (doc?.allowedFeatures ?? null) as Record<string, unknown> | null
   const out = {} as Record<FeatureKey, boolean>
   for (const k of FEATURE_KEYS) {
-    out[k] = stored ? stored[k] === true : false
+    if (DEFAULT_ON_KEYS.includes(k)) {
+      // default-on: true salvo que esté explícitamente en false.
+      out[k] = stored ? stored[k] !== false : true
+    } else {
+      // default-off: true solo si el ROOT lo activó explícitamente.
+      out[k] = stored ? stored[k] === true : false
+    }
   }
   return out
 }

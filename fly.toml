@@ -13,9 +13,10 @@ primary_region = "iad"
 [http_service]
   internal_port = 4000
   force_https = true
-  auto_stop_machines = "stop"
+  # Mantener 1 máquina viva evita el cold start (primera petición fallando).
+  auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
 [[vm]]
   size = "shared-cpu-1x"

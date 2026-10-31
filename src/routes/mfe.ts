@@ -31,6 +31,9 @@ mfeRouter.get('/config-schema', (_req, res) => {
       { key: 'whatsappCatalog', label: 'Catálogo de productos', type: 'boolean', default: false },
       { key: 'whatsappDocument', label: 'Adjuntar documentos', type: 'boolean', default: false },
       { key: 'markerEditor', label: 'Editor de imágenes', type: 'boolean', default: false },
+      { key: 'addProduct', label: 'Agregar producto', type: 'boolean', default: true, hint: 'Acción "Agregar producto" en el registro.' },
+      { key: 'selectImage', label: 'Seleccionar imagen', type: 'boolean', default: true, hint: 'Acción "Seleccionar imagen" (galería) en el registro.' },
+      { key: 'pasteImage', label: 'Pegar imagen', type: 'boolean', default: true, hint: 'Acción "Pegar imagen" (portapapeles) en el registro.' },
       { key: 'operationTypesLimit', label: 'Límite de tipos de operación', type: 'number', default: 0, hint: '0 = sin límite.' },
     ],
   })

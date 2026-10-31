@@ -2,9 +2,20 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readAllowed, readOperationTypesLimit, turnosLinked, FEATURE_KEYS } from './features.ts'
 
-test('readAllowed: sin doc → todas las funciones en false', () => {
+import { DEFAULT_ON_KEYS } from './features.ts'
+
+test('readAllowed: sin doc → default-off en false, default-on en true', () => {
   const allowed = readAllowed(null)
-  for (const k of FEATURE_KEYS) assert.equal(allowed[k], false)
+  for (const k of FEATURE_KEYS) {
+    const expected = DEFAULT_ON_KEYS.includes(k)
+    assert.equal(allowed[k], expected, `clave ${k} debería ser ${expected}`)
+  }
+})
+
+test('readAllowed: default-on solo se apaga si está explícitamente en false', () => {
+  const off = readAllowed({ allowedFeatures: { addProduct: false } })
+  assert.equal(off.addProduct, false)
+  assert.equal(off.selectImage, true) // ausente → sigue default-on
 })
 
 test('readAllowed: solo true las claves permitidas explícitamente', () => {
