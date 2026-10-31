@@ -1294,9 +1294,11 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       </ModalSurface>
     )
 
-  return (
+  // El cuerpo del modal. Se pasa a Shell como función (NO como <Shell>…</Shell>)
+  // para evitar que React remonte todo el árbol en cada render, lo que reseteaba
+  // el scroll al inicio ("no deja bajar y vuelve arriba").
+  const body = (
     <>
-      <Shell>
         {/* Botón "atrás" para volver del visor al listado (solo modal). */}
         {viewerBackButton}
 
@@ -1704,7 +1706,12 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
             </section>
           </div>
         )}
-      </Shell>
+    </>
+  )
+
+  return (
+    <>
+      {Shell({ children: body })}
 
       {/* ── Modal: destino para traer productos del documento a los registros ── */}
       {bringRows && (
