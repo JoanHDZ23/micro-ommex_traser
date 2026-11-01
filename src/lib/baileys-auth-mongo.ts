@@ -87,3 +87,13 @@ export async function useMongoAuthState(sessionId = 'default'): Promise<{
     clear: async () => { await col.deleteMany({ sessionId }) },
   }
 }
+
+/**
+ * Lista los sessionId que tienen credenciales guardadas (doc con dataId
+ * 'creds'). Se usa para reanudar las sesiones de WhatsApp al arrancar el backend.
+ */
+export async function listSavedSessionKeys(): Promise<string[]> {
+  const col = getDb().collection(COLLECTION)
+  const docs = await col.find({ dataId: 'creds' }).project({ sessionId: 1 }).toArray()
+  return docs.map((d) => String(d.sessionId)).filter(Boolean)
+}

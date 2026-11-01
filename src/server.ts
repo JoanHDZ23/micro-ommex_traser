@@ -12,6 +12,7 @@ import { whatsappWebRouter } from './routes/whatsapp-web.js'
 import { uploadsRouter } from './routes/uploads.js'
 import { requireToken } from './middleware/requireToken.js'
 import { sweepExpiredSessions } from './lib/auth.js'
+import { isWhatsAppWebEnabled, resumeSavedSessions, reconnectDroppedSessions } from './lib/whatsapp-web.js'
 import { runCleanupOldOperations } from './jobs/cleanupOldOperations.js'
 
 const app = express()
@@ -313,6 +314,7 @@ async function start() {
     console.log('[ommex-tracer] MongoDB conectado.')
     // La limpieza automática depende de Mongo; solo se programa si conectó.
     scheduleCleanup()
+    startWhatsAppMaintenance()
   } catch (err) {
     console.warn('[ommex-tracer] MongoDB no disponible al iniciar. El servidor sigue activo; se reintentará en segundo plano.', err instanceof Error ? err.message : err)
     retryMongo()
@@ -327,11 +329,28 @@ function retryMongo() {
       await connectToMongo()
       console.log('[ommex-tracer] MongoDB conectado (reintento exitoso).')
       scheduleCleanup()
+      startWhatsAppMaintenance()
     } catch {
       setTimeout(attempt, RETRY_INTERVAL)
     }
   }
   setTimeout(attempt, RETRY_INTERVAL)
+}
+
+/**
+ * Mantiene WhatsApp Web activo: reanuda al arrancar las sesiones con
+ * credenciales guardadas y reconecta periódicamente las que queden caídas (sin
+ * ser cierres de sesión del usuario). Idempotente: no arranca dos watchdogs.
+ */
+let whatsappMaintenanceStarted = false
+function startWhatsAppMaintenance() {
+  if (whatsappMaintenanceStarted) return
+  if (!isWhatsAppWebEnabled()) return
+  whatsappMaintenanceStarted = true
+  // Reanuda las sesiones previas (sin esperar a que el cliente abra la app).
+  void resumeSavedSessions()
+  // Watchdog cada 60 s: reconecta cualquier sesión caída no cerrada por el usuario.
+  setInterval(() => { void reconnectDroppedSessions() }, 60_000)
 }
 
 /**

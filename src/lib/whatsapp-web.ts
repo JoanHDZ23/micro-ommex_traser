@@ -31,6 +31,10 @@ interface State {
   qrDataUrl: string | null   // QR como data URL (image/png) para mostrar en la app
   lastError: string | null
   starting: boolean
+  /** Intentos de reconexión consecutivos (para backoff). Se resetea al abrir. */
+  reconnectAttempts: number
+  /** true si el usuario cerró sesión a propósito (no auto-reconectar). */
+  loggedOut: boolean
 }
 
 /**
@@ -52,10 +56,16 @@ function getState(companyId?: string): State {
   const key = sessionKey(companyId)
   let st = SESSIONS.get(key)
   if (!st) {
-    st = { sock: null, status: 'disconnected', qrDataUrl: null, lastError: null, starting: false }
+    st = { sock: null, status: 'disconnected', qrDataUrl: null, lastError: null, starting: false, reconnectAttempts: 0, loggedOut: false }
     SESSIONS.set(key, st)
   }
   return st
+}
+
+/** Backoff creciente para reconexión (ms): 2s, 5s, 10s, 20s, 30s (tope). */
+function reconnectDelay(attempts: number): number {
+  const steps = [2000, 5000, 10000, 20000, 30000]
+  return steps[Math.min(attempts, steps.length - 1)]
 }
 
 export function isWhatsAppWebEnabled(): boolean {
@@ -89,10 +99,18 @@ export async function startWhatsAppWeb(companyId?: string): Promise<void> {
       auth: state,
       printQRInTerminal: false,
       markOnlineOnConnect: false,
+      // Keep-alive: envía un "ping" periódico para que WhatsApp no cierre la
+      // conexión por inactividad (principal causa de desvinculaciones).
+      keepAliveIntervalMs: 20_000,
+      // Más tolerancia a redes lentas/intermitentes antes de dar por caída la
+      // conexión (evita cierres prematuros que forzaban re-escanear el QR).
+      connectTimeoutMs: 60_000,
+      retryRequestDelayMs: 1_000,
     })
     S.sock = sock
     S.status = 'connecting'
     S.lastError = null
+    S.loggedOut = false
 
     sock.ev.on('creds.update', saveCreds)
 
@@ -106,22 +124,41 @@ export async function startWhatsAppWeb(companyId?: string): Promise<void> {
         S.status = 'open'
         S.qrDataUrl = null
         S.lastError = null
+        S.reconnectAttempts = 0 // reconexión exitosa → reinicia el backoff
       }
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode
-        const loggedOut = statusCode === DisconnectReason.loggedOut
         S.status = 'disconnected'
         S.sock = null
-        if (loggedOut) {
-          // Sesión cerrada desde el teléfono: limpiar credenciales.
+        S.starting = false
+
+        // loggedOut: el usuario cerró sesión desde el teléfono → NO reconectar,
+        // limpiar credenciales y pedir nuevo QR.
+        if (statusCode === DisconnectReason.loggedOut) {
+          S.loggedOut = true
           S.lastError = 'Sesión cerrada. Vuelve a escanear el QR.'
           void clearSession(key)
-        } else {
-          // Reconexión automática (caída de red, reinicio, etc.)
-          S.lastError = statusCode ? `Conexión cerrada (código ${statusCode}). Reintentando…` : 'Conexión cerrada. Reintentando…'
-          S.starting = false
-          setTimeout(() => { void startWhatsAppWeb(key) }, 3000)
+          return
         }
+
+        // connectionReplaced: otra instancia tomó la sesión. Reconectar en
+        // bucle la pisaría una y otra vez; esperamos y reintentamos una vez con
+        // más margen, sin bucle agresivo.
+        if (statusCode === DisconnectReason.connectionReplaced) {
+          S.lastError = 'Conexión reemplazada por otra sesión. Reintentando…'
+          S.reconnectAttempts = Math.min(S.reconnectAttempts + 1, 10)
+          setTimeout(() => { if (!S.loggedOut && !S.sock) void startWhatsAppWeb(key) }, 15_000)
+          return
+        }
+
+        // Resto de cierres (red caída, restartRequired, timedOut, 515…):
+        // reconexión automática con backoff creciente.
+        S.reconnectAttempts = Math.min(S.reconnectAttempts + 1, 10)
+        const delay = reconnectDelay(S.reconnectAttempts - 1)
+        S.lastError = statusCode
+          ? `Conexión cerrada (código ${statusCode}). Reconectando…`
+          : 'Conexión cerrada. Reconectando…'
+        setTimeout(() => { if (!S.loggedOut && !S.sock) void startWhatsAppWeb(key) }, delay)
       }
     })
 
@@ -148,6 +185,38 @@ export async function startWhatsAppWeb(companyId?: string): Promise<void> {
   } finally {
     S.starting = false
   }
+}
+
+/**
+ * Watchdog: reconecta las sesiones que quedaron caídas y no fueron cerradas por
+ * el usuario (logout). Cubre el caso de que todas las reconexiones con backoff
+ * se agotaran o que el backend reiniciara con credenciales ya guardadas en Mongo.
+ * Se llama periódicamente desde server.ts. Falla en silencio.
+ */
+export async function reconnectDroppedSessions(): Promise<void> {
+  if (!isWhatsAppWebEnabled()) return
+  for (const [key, S] of SESSIONS) {
+    if (S.loggedOut) continue
+    if (S.status === 'open' || S.status === 'connecting' || S.status === 'qr') continue
+    if (S.sock || S.starting) continue
+    try { await startWhatsAppWeb(key) } catch { /* reintenta en el próximo ciclo */ }
+  }
+}
+
+/**
+ * Reanuda al arrancar el backend las sesiones que ya tenían credenciales
+ * guardadas en Mongo, para que WhatsApp quede activo sin esperar a que el
+ * cliente abra Configuración. Falla en silencio.
+ */
+export async function resumeSavedSessions(): Promise<void> {
+  if (!isWhatsAppWebEnabled()) return
+  try {
+    const { listSavedSessionKeys } = await import('./baileys-auth-mongo.js')
+    const keys = await listSavedSessionKeys()
+    for (const key of keys) {
+      try { await startWhatsAppWeb(key) } catch { /* sigue con las demás */ }
+    }
+  } catch { /* módulo/colección no disponible */ }
 }
 
 /** Normaliza un destino a JID de WhatsApp. Acepta número (+57...) o JID (grupo @g.us). */
