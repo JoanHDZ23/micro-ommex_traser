@@ -100,7 +100,7 @@ export interface LineaBlancaProduct {
   createdAt: string
 }
 
-// ── Esquema de operación ────────────────────────────────────────────────
+// ── Ubicaciones y movimientos ───────────────────────────────────────────
 
 /** Lugar/ubicación donde se realiza la operación (configurado por empresa). */
 export interface CompanyLocation {
@@ -110,15 +110,62 @@ export interface CompanyLocation {
   city?: string
 }
 
+/** Tipo de ubicación: un Lugar configurado o un Vehículo (por placa). */
+export type LocationType = 'lugar' | 'vehiculo'
+
+/**
+ * Referencia a una ubicación. Se usa como origen/destino en las operaciones y en
+ * los movimientos. `name` se desnormaliza para conservar el texto a mostrar aunque
+ * el lugar se elimine de la configuración.
+ */
+export interface LocationRef {
+  type: LocationType
+  /** Presente si type === 'lugar' (id del lugar configurado). */
+  id?: string
+  /** Presente si type === 'vehiculo' (placa normalizada en MAYÚSCULAS). */
+  placa?: string
+  /** Nombre a mostrar (nombre del lugar o la placa). */
+  name: string
+}
+
+/**
+ * Movimiento de un producto entre ubicaciones (colección `product_movements`).
+ * Una fila por cada cambio de ubicación. Su secuencia forma el recorrido.
+ */
+export interface ProductMovement {
+  companyId: string
+  productCode: string
+  productCodeLower: string
+  /** Origen (null si no había ubicación previa ni origen explícito). */
+  from: LocationRef | null
+  /** Destino: ubicación donde queda alojado el producto. */
+  to: LocationRef
+  /** Operación que generó el movimiento. */
+  trackingCode: string
+  /** true si el origen se dedujo de la ubicación actual (traspaso inferido). */
+  inferred: boolean
+  /** ISO timestamp del movimiento. */
+  at: string
+}
+
+// ── Esquema de operación ────────────────────────────────────────────────
+
 export interface OperationLog {
   trackingCode: string
   operationType: OperationType
   operatorName: string
   vehiclePlate?: string            // Opcional — el usuario decide si incluirla
-  /** Lugar donde se realiza la operación (id del lugar configurado). */
+  /** Lugar donde se realiza la operación (id del lugar configurado). Legacy: se
+   *  sigue llenando desde `destination` cuando es de tipo lugar. */
   locationId?: string
   /** Nombre del lugar (desnormalizado para historial aunque se borre el lugar). */
   locationName?: string
+  /** true si la operación es un traspaso de productos entre ubicaciones. */
+  isTransfer?: boolean
+  /** Punto de inicio (opcional) del traspaso. */
+  origin?: LocationRef
+  /** Punto final: ubicación donde quedan alojados los productos de la operación. */
+  destination?: LocationRef
   companyId?: string
   photos: PhotoRecord[]
   lineaBlanca: LineaBlancaProduct[]

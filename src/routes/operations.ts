@@ -1,10 +1,24 @@
 import { Router } from 'express'
-import { getOperationsCollection, getProductsCatalogCollection, getDb } from '../lib/mongodb.js'
+import { getOperationsCollection, getProductsCatalogCollection, getMovementsCollection, getDb } from '../lib/mongodb.js'
 import { generateTrackingCode } from '../lib/tracking-code.js'
 import { uploadToDrive, deletePhotoStorage } from '../lib/drive-upload.js'
 import { sendOperationEmail } from '../lib/email.js'
-import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, normalizeClientTimestamp, type LineaBlancaProduct, type OperationType, type PhotoRecord } from '../types.js'
+import { getStepsForType, LINEA_BLANCA_STEPS, OPTIONAL_STEPS, normalizeClientTimestamp, type CompanyLocation, type LineaBlancaProduct, type LocationRef, type OperationType, type PhotoRecord } from '../types.js'
 import { existingClientKeys, isDuplicateKey } from '../lib/photo-dedupe.js'
+import { readAllowed } from '../lib/features.js'
+import { toLocationRef, recordMovement } from '../lib/locations.js'
+
+/**
+ * Lee los lugares configurados y si la función de lugares está habilitada para
+ * la empresa. Si está deshabilitada, se ignora toda la información de ubicación.
+ */
+async function getCompanyLocationCtx(companyId: string | undefined): Promise<{ enabled: boolean; places: CompanyLocation[] }> {
+  if (!companyId) return { enabled: false, places: [] }
+  const doc = await getDb().collection('company_settings').findOne({ companyId }) as Record<string, unknown> | null
+  const enabled = readAllowed(doc).locationsEnabled === true
+  const places = Array.isArray(doc?.locations) ? (doc!.locations as CompanyLocation[]) : []
+  return { enabled, places }
+}
 
 export const operationsRouter = Router()
 
@@ -136,7 +150,7 @@ operationsRouter.get('/stats', async (req, res) => {
  * Crea una nueva operación (Productos Entrantes o Productos Salientes).
  */
 operationsRouter.post('/', async (req, res) => {
-  const { operationType, operatorName, vehiclePlate, companyId, locationId } = req.body ?? {}
+  const { operationType, operatorName, vehiclePlate, companyId, locationId, isTransfer, origin, destination } = req.body ?? {}
 
   if (!operationType || typeof operationType !== 'string' || !operationType.trim()) {
     res.status(400).json({ message: 'operationType es requerido.' })
@@ -167,19 +181,26 @@ operationsRouter.post('/', async (req, res) => {
     const trackingCode = await generateTrackingCode()
     const now = new Date().toISOString()
 
-    // Resuelve el lugar (ubicación) configurado por la empresa. Se guarda el id
-    // y el nombre desnormalizado para conservarlo en el historial aunque luego
-    // se elimine el lugar de la configuración.
-    let resolvedLocationId: string | undefined
-    let resolvedLocationName: string | undefined
-    const locId = typeof locationId === 'string' ? locationId.trim() : ''
-    if (locId && companyId) {
-      const settings = await getDb().collection('company_settings').findOne({ companyId: companyId.trim() })
-      const locations = Array.isArray(settings?.locations) ? (settings!.locations as Array<{ id?: string; name?: string }>) : []
-      const match = locations.find((l) => l?.id === locId)
-      if (match) {
-        resolvedLocationId = match.id
-        resolvedLocationName = (match.name ?? '').trim() || undefined
+    // Resuelve ubicaciones (origen/destino) si la función está habilitada. El
+    // destino aloja los productos; el origen es opcional (traspaso). Se conserva
+    // además locationId/locationName legacy desde el destino de tipo lugar.
+    const cid = companyId?.trim()
+    const { enabled: locEnabled, places } = await getCompanyLocationCtx(cid)
+    let destRef: LocationRef | null = null
+    let originRef: LocationRef | null = null
+    let transfer = false
+    if (locEnabled) {
+      transfer = isTransfer === true
+      // Compat: si llega `locationId` (API vieja) se trata como destino de tipo lugar.
+      const destInput = destination ?? (typeof locationId === 'string' && locationId.trim()
+        ? { type: 'lugar', id: locationId.trim() }
+        : undefined)
+      destRef = destInput ? toLocationRef(destInput, places) : null
+      originRef = origin ? toLocationRef(origin, places) : null
+      // Un traspaso requiere destino (Req 2.4).
+      if (transfer && !destRef) {
+        res.status(400).json({ message: 'El traspaso requiere un destino (punto final).' })
+        return
       }
     }
 
@@ -188,9 +209,13 @@ operationsRouter.post('/', async (req, res) => {
       operationType,
       operatorName: operatorName.trim(),
       vehiclePlate: vehiclePlate?.trim() || undefined,
-      locationId: resolvedLocationId,
-      locationName: resolvedLocationName,
-      companyId: companyId?.trim() ?? undefined,
+      isTransfer: transfer || undefined,
+      origin: originRef ?? undefined,
+      destination: destRef ?? undefined,
+      // Legacy: refleja el destino de tipo lugar para Historial/Wizard/Detalle.
+      locationId: destRef?.type === 'lugar' ? destRef.id : undefined,
+      locationName: destRef?.name,
+      companyId: cid ?? undefined,
       photos: [],
       lineaBlanca: [],
       status: 'EN_PROCESO',
@@ -687,10 +712,59 @@ operationsRouter.get('/products-catalog', async (req, res) => {
       .map((e) => ({ ...e, registrosCount: e.assignments.length }))
       .sort((a, b) => a.productCode.localeCompare(b.productCode))
 
+    // Enriquece cada producto con su ubicación actual (último movimiento), con
+    // una sola agregación por empresa agrupada por productCodeLower.
+    if (companyId) {
+      try {
+        const movCol = getMovementsCollection()
+        const rows = await movCol.aggregate([
+          { $match: { companyId } },
+          { $sort: { at: -1 } },
+          { $group: { _id: '$productCodeLower', to: { $first: '$to' } } },
+        ]).toArray()
+        const currentByCode = new Map<string, LocationRef>()
+        for (const r of rows) currentByCode.set(r._id as string, r.to as LocationRef)
+        for (const p of products) {
+          ;(p as Record<string, unknown>).currentLocation = currentByCode.get(p.productCode.toLowerCase()) ?? null
+        }
+      } catch (err) {
+        console.error('[operations] Error al calcular ubicación actual:', err)
+      }
+    }
+
     res.json({ products, total: products.length })
   } catch (err) {
     console.error('[operations] Error en catálogo de productos:', err)
     res.status(500).json({ message: 'Error al obtener el catálogo de productos.' })
+  }
+})
+
+/**
+ * GET /api/operations/products/:productCode/movements?companyId=xxx
+ * Devuelve el recorrido (historial de movimientos) de un producto, ordenado por
+ * fecha ascendente (del más antiguo al más reciente).
+ */
+operationsRouter.get('/products/:productCode/movements', async (req, res) => {
+  const { productCode } = req.params
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const movCol = getMovementsCollection()
+    const rows = await movCol
+      .find({ companyId, productCodeLower: productCode.trim().toLowerCase() })
+      .sort({ at: 1 })
+      .toArray()
+    const movements = rows.map((m) => ({
+      from: m.from ?? null,
+      to: m.to,
+      trackingCode: m.trackingCode,
+      inferred: Boolean(m.inferred),
+      at: m.at,
+    }))
+    res.json({ movements })
+  } catch (err) {
+    console.error('[operations] Error al leer movimientos:', err)
+    res.status(500).json({ message: 'Error al leer el recorrido del producto.' })
   }
 })
 
@@ -809,6 +883,18 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
 
       await upsertCatalogProduct(companyId, code, (labelData as { descripcion?: string } | undefined)?.descripcion ?? sourceProduct.labelData?.descripcion, 'registro')
 
+      // Registra el movimiento del producto hacia el destino de esta operación
+      // (si tiene). El origen explícito es el de la operación, si existe.
+      if (operation.destination) {
+        await recordMovement({
+          companyId: companyId as string,
+          productCode: code,
+          destination: operation.destination as LocationRef,
+          originExplicit: (operation.origin as LocationRef | undefined) ?? null,
+          trackingCode,
+        })
+      }
+
       res.status(201).json({
         message: `Producto "${code}" vinculado desde la operación ${sourceTrackingCode}. Las fotos se sincronizarán automáticamente.`,
         product: linkedProduct,
@@ -836,6 +922,17 @@ operationsRouter.post('/:trackingCode/linea-blanca', async (req, res) => {
     )
 
     await upsertCatalogProduct(companyId, code, (labelData as { descripcion?: string } | undefined)?.descripcion, 'registro')
+
+    // Registra el movimiento del producto hacia el destino de esta operación.
+    if (operation.destination) {
+      await recordMovement({
+        companyId: companyId as string,
+        productCode: code,
+        destination: operation.destination as LocationRef,
+        originExplicit: (operation.origin as LocationRef | undefined) ?? null,
+        trackingCode,
+      })
+    }
 
     res.status(201).json({
       message: `Producto ${productCode.trim()} agregado.`,
@@ -1306,7 +1403,7 @@ operationsRouter.post('/:trackingCode/attachment', async (req, res) => {
  */
 operationsRouter.patch('/:trackingCode', async (req, res) => {
   const { trackingCode } = req.params
-  const { vehiclePlate, operatorName, newTrackingCode, createdAt, updatedAt, locationId } = req.body ?? {}
+  const { vehiclePlate, operatorName, newTrackingCode, createdAt, updatedAt, locationId, isTransfer, origin, destination } = req.body ?? {}
 
   try {
     const col = getOperationsCollection()
@@ -1317,20 +1414,28 @@ operationsRouter.patch('/:trackingCode', async (req, res) => {
     if (vehiclePlate?.trim()) updates.vehiclePlate = vehiclePlate.trim()
     if (operatorName?.trim()) updates.operatorName = operatorName.trim()
     if (createdAt) updates.createdAt = createdAt
-    // Lugar: permite fijar/cambiar/quitar la ubicación de la operación.
-    if (locationId !== undefined) {
-      const locId = typeof locationId === 'string' ? locationId.trim() : ''
-      if (!locId) {
-        updates.locationId = undefined
-        updates.locationName = undefined
-      } else {
-        const settings = await getDb().collection('company_settings').findOne({ companyId: operation.companyId })
-        const locations = Array.isArray(settings?.locations) ? (settings!.locations as Array<{ id?: string; name?: string }>) : []
-        const match = locations.find((l) => l?.id === locId)
-        updates.locationId = match?.id ?? locId
-        updates.locationName = (match?.name ?? '').trim() || undefined
-      }
+
+    // Ubicación (origen/destino): solo si la función está habilitada. Si cambia el
+    // destino, se re-registran los movimientos de los productos hacia el nuevo
+    // destino (idempotente por sameLocation).
+    const { enabled: locEnabled, places } = await getCompanyLocationCtx(operation.companyId as string | undefined)
+    let newDestRef: LocationRef | null | undefined // undefined = no tocar
+    if (locEnabled && (destination !== undefined || locationId !== undefined)) {
+      const destInput = destination ?? (typeof locationId === 'string' && locationId.trim()
+        ? { type: 'lugar', id: locationId.trim() }
+        : null)
+      newDestRef = destInput ? toLocationRef(destInput, places) : null
+      updates.destination = newDestRef ?? undefined
+      updates.locationId = newDestRef?.type === 'lugar' ? newDestRef.id : undefined
+      updates.locationName = newDestRef?.name
     }
+    if (locEnabled && origin !== undefined) {
+      updates.origin = (origin ? toLocationRef(origin, places) : null) ?? undefined
+    }
+    if (locEnabled && isTransfer !== undefined) {
+      updates.isTransfer = isTransfer === true || undefined
+    }
+
     if (newTrackingCode?.trim() && newTrackingCode.trim() !== trackingCode) {
       // Verifica que el nuevo trackingCode no exista
       const existing = await col.findOne({ trackingCode: newTrackingCode.trim() })
@@ -1339,6 +1444,23 @@ operationsRouter.patch('/:trackingCode', async (req, res) => {
     }
 
     await col.updateOne({ trackingCode }, { $set: updates })
+
+    // Si cambió el destino, re-registra el movimiento de cada producto de la
+    // operación hacia el nuevo destino (idempotente: no inserta si ya está ahí).
+    if (newDestRef) {
+      const products = (operation.lineaBlanca as LineaBlancaProduct[]) ?? []
+      const originRef = (updates.origin as LocationRef | undefined) ?? (operation.origin as LocationRef | undefined) ?? null
+      for (const p of products) {
+        await recordMovement({
+          companyId: operation.companyId as string,
+          productCode: p.productCode,
+          destination: newDestRef,
+          originExplicit: originRef,
+          trackingCode,
+        })
+      }
+    }
+
     res.json({ message: 'Operación actualizada.', ...updates })
   } catch (err) {
     console.error('[operations] Error al actualizar:', err)

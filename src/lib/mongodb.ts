@@ -25,12 +25,22 @@ export async function connectToMongo(): Promise<Db> {
   const productsCatalog = db.collection('products_catalog')
   await productsCatalog.createIndex({ companyId: 1, productCodeLower: 1 }, { unique: true })
 
+  // Movimientos de productos entre ubicaciones (recorrido / ubicación actual)
+  const movements = db.collection('product_movements')
+  await movements.createIndex({ companyId: 1, productCodeLower: 1, at: -1 })
+  await movements.createIndex({ companyId: 1, 'to.id': 1 })
+  await movements.createIndex({ companyId: 1, 'to.placa': 1 })
+
   console.log(`[MongoDB] Conectado a ${DB_NAME}`)
   return db
 }
 
 export function getProductsCatalogCollection(): Collection {
   return getDb().collection('products_catalog')
+}
+
+export function getMovementsCollection(): Collection {
+  return getDb().collection('product_movements')
 }
 
 export function getDb(): Db {

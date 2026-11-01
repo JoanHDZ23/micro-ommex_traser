@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { getDb, getOperationsCollection } from '../lib/mongodb.js'
+import { getDb, getOperationsCollection, getMovementsCollection } from '../lib/mongodb.js'
 import {
   FEATURE_KEYS, DEFAULT_OPERATION_TYPES_LIMIT, TURNOS_API_URL,
   readAllowed, type FeatureKey,
@@ -232,36 +232,56 @@ settingsRouter.put('/locations', async (req, res) => {
 })
 
 /**
+ * Devuelve los productos cuya UBICACIÓN ACTUAL (último movimiento) coincide con el
+ * filtro de destino dado. Se resuelve en dos pasos: último movimiento por producto
+ * y luego filtro por el destino. Así un producto solo aparece en su ubicación
+ * actual, no en las anteriores.
+ */
+async function productsAtLocation(companyId: string, matchTo: Record<string, unknown>) {
+  const movCol = getMovementsCollection()
+  const rows = await movCol.aggregate([
+    { $match: { companyId } },
+    { $sort: { at: -1 } },
+    { $group: { _id: '$productCodeLower', productCode: { $first: '$productCode' }, to: { $first: '$to' }, since: { $first: '$at' } } },
+    { $match: Object.fromEntries(Object.entries(matchTo).map(([k, v]) => [`to.${k}`, v])) },
+    { $sort: { since: -1 } },
+    { $limit: 500 },
+  ]).toArray()
+  return rows.map((r) => ({ productCode: r.productCode as string, since: r.since as string }))
+}
+
+/**
  * GET /api/settings/locations/:locationId/products?companyId=xxx
- * Devuelve los productos registrados en operaciones de ese lugar (para saber
- * dónde está ubicado cada producto).
+ * Productos cuya ubicación actual es el LUGAR indicado (Req 8.1).
  */
 settingsRouter.get('/locations/:locationId/products', async (req, res) => {
   const { locationId } = req.params
   const { companyId } = req.query as Record<string, string>
   if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
   try {
-    const ops = getOperationsCollection()
-    const pipeline = [
-      { $match: { companyId, locationId } },
-      { $unwind: { path: '$lineaBlanca', preserveNullAndEmptyArrays: false } },
-      {
-        $group: {
-          _id: { $toLower: '$lineaBlanca.productCode' },
-          productCode: { $first: '$lineaBlanca.productCode' },
-          descripcion: { $first: '$lineaBlanca.labelData.descripcion' },
-          lastSeen: { $max: '$updatedAt' },
-          count: { $sum: 1 },
-        },
-      },
-      { $sort: { lastSeen: -1 } },
-      { $limit: 500 },
-    ]
-    const rows = await ops.aggregate(pipeline).toArray()
-    res.json({ products: rows.map((r) => ({ productCode: r.productCode, descripcion: r.descripcion, lastSeen: r.lastSeen, count: r.count })) })
+    const products = await productsAtLocation(companyId, { type: 'lugar', id: locationId })
+    res.json({ products })
   } catch (err) {
     console.error('[settings] Error al leer productos por lugar:', err)
     res.status(500).json({ message: 'Error al leer los productos del lugar.' })
+  }
+})
+
+/**
+ * GET /api/settings/locations/by-vehicle/:placa/products?companyId=xxx
+ * Productos cuya ubicación actual es el VEHÍCULO con esa placa (Req 8.3).
+ */
+settingsRouter.get('/locations/by-vehicle/:placa/products', async (req, res) => {
+  const { placa } = req.params
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  const normalized = String(placa).toUpperCase().replace(/[^A-Z0-9]/g, '')
+  try {
+    const products = await productsAtLocation(companyId, { type: 'vehiculo', placa: normalized })
+    res.json({ products })
+  } catch (err) {
+    console.error('[settings] Error al leer productos por vehículo:', err)
+    res.status(500).json({ message: 'Error al leer los productos del vehículo.' })
   }
 })
 
