@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { apiRequest, fileToBase64, makeClientKey, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
@@ -1849,6 +1849,14 @@ export function WizardPage() {
             <span className="text-[11px] text-gray-400">
               {new Date(operation.createdAt ?? Date.now()).toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: '2-digit' })}
             </span>
+            {operation.locationName && (
+              <>
+                <span className="text-[11px] text-gray-400">·</span>
+                <span className="text-[11px] text-rose-500 flex items-center gap-0.5">
+                  <MapPin className="w-2.5 h-2.5" /> {operation.locationName}
+                </span>
+              </>
+            )}
           </div>
         </div>
         {/* Ajustes de este registro (marca de agua, etc.) */}

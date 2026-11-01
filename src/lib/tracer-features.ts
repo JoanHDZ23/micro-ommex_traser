@@ -14,6 +14,8 @@ export type TracerFeatures = {
   whatsappDocument: boolean
   markerEditor: boolean
   registrarActividad: boolean
+  /** Lugares/ubicaciones: identificar dónde se hace la operación. */
+  locationsEnabled: boolean
   /** Acciones del menú "+" del registro (default-on). */
   addProduct: boolean
   selectImage: boolean
@@ -50,6 +52,7 @@ export function useTracerFeatures(): TracerFeatures {
       sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
       whatsappTrazabilidad: false, whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
       whatsappDocument: false, markerEditor: false, registrarActividad: false,
+      locationsEnabled: false,
       // Acciones base: default-on mientras carga, para no "parpadear" ocultándolas.
       addProduct: true, selectImage: true, pasteImage: true,
       loading: true,
@@ -67,6 +70,7 @@ export function useTracerFeatures(): TracerFeatures {
             whatsappTrazabilidad?: boolean
             whatsappUnified?: boolean; whatsappAudio?: boolean; whatsappCatalog?: boolean
             whatsappDocument?: boolean; markerEditor?: boolean; registrarActividad?: boolean
+            locationsEnabled?: boolean
             addProduct?: boolean; selectImage?: boolean; pasteImage?: boolean
           }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`),
@@ -83,6 +87,7 @@ export function useTracerFeatures(): TracerFeatures {
           whatsappDocument: feat.whatsappDocument ?? false,
           markerEditor: feat.markerEditor ?? false,
           registrarActividad: feat.registrarActividad ?? false,
+          locationsEnabled: feat.locationsEnabled ?? false,
           // Acciones base: default-on (si el backend no las envía, se asumen activas).
           addProduct: feat.addProduct ?? true,
           selectImage: feat.selectImage ?? true,
@@ -107,6 +112,7 @@ export function useTracerFeatures(): TracerFeatures {
         sheetsEnabled: false, activityLog: false, sendEmail: false, emailTo: '',
         whatsappTrazabilidad: false, whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
         whatsappDocument: false, markerEditor: false, registrarActividad: false,
+        locationsEnabled: false,
         addProduct: true, selectImage: true, pasteImage: true, loading: false,
       })
       return () => { cancelled = true; subscribers.delete(onInvalidate) }

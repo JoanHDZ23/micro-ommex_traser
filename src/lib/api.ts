@@ -238,6 +238,9 @@ export interface Operation {
   operationType: OperationType
   operatorName: string
   vehiclePlate?: string
+  /** Lugar donde se realiza la operación. */
+  locationId?: string
+  locationName?: string
   companyId?: string
   photos: PhotoRecord[]
   lineaBlanca: LineaBlancaProduct[]
@@ -255,7 +258,17 @@ export interface CreateOperationPayload {
   operationType: OperationType
   operatorName: string
   vehiclePlate?: string
+  /** Lugar donde se realiza la operación. */
+  locationId?: string
   companyId?: string
+}
+
+/** Lugar/ubicación donde se realiza una operación (configurado por empresa). */
+export interface CompanyLocation {
+  id: string
+  name: string
+  address?: string
+  city?: string
 }
 
 export interface UploadPhotoResponse {
@@ -438,4 +451,37 @@ export function fileToBase64(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('No se pudo leer el archivo.'))
     reader.readAsDataURL(file)
   })
+}
+
+// ── Lugares / ubicaciones ───────────────────────────────────────────────────
+
+/** Producto registrado en un lugar (para saber dónde está ubicado). */
+export interface LocationProduct {
+  productCode: string
+  descripcion?: string
+  lastSeen?: string
+  count?: number
+}
+
+/** Lista los lugares configurados de la empresa. */
+export async function getLocations(companyId: string): Promise<CompanyLocation[]> {
+  const r = await apiRequest<{ locations: CompanyLocation[] }>(`/settings/locations?companyId=${encodeURIComponent(companyId)}`)
+  return r?.locations ?? []
+}
+
+/** Guarda la lista COMPLETA de lugares de la empresa. */
+export async function saveLocations(companyId: string, locations: CompanyLocation[]): Promise<CompanyLocation[]> {
+  const r = await apiRequest<{ locations: CompanyLocation[] }>('/settings/locations', {
+    method: 'PUT',
+    body: { companyId, locations },
+  })
+  return r?.locations ?? []
+}
+
+/** Productos registrados en operaciones de un lugar (ubicación de inventario). */
+export async function getLocationProducts(companyId: string, locationId: string): Promise<LocationProduct[]> {
+  const r = await apiRequest<{ products: LocationProduct[] }>(
+    `/settings/locations/${encodeURIComponent(locationId)}/products?companyId=${encodeURIComponent(companyId)}`,
+  )
+  return r?.products ?? []
 }

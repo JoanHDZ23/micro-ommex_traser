@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Activity, ArrowDown, ArrowUp, CheckCircle2, ShieldCheck, Truck, UserRound, X } from 'lucide-react'
-import { apiRequest, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
+import { Activity, ArrowDown, ArrowUp, CheckCircle2, MapPin, ShieldCheck, Truck, UserRound, X } from 'lucide-react'
+import { apiRequest, getLocations, type CompanyLocation, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
 import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId, getOperatorName } from '../lib/context'
+import { useTracerFeatures } from '../lib/tracer-features'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { Button, Card, ErrorState, Input, SectionHeader } from '../components/ui'
 
@@ -67,6 +68,14 @@ export function NewOperationPage() {
       .then((r) => setSavedPlates(r.plates ?? []))
       .catch(() => { /* no plates */ })
   }, [companyId])
+
+  // Lugares/ubicaciones (solo si la empresa tiene la función habilitada).
+  const features = useTracerFeatures()
+  const [locations, setLocations] = useState<CompanyLocation[]>([])
+  useEffect(() => {
+    if (!companyId || !features.locationsEnabled) return
+    void getLocations(companyId).then(setLocations).catch(() => { /* sin lugares */ })
+  }, [companyId, features.locationsEnabled])
 
   const canSubmit = form.operatorName.trim() && (showPlate ? form.vehiclePlate?.trim() : true)
 
@@ -280,6 +289,54 @@ export function NewOperationPage() {
             error={fieldErrors.operatorName}
           />
         </Card>
+
+        {/* Lugar / ubicación (solo si la empresa habilitó la función) */}
+        {features.locationsEnabled && (
+          <Card padding="lg" className="space-y-3">
+            <div className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-rose-500" />
+              <label className="text-sm font-bold text-[var(--color-text)]">Lugar de la operación</label>
+            </div>
+            {locations.length === 0 ? (
+              <p className="text-xs text-[var(--color-text-3)]">
+                No hay lugares configurados. Agrégalos en Configuración → Lugares.
+              </p>
+            ) : (
+              <>
+                <p className="text-xs text-[var(--color-text-2)]">
+                  Elige dónde se realiza esta operación. Los productos quedarán asociados al lugar.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {locations.map((l) => {
+                    const active = form.locationId === l.id
+                    return (
+                      <button
+                        key={l.id}
+                        type="button"
+                        onClick={() => setForm((f) => ({ ...f, locationId: active ? undefined : l.id }))}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all min-h-[44px] flex flex-col items-start ${
+                          active
+                            ? 'border-rose-400 bg-rose-50 text-rose-700'
+                            : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-2)] hover:border-rose-300'
+                        }`}
+                      >
+                        <span className="flex items-center gap-1">
+                          {active && <CheckCircle2 className="w-3.5 h-3.5" />}
+                          {l.name}
+                        </span>
+                        {(l.address || l.city) && (
+                          <span className="text-[10px] font-normal opacity-70">
+                            {[l.address, l.city].filter(Boolean).join(' · ')}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+          </Card>
+        )}
 
         {/* Toggle placa del vehículo */}
         <Card padding="lg" className="space-y-4">

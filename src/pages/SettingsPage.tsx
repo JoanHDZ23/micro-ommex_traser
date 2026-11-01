@@ -8,11 +8,13 @@ import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
+import { MapPin } from 'lucide-react'
 import {
   Button, Card, ErrorState, Input, LoadingState, SectionHeader,
   SettingsGroup, SettingsToggleRow, SettingsNavRow, SettingsCustomRow,
 } from '../components/ui'
 import { invalidateTracerFeaturesCache } from '../lib/tracer-features'
+import { getLocations, saveLocations, type CompanyLocation } from '../lib/api'
 
 const SETTINGS_GUIDE: GuideStep[] = [
   {
@@ -99,6 +101,46 @@ export function SettingsPage() {
       .then((r) => { setDefaultTypes(r.defaults ?? []); setOpTypes(r.all ?? []); setOpTypesLimit(r.limit ?? 0) })
       .catch(() => { /* sin tipos aún */ })
   }, [companyId])
+
+  // ── Lugares / ubicaciones ──
+  const [locations, setLocations] = useState<CompanyLocation[]>([])
+  const [newLocName, setNewLocName] = useState('')
+  const [newLocAddress, setNewLocAddress] = useState('')
+  const [newLocCity, setNewLocCity] = useState('')
+  const [savingLocations, setSavingLocations] = useState(false)
+  const [feedbackLocations, setFeedbackLocations] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!companyId) return
+    void getLocations(companyId).then(setLocations).catch(() => { /* sin lugares aún */ })
+  }, [companyId])
+
+  const addLocation = () => {
+    const name = newLocName.trim()
+    if (!name) { setFeedbackLocations('Escribe el nombre del lugar.'); return }
+    if (locations.some((l) => l.name.toLowerCase() === name.toLowerCase())) {
+      setFeedbackLocations('Ya existe un lugar con ese nombre.'); return
+    }
+    setLocations((prev) => [...prev, { id: '', name, address: newLocAddress.trim() || undefined, city: newLocCity.trim() || undefined }])
+    setNewLocName(''); setNewLocAddress(''); setNewLocCity(''); setFeedbackLocations(null)
+  }
+  const updateLocation = (idx: number, patch: Partial<CompanyLocation>) => {
+    setLocations((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)))
+  }
+  const removeLocation = (idx: number) => {
+    setLocations((prev) => prev.filter((_, i) => i !== idx))
+  }
+  const handleSaveLocations = async () => {
+    if (!companyId) { setFeedbackLocations('No se encontró el ID de empresa.'); return }
+    setSavingLocations(true); setFeedbackLocations(null)
+    try {
+      const saved = await saveLocations(companyId, locations.map((l) => ({ id: l.id || undefined as unknown as string, name: l.name, address: l.address, city: l.city })))
+      setLocations(saved)
+      setFeedbackLocations('✓ Lugares guardados.')
+    } catch (err) {
+      setFeedbackLocations(err instanceof Error ? err.message : 'Error al guardar.')
+    } finally { setSavingLocations(false) }
+  }
 
   const limitReached = opTypesLimit > 0 && opTypes.length >= opTypesLimit
 
@@ -519,6 +561,96 @@ export function SettingsPage() {
           <div className="px-1"><ErrorState message={cleanupError} onRetry={() => void handleSaveCleanup()} /></div>
         )}
       </div>
+
+      {/* ── Lugares / ubicaciones (solo si el root habilita la función) ── */}
+      {can('locationsEnabled') && (
+        <Card as="section" className="space-y-3">
+          <div className="flex items-center gap-2">
+            <MapPin className="w-5 h-5 text-rose-500" />
+            <h3 className="text-sm font-semibold text-[var(--color-text)]">Lugares</h3>
+          </div>
+          <p className="text-xs text-[var(--color-text-2)]">
+            Define los lugares donde se realizan las operaciones (bodegas, locales, zonas). Al registrar una operación podrás elegir el lugar, y los productos quedarán asociados a él para saber dónde están ubicados.
+          </p>
+
+          {/* Lista editable de lugares */}
+          <div className="space-y-2">
+            {locations.length === 0 && (
+              <p className="text-[11px] text-[var(--color-text-3)]">No hay lugares. Agrega el primero abajo.</p>
+            )}
+            {locations.map((l, idx) => (
+              <div key={`${l.id || 'new'}-${idx}`} className="p-2.5 rounded-lg border space-y-2 bg-[var(--color-surface)] border-[var(--color-border)]">
+                <div className="flex items-end gap-2">
+                  <Input
+                    value={l.name}
+                    onChange={(e) => updateLocation(idx, { name: e.target.value })}
+                    placeholder="Nombre del lugar (ej. Bodega Norte)"
+                  />
+                  <button type="button" onClick={() => removeLocation(idx)} className="text-xs text-red-600 hover:text-red-700 flex-shrink-0 px-2 py-2">Quitar</button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Input
+                    value={l.address ?? ''}
+                    onChange={(e) => updateLocation(idx, { address: e.target.value })}
+                    placeholder="Dirección (opcional)"
+                  />
+                  <Input
+                    value={l.city ?? ''}
+                    onChange={(e) => updateLocation(idx, { city: e.target.value })}
+                    placeholder="Ciudad (opcional)"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Agregar nuevo lugar */}
+          <div className="space-y-2 pt-1 border-t border-[var(--color-border)]">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-3)]">Agregar lugar</p>
+            <Input
+              value={newLocName}
+              onChange={(e) => setNewLocName(e.target.value)}
+              placeholder="Nombre del lugar"
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <Input
+                value={newLocAddress}
+                onChange={(e) => setNewLocAddress(e.target.value)}
+                placeholder="Dirección (opcional)"
+              />
+              <Input
+                value={newLocCity}
+                onChange={(e) => setNewLocCity(e.target.value)}
+                placeholder="Ciudad (opcional)"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={addLocation}
+              className="w-full py-2 rounded-lg border border-rose-200 text-rose-600 text-sm font-medium hover:bg-rose-50 transition-colors"
+            >
+              + Agregar lugar
+            </button>
+          </div>
+
+          {feedbackLocations && (
+            <div className={`p-2.5 rounded-lg text-xs ${feedbackLocations.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+              {feedbackLocations}
+            </div>
+          )}
+        </Card>
+      )}
+
+      {can('locationsEnabled') && (
+        <Button
+          onClick={() => void handleSaveLocations()}
+          loading={savingLocations}
+          fullWidth
+          leftIcon={<Save className="w-4 h-4" />}
+        >
+          Guardar lugares
+        </Button>
+      )}
 
       {/* ── Tipos de operación ── */}
       <Card as="section" className="space-y-3">

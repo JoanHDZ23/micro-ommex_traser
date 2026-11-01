@@ -265,6 +265,7 @@ export function HistoryPage() {
                           <div className="flex items-center gap-2 mt-0.5">
                             <p className="flex-1 text-xs text-[var(--color-text-2)] truncate">
                               {operationTypeLabel(op.operationType, opTypes)} · {op.operatorName}
+                              {op.locationName ? ` · 📍 ${op.locationName}` : ''}
                               {op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
                               {op.lineaBlanca?.length ? ` · ${op.lineaBlanca.length} producto(s)` : ''}
                             </p>

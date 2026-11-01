@@ -162,6 +162,7 @@ export function OperationDetailPage() {
         <InfoCard icon={User} label="Operador" value={operation.operatorName} />
         <InfoCard icon={Calendar} label="Fecha" value={date.toLocaleDateString('es-CO')} />
         {operation.vehiclePlate && <InfoCard icon={MapPin} label="Detalle" value={operation.vehiclePlate} />}
+        {operation.locationName && <InfoCard icon={MapPin} label="Lugar" value={operation.locationName} />}
         <InfoCard icon={Clock} label="Hora" value={date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} />
         <InfoCard icon={Camera} label="Fotos" value={`${totalPhotos} total`} />
         {(operation.lineaBlanca ?? []).length > 0 && (
