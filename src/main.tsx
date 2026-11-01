@@ -10,8 +10,9 @@ import { initAuth } from './lib/auth'
 getCompanyId()
 
 // Valida la identidad y obtiene el token de sesión. Arranca el heartbeat que
-// mantiene viva la sesión (y el backend) mientras haya actividad, y cierra la
-// sesión tras 1 hora de inactividad. No bloquea el render.
+// mantiene viva la sesión (y el backend) mientras la app esté abierta. Solo
+// cierra la sesión si la app estuvo cerrada por completo más de 1 hora. No
+// bloquea el render.
 void initAuth()
 
 // Arranca el seguimiento de ubicación en segundo plano desde el inicio, para

@@ -6,25 +6,34 @@
  *    (companyId/user/role del portal) pidiendo un token a POST /auth/session.
  *  - El token se guarda en memoria + sessionStorage y se inyecta en cada
  *    petición al API (Authorization: Bearer).
- *  - Mientras la app esté abierta y haya actividad, un "heartbeat" periódico
- *    mantiene viva la sesión (y despierto el backend). Además, al volver el
- *    foco/red se dispara un keep-alive inmediato para recuperar la sesión sin
- *    esperar al siguiente tick.
- *  - Tras el periodo de inactividad (ver INACTIVITY_MS) la sesión se cierra
- *    (local + servidor). La siguiente acción que requiera token re-creará la
- *    sesión automáticamente.
+ *  - Mientras la app esté abierta, un "heartbeat" periódico mantiene viva la
+ *    sesión (y despierto el backend). Además, al volver el foco/red se dispara
+ *    un keep-alive inmediato para recuperar la sesión sin esperar al tick.
+ *  - La sesión NO se cierra por inactividad mientras la app esté abierta. Solo
+ *    se cierra cuando la app estuvo COMPLETAMENTE CERRADA por más de 1 hora:
+ *    se guarda de forma continua una marca "último visto" (lastSeen) y, al
+ *    arrancar, si esa marca tiene más de CLOSED_MAX_MS, se cierra la sesión.
  */
 import { getCompanyId, getOperatorName, getUserRole } from './context'
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
-/** Inactividad máxima en el cliente: 8 horas (protege sesiones largas de registro). */
-const INACTIVITY_MS = 8 * 60 * 60 * 1000
+/**
+ * Tiempo máximo que la app puede estar CERRADA antes de exigir re-iniciar
+ * sesión: 1 hora. Mientras la app esté abierta, la sesión no expira por
+ * inactividad (lastSeen se refresca de forma continua).
+ */
+const CLOSED_MAX_MS = 60 * 60 * 1000
 /** Periodo del heartbeat para mantener viva la sesión/backend: 3 minutos. */
 const HEARTBEAT_MS = 3 * 60 * 1000
 
 const SS_TOKEN = 'ommex_tracer_token'
-const SS_LAST_ACTIVITY = 'ommex_tracer_last_activity'
+/**
+ * Marca de "último visto" (timestamp). Vive en localStorage (NO sessionStorage)
+ * para que persista aunque se cierre la pestaña/app y así poder medir cuánto
+ * tiempo estuvo cerrada la app al volver a abrirla.
+ */
+const LS_LAST_SEEN = 'ommex_tracer_last_seen'
 
 let _token: string | null = null
 let _creating: Promise<string | null> | null = null
@@ -48,18 +57,26 @@ function storeToken(token: string | null): void {
   } catch { /* noop */ }
 }
 
-/** Marca de la última actividad del usuario (persistente por pestaña). */
+/**
+ * Refresca la marca "último visto". Se llama de forma continua mientras la app
+ * está abierta (heartbeat, actividad del usuario, al volver foco/red/pestaña),
+ * de modo que mientras la app siga abierta nunca se considere "cerrada".
+ */
 function markActivity(): void {
-  try { sessionStorage.setItem(SS_LAST_ACTIVITY, String(Date.now())) } catch { /* noop */ }
+  try { localStorage.setItem(LS_LAST_SEEN, String(Date.now())) } catch { /* noop */ }
 }
-function getLastActivity(): number {
-  try { return Number(sessionStorage.getItem(SS_LAST_ACTIVITY) || '0') } catch { return 0 }
+function getLastSeen(): number {
+  try { return Number(localStorage.getItem(LS_LAST_SEEN) || '0') } catch { return 0 }
 }
-/** True si el usuario superó el periodo de inactividad (INACTIVITY_MS). */
-function isInactive(): boolean {
-  const last = getLastActivity()
+/**
+ * True si la app estuvo cerrada por más de CLOSED_MAX_MS. Solo tiene sentido
+ * evaluarlo AL ARRANCAR: si la última marca "último visto" es muy antigua,
+ * significa que la app no estuvo abierta en ese intervalo (estuvo cerrada).
+ */
+function wasClosedTooLong(): boolean {
+  const last = getLastSeen()
   if (!last) return false
-  return Date.now() - last > INACTIVITY_MS
+  return Date.now() - last > CLOSED_MAX_MS
 }
 
 /** Token actual (si hay). */
@@ -148,7 +165,7 @@ export async function logout(): Promise<void> {
   const token = readStoredToken()
   stopHeartbeat()
   storeToken(null)
-  try { sessionStorage.removeItem(SS_LAST_ACTIVITY) } catch { /* noop */ }
+  try { localStorage.removeItem(LS_LAST_SEEN) } catch { /* noop */ }
   if (!token) return
   try {
     await fetch(`${BASE_URL}/auth/logout`, {
@@ -162,12 +179,9 @@ export async function logout(): Promise<void> {
 async function sendHeartbeat(): Promise<void> {
   const token = readStoredToken()
   if (!token) return
-  // Si el usuario lleva >1h inactivo, cerramos sesión en vez de mantenerla viva.
-  if (isInactive()) {
-    await logout()
-    window.dispatchEvent(new CustomEvent('session:expired'))
-    return
-  }
+  // La app está abierta: refresca "último visto" para que nunca se considere
+  // cerrada mientras siga en uso. Ya NO se cierra por inactividad.
+  markActivity()
   try {
     const res = await fetch(`${BASE_URL}/auth/heartbeat`, {
       method: 'POST',
@@ -234,6 +248,14 @@ function bindActivityListeners(): void {
  * arranca el heartbeat. Seguro de llamar varias veces.
  */
 export async function initAuth(): Promise<void> {
+  // Si la app estuvo COMPLETAMENTE CERRADA por más de 1 hora, cerramos la
+  // sesión previa y avisamos. (El token vive en sessionStorage y normalmente
+  // ya no estará, pero esto limpia el estado del servidor y la marca local.)
+  if (wasClosedTooLong()) {
+    await logout()
+    window.dispatchEvent(new CustomEvent('session:expired'))
+    return
+  }
   markActivity()
   await ensureSession()
   startHeartbeat()

@@ -56,7 +56,8 @@ function prefetchCommonRoutes(): void {
 }
 
 export default function App() {
-  // Aviso cuando la sesión se cierra por inactividad (1 hora sin actividad).
+  // Aviso cuando la sesión se cierra: ocurre solo si la app estuvo cerrada por
+  // completo más de 1 hora (ya no por inactividad con la app abierta).
   const [sessionExpired, setSessionExpired] = useState(false)
 
   // Req 1.5: si no hay forma de identificar la empresa (ni por URL, ni por
@@ -77,7 +78,7 @@ export default function App() {
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
-  // Escucha el cierre de sesión por inactividad para avisar al usuario.
+  // Escucha el cierre de sesión (app cerrada >1h) para avisar al usuario.
   useEffect(() => {
     const onExpired = () => setSessionExpired(true)
     window.addEventListener('session:expired', onExpired as EventListener)
@@ -128,9 +129,9 @@ export default function App() {
         <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-white rounded-2xl p-5 space-y-4 shadow-xl text-center">
             <div className="text-3xl">🔒</div>
-            <h3 className="text-base font-bold text-gray-800">Sesión cerrada por inactividad</h3>
+            <h3 className="text-base font-bold text-gray-800">Sesión cerrada</h3>
             <p className="text-sm text-gray-500">
-              Tu sesión se cerró tras una hora sin actividad. Vuelve a iniciar sesión para continuar.
+              La app estuvo cerrada por más de una hora. Vuelve a iniciar sesión para continuar.
             </p>
             <button
               onClick={() => { setSessionExpired(false); void renewSession() }}

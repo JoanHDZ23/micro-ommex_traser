@@ -123,12 +123,10 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
   // 401 en ruta protegida: la sesión pudo expirar/invalidarse. Re-crea el token
   // y reintenta UNA vez. Si vuelve a fallar, se trata como error normal.
   if (response.status === 401 && !isAuthEndpoint) {
-    let errData: { code?: string } | null = null
-    try { errData = JSON.parse(await response.clone().text()) } catch { /* ignore */ }
-    // SESSION_EXPIRED = cerrada por inactividad: notifica y no reintenta en bucle.
-    if (errData?.code === 'SESSION_EXPIRED') {
-      window.dispatchEvent(new CustomEvent('session:expired'))
-    }
+    // La sesión del servidor pudo invalidarse (p. ej. reinicio del backend).
+    // Mientras la app esté abierta NO molestamos al usuario: recreamos el token
+    // de forma transparente y reintentamos. Solo si la renovación FALLA se
+    // notifica el cierre de sesión (muestra el aviso para reanudar).
     const fresh = await renewSession()
     if (fresh) {
       config = buildConfig(fresh)
@@ -137,6 +135,8 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
       } catch {
         throw new Error('No se pudo reconectar la sesión. Intenta de nuevo.')
       }
+    } else {
+      window.dispatchEvent(new CustomEvent('session:expired'))
     }
   }
 
