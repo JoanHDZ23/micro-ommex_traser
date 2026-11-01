@@ -1849,11 +1849,14 @@ export function WizardPage() {
             <span className="text-[11px] text-gray-400">
               {new Date(operation.createdAt ?? Date.now()).toLocaleDateString('es-CO', { day: '2-digit', month: '2-digit', year: '2-digit' })}
             </span>
-            {operation.locationName && (
+            {(operation.destination || operation.locationName) && (
               <>
                 <span className="text-[11px] text-gray-400">·</span>
                 <span className="text-[11px] text-rose-500 flex items-center gap-0.5">
-                  <MapPin className="w-2.5 h-2.5" /> {operation.locationName}
+                  <MapPin className="w-2.5 h-2.5" />
+                  {operation.isTransfer && operation.origin
+                    ? `${operation.origin.name} → ${operation.destination?.name ?? operation.locationName}`
+                    : (operation.destination?.name ?? operation.locationName)}
                 </span>
               </>
             )}

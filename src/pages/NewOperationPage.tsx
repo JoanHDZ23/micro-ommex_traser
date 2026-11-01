@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Activity, ArrowDown, ArrowUp, CheckCircle2, MapPin, ShieldCheck, Truck, UserRound, X } from 'lucide-react'
-import { apiRequest, getLocations, type CompanyLocation, type CreateOperationPayload, type Operation, type OperationType } from '../lib/api'
+import { Activity, ArrowDown, ArrowRight, ArrowUp, CheckCircle2, MapPin, ShieldCheck, Truck, UserRound, X } from 'lucide-react'
+import { apiRequest, getLocations, type CompanyLocation, type CreateOperationPayload, type LocationRef, type Operation, type OperationType } from '../lib/api'
 import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { useTracerFeatures } from '../lib/tracer-features'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
+import { LocationPicker } from '../components/LocationPicker'
 import { Button, Card, ErrorState, Input, SectionHeader } from '../components/ui'
 
 const NEW_OP_GUIDE: GuideStep[] = [
@@ -72,12 +73,19 @@ export function NewOperationPage() {
   // Lugares/ubicaciones (solo si la empresa tiene la función habilitada).
   const features = useTracerFeatures()
   const [locations, setLocations] = useState<CompanyLocation[]>([])
+  const [isTransfer, setIsTransfer] = useState(false)
+  const [destination, setDestination] = useState<LocationRef | null>(null)
+  const [origin, setOrigin] = useState<LocationRef | null>(null)
   useEffect(() => {
     if (!companyId || !features.locationsEnabled) return
     void getLocations(companyId).then(setLocations).catch(() => { /* sin lugares */ })
   }, [companyId, features.locationsEnabled])
 
-  const canSubmit = form.operatorName.trim() && (showPlate ? form.vehiclePlate?.trim() : true)
+  // Un traspaso requiere destino. Un vehículo requiere placa no vacía.
+  const destValid = !destination || destination.type !== 'vehiculo' || Boolean(destination.placa?.trim())
+  const transferReady = !isTransfer || (Boolean(destination) && destValid)
+
+  const canSubmit = form.operatorName.trim() && (showPlate ? form.vehiclePlate?.trim() : true) && transferReady
 
   // Color del banner según tipo (entrega/salida) y tokens temáticos para modo claro/oscuro
   const heroStyle = useMemo(() => {
@@ -110,9 +118,25 @@ export function NewOperationPage() {
     setError(null)
 
     try {
+      // Normaliza el destino de vehículo (placa sin espacios/guiones).
+      const normDest: LocationRef | undefined = destination
+        ? destination.type === 'vehiculo'
+          ? { type: 'vehiculo', placa: (destination.placa ?? '').toUpperCase().replace(/[^A-Z0-9]/g, ''), name: (destination.placa ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '') }
+          : destination
+        : undefined
+      const normOrigin: LocationRef | undefined = origin
+        ? origin.type === 'vehiculo'
+          ? { type: 'vehiculo', placa: (origin.placa ?? '').toUpperCase().replace(/[^A-Z0-9]/g, ''), name: (origin.placa ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '') }
+          : origin
+        : undefined
       const payload: CreateOperationPayload = {
         ...form,
         vehiclePlate: showPlate ? form.vehiclePlate : undefined,
+        ...(features.locationsEnabled ? {
+          isTransfer: isTransfer || undefined,
+          destination: normDest,
+          origin: isTransfer ? normOrigin : undefined,
+        } : {}),
       }
       // Save plate for reuse (backend, per company)
       if (showPlate && form.vehiclePlate?.trim() && companyId) {
@@ -290,51 +314,50 @@ export function NewOperationPage() {
           />
         </Card>
 
-        {/* Lugar / ubicación (solo si la empresa habilitó la función) */}
+        {/* Ubicación / traspaso (solo si la empresa habilitó la función) */}
         {features.locationsEnabled && (
-          <Card padding="lg" className="space-y-3">
-            <div className="flex items-center gap-2">
-              <MapPin className="w-4 h-4 text-rose-500" />
-              <label className="text-sm font-bold text-[var(--color-text)]">Lugar de la operación</label>
-            </div>
-            {locations.length === 0 ? (
-              <p className="text-xs text-[var(--color-text-3)]">
-                No hay lugares configurados. Agrégalos en Configuración → Lugares.
-              </p>
-            ) : (
-              <>
-                <p className="text-xs text-[var(--color-text-2)]">
-                  Elige dónde se realiza esta operación. Los productos quedarán asociados al lugar.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {locations.map((l) => {
-                    const active = form.locationId === l.id
-                    return (
-                      <button
-                        key={l.id}
-                        type="button"
-                        onClick={() => setForm((f) => ({ ...f, locationId: active ? undefined : l.id }))}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all min-h-[44px] flex flex-col items-start ${
-                          active
-                            ? 'border-rose-400 bg-rose-50 text-rose-700'
-                            : 'border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-2)] hover:border-rose-300'
-                        }`}
-                      >
-                        <span className="flex items-center gap-1">
-                          {active && <CheckCircle2 className="w-3.5 h-3.5" />}
-                          {l.name}
-                        </span>
-                        {(l.address || l.city) && (
-                          <span className="text-[10px] font-normal opacity-70">
-                            {[l.address, l.city].filter(Boolean).join(' · ')}
-                          </span>
-                        )}
-                      </button>
-                    )
-                  })}
+          <Card padding="lg" className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-rose-500" />
+                <label className="text-sm font-bold text-[var(--color-text)]">Ubicación</label>
+              </div>
+              {/* Toggle "Es traspaso" */}
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <span className={`text-xs font-semibold ${isTransfer ? 'text-rose-600' : 'text-[var(--color-text-3)]'}`}>
+                  Es traspaso
+                </span>
+                <div className="relative" onClick={() => setIsTransfer((v) => !v)}>
+                  <div className={`w-11 h-6 rounded-full transition-colors ${isTransfer ? 'bg-rose-500' : 'bg-gray-300'}`} />
+                  <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${isTransfer ? 'translate-x-5' : 'translate-x-0'}`} />
                 </div>
-              </>
+              </label>
+            </div>
+
+            {/* Origen (solo en traspaso) → Destino */}
+            {isTransfer && (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text-2)]">
+                  <span>Origen (punto de inicio)</span>
+                  <span className="text-[10px] font-normal text-[var(--color-text-3)]">— opcional</span>
+                </div>
+                <LocationPicker value={origin} places={locations} onChange={setOrigin} accent="#64748b" />
+                <div className="flex justify-center text-[var(--color-text-3)] py-0.5">
+                  <ArrowRight className="w-4 h-4 rotate-90" />
+                </div>
+              </div>
             )}
+
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--color-text-2)]">
+                <span>{isTransfer ? 'Destino (punto final)' : 'Lugar de la operación'}</span>
+                {isTransfer && <span className="text-[10px] font-normal text-rose-500">— requerido</span>}
+              </div>
+              <LocationPicker value={destination} places={locations} onChange={setDestination} accent="#e11d48" />
+              <p className="text-[10px] text-[var(--color-text-3)]">
+                Los productos del registro quedarán ubicados en el {isTransfer ? 'destino' : 'lugar'} seleccionado.
+              </p>
+            </div>
           </Card>
         )}
 

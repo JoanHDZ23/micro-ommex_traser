@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertCircle, ArrowRight, CalendarDays, Camera, Check, Loader2, Package, Pencil, Plus, QrCode, Search, Trash2, X } from 'lucide-react'
-import { apiRequest, type Operation } from '../lib/api'
+import { AlertCircle, ArrowRight, CalendarDays, Camera, Check, Loader2, MapPin, Package, Pencil, Plus, QrCode, Search, Trash2, Truck, X } from 'lucide-react'
+import { apiRequest, getProductMovements, type LocationRef, type Operation, type ProductMovement } from '../lib/api'
 import { getCompanyId } from '../lib/context'
+import { useTracerFeatures } from '../lib/tracer-features'
 import { BarcodeScanner } from '../components/BarcodeScanner'
 import { compressImageToBase64 } from '../lib/image-compress'
 import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, SectionHeader } from '../components/ui'
@@ -25,6 +26,21 @@ interface CatalogProduct {
   registrosCount: number
   catalogPhotos?: Array<{ fileId: string; comment?: string }>
   assignments: Assignment[]
+  /** Ubicación actual (último movimiento) o null si no tiene. */
+  currentLocation?: LocationRef | null
+}
+
+/** Chip pequeño con la ubicación actual de un producto. */
+function LocationChip({ loc }: { loc: LocationRef | null | undefined }) {
+  if (!loc) {
+    return <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-3)]"><MapPin className="w-3 h-3" /> Sin ubicación</span>
+  }
+  const Icon = loc.type === 'vehiculo' ? Truck : MapPin
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium text-rose-600">
+      <Icon className="w-3 h-3" /> {loc.name}
+    </span>
+  )
 }
 
 /** Clave de día (YYYY-MM-DD) en horario local a partir de un ISO. */
@@ -56,6 +72,7 @@ interface DayGroup {
 export function ProductsCatalogPage() {
   const navigate = useNavigate()
   const companyId = getCompanyId()
+  const { locationsEnabled } = useTracerFeatures()
   const [products, setProducts] = useState<CatalogProduct[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -165,6 +182,7 @@ export function ProductsCatalogPage() {
             ? 'Solo en catálogo · sin registro'
             : `${p.registrosCount} registro(s) · ${p.totalPhotos} foto(s)`}
         </p>
+        {locationsEnabled && <div className="mt-0.5"><LocationChip loc={p.currentLocation} /></div>}
       </div>
       {p.registrosCount === 0 && (
         <Badge tone="neutral">catálogo</Badge>
@@ -181,9 +199,16 @@ export function ProductsCatalogPage() {
         subtitle={`${products.length} producto(s) registrado(s)`}
         onBack={() => (openDay ? setOpenDay(null) : navigate('/'))}
         actions={
-          <Button size="sm" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowRegister(true)}>
-            Registrar
-          </Button>
+          <div className="flex items-center gap-2">
+            {locationsEnabled && (
+              <Button size="sm" variant="secondary" leftIcon={<MapPin className="w-4 h-4" />} onClick={() => navigate('/settings')}>
+                Lugares
+              </Button>
+            )}
+            <Button size="sm" leftIcon={<Plus className="w-4 h-4" />} onClick={() => setShowRegister(true)}>
+              Registrar
+            </Button>
+          </div>
         }
       />
 
@@ -291,6 +316,7 @@ export function ProductsCatalogPage() {
         <ProductDetailModal
           product={detailProduct}
           companyId={companyId}
+          locationsEnabled={locationsEnabled}
           onClose={() => setDetailProduct(null)}
           onChanged={() => void load()}
           onOpenRegister={(tc) => { setDetailProduct(null); navigate(`/operation/${tc}`) }}
@@ -444,14 +470,21 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
 }
 
 /** Modal de detalle de un producto: editar, agregar fotos y asignar a un registro */
-function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegister }: {
+function ProductDetailModal({ product, companyId, locationsEnabled, onClose, onChanged, onOpenRegister }: {
   product: CatalogProduct
   companyId: string
+  locationsEnabled: boolean
   onClose: () => void
   onChanged: () => void
   onOpenRegister: (trackingCode: string) => void
 }) {
   const [editing, setEditing] = useState(false)
+  // Recorrido (historial de movimientos) del producto.
+  const [movements, setMovements] = useState<ProductMovement[] | null>(null)
+  useEffect(() => {
+    if (!locationsEnabled || !companyId) return
+    void getProductMovements(companyId, product.productCode).then(setMovements).catch(() => setMovements([]))
+  }, [locationsEnabled, companyId, product.productCode])
   const [code, setCode] = useState(product.productCode)
   const [descripcion, setDescripcion] = useState(product.descripcion ?? '')
   const [saving, setSaving] = useState(false)
@@ -639,6 +672,43 @@ function ProductDetailModal({ product, companyId, onClose, onChanged, onOpenRegi
               </div>
             )}
           </section>
+
+          {/* ── Recorrido (ubicación actual + historial de movimientos) ── */}
+          {locationsEnabled && (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold text-gray-500 uppercase">Recorrido</h4>
+                <LocationChip loc={product.currentLocation} />
+              </div>
+              {movements === null ? (
+                <p className="text-[11px] text-gray-400">Cargando recorrido…</p>
+              ) : movements.length === 0 ? (
+                <p className="text-[11px] text-gray-400">Sin recorrido registrado. Este producto aún no tiene ubicación.</p>
+              ) : (
+                <ol className="space-y-1.5">
+                  {movements.map((m, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs">
+                      <div className="flex flex-col items-center pt-0.5">
+                        <span className="w-2 h-2 rounded-full bg-rose-500" />
+                        {i < movements.length - 1 && <span className="w-px flex-1 bg-gray-200 min-h-[18px]" />}
+                      </div>
+                      <div className="flex-1 min-w-0 pb-1">
+                        <p className="text-gray-700">
+                          <span className="text-gray-400">{m.from ? m.from.name : 'Sin origen'}</span>
+                          {' → '}
+                          <span className="font-semibold text-gray-800">{m.to.name}</span>
+                          {m.inferred && <span className="ml-1 text-[9px] text-amber-600">(inferido)</span>}
+                        </p>
+                        <p className="text-[10px] text-gray-400">
+                          {m.trackingCode} · {new Date(m.at).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+          )}
 
           {/* ── Fotos: ver, agregar y quitar ── */}
           <section className="space-y-2">

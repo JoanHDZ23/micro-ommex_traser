@@ -233,14 +233,40 @@ export interface LineaBlancaProduct {
   createdAt: string
 }
 
+/** Tipo de ubicación: Lugar configurado o Vehículo (por placa). */
+export type LocationType = 'lugar' | 'vehiculo'
+
+/** Referencia a una ubicación (origen/destino de operaciones y movimientos). */
+export interface LocationRef {
+  type: LocationType
+  id?: string
+  placa?: string
+  name: string
+}
+
+/** Movimiento de un producto entre ubicaciones (un paso del recorrido). */
+export interface ProductMovement {
+  from: LocationRef | null
+  to: LocationRef
+  trackingCode: string
+  inferred: boolean
+  at: string
+}
+
 export interface Operation {
   trackingCode: string
   operationType: OperationType
   operatorName: string
   vehiclePlate?: string
-  /** Lugar donde se realiza la operación. */
+  /** Lugar donde se realiza la operación (legacy; reflejo del destino de tipo lugar). */
   locationId?: string
   locationName?: string
+  /** true si la operación es un traspaso entre ubicaciones. */
+  isTransfer?: boolean
+  /** Punto de inicio del traspaso (opcional). */
+  origin?: LocationRef
+  /** Punto final: ubicación donde quedan los productos. */
+  destination?: LocationRef
   companyId?: string
   photos: PhotoRecord[]
   lineaBlanca: LineaBlancaProduct[]
@@ -258,8 +284,14 @@ export interface CreateOperationPayload {
   operationType: OperationType
   operatorName: string
   vehiclePlate?: string
-  /** Lugar donde se realiza la operación. */
+  /** Lugar donde se realiza la operación (legacy). */
   locationId?: string
+  /** true si la operación es un traspaso. */
+  isTransfer?: boolean
+  /** Punto de inicio del traspaso (opcional). */
+  origin?: LocationRef
+  /** Punto final: ubicación donde quedan los productos. */
+  destination?: LocationRef
   companyId?: string
 }
 
@@ -478,10 +510,26 @@ export async function saveLocations(companyId: string, locations: CompanyLocatio
   return r?.locations ?? []
 }
 
-/** Productos registrados en operaciones de un lugar (ubicación de inventario). */
+/** Productos cuya ubicación actual es el LUGAR indicado. */
 export async function getLocationProducts(companyId: string, locationId: string): Promise<LocationProduct[]> {
   const r = await apiRequest<{ products: LocationProduct[] }>(
     `/settings/locations/${encodeURIComponent(locationId)}/products?companyId=${encodeURIComponent(companyId)}`,
   )
   return r?.products ?? []
+}
+
+/** Productos cuya ubicación actual es el VEHÍCULO con esa placa. */
+export async function getVehicleProducts(companyId: string, placa: string): Promise<LocationProduct[]> {
+  const r = await apiRequest<{ products: LocationProduct[] }>(
+    `/settings/locations/by-vehicle/${encodeURIComponent(placa)}/products?companyId=${encodeURIComponent(companyId)}`,
+  )
+  return r?.products ?? []
+}
+
+/** Recorrido (historial de movimientos) de un producto, orden cronológico ascendente. */
+export async function getProductMovements(companyId: string, productCode: string): Promise<ProductMovement[]> {
+  const r = await apiRequest<{ movements: ProductMovement[] }>(
+    `/operations/products/${encodeURIComponent(productCode)}/movements?companyId=${encodeURIComponent(companyId)}`,
+  )
+  return r?.movements ?? []
 }
