@@ -188,6 +188,12 @@ export function WizardPage() {
   // ── Captura con la app de cámara del dispositivo (estilo WhatsApp) ──
   // Las fotos tomadas se acumulan aquí y se revisan antes de enviar.
   const [captureTray, setCaptureTray] = useState<string[]>([]) // dataURLs de las fotos tomadas
+  // Comentario OPCIONAL por cada foto de la bandeja (paralelo a captureTray).
+  // Estilo WhatsApp: cada foto puede llevar su propio texto.
+  const [trayComments, setTrayComments] = useState<string[]>([])
+  // Índice de la foto que se está viendo a pantalla completa (visor estilo
+  // WhatsApp con barra "Añade un comentario…"). null = visor cerrado.
+  const [trayFullIdx, setTrayFullIdx] = useState<number | null>(null)
   const [showCaptureTray, setShowCaptureTray] = useState(false)
   const [trayMessage, setTrayMessage] = useState('')
   const [traySending, setTraySending] = useState(false)
@@ -771,6 +777,7 @@ export function WizardPage() {
       const base64 = await compressImageToBase64(file, stampOpts)
       const dataUrl = `data:image/jpeg;base64,${base64}`
       setCaptureTray((prev) => [...prev, dataUrl])
+      setTrayComments((prev) => [...prev, ''])
       setShowCaptureTray(true)
     } catch {
       setFeedback('No se pudo leer la foto')
@@ -779,6 +786,17 @@ export function WizardPage() {
 
   const removeTrayPhoto = (idx: number) => {
     setCaptureTray((prev) => prev.filter((_, i) => i !== idx))
+    setTrayComments((prev) => prev.filter((_, i) => i !== idx))
+  }
+
+  /** Actualiza el comentario opcional de la foto `idx` de la bandeja. */
+  const setTrayCommentAt = (idx: number, text: string) => {
+    setTrayComments((prev) => {
+      const next = [...prev]
+      while (next.length < idx + 1) next.push('')
+      next[idx] = text
+      return next
+    })
   }
 
   // Agrega uno o varios File de imagen a la bandeja (reutilizable: drop, galería, pegar).
@@ -810,13 +828,18 @@ export function WizardPage() {
       if (r.status === 'fulfilled') dataUrls.push(`data:image/jpeg;base64,${r.value}`)
       else failed++
     }
-    if (dataUrls.length) setCaptureTray((prev) => [...prev, ...dataUrls])
+    if (dataUrls.length) {
+      setCaptureTray((prev) => [...prev, ...dataUrls])
+      setTrayComments((prev) => [...prev, ...dataUrls.map(() => '')])
+    }
     if (failed) setFeedback(`No se pudieron procesar ${failed} imagen(es)`)
   }, [])
 
   const cancelCaptureTray = () => {
     setShowCaptureTray(false)
     setCaptureTray([])
+    setTrayComments([])
+    setTrayFullIdx(null)
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
     setTrayProductCode(null)
@@ -899,12 +922,18 @@ export function WizardPage() {
     setTraySending(true)
     const message = trayMessage.trim()
     const photos = [...captureTray]
+    const comments = [...trayComments]
+    // Comentario efectivo de la foto `i`: el comentario propio de la foto si lo
+    // tiene; si no, el mensaje global solo para la primera (compatibilidad).
+    const commentAt = (i: number) => (comments[i]?.trim() ? comments[i].trim() : (i === 0 ? message : ''))
     const editingIdx = trayEditingPhotoIdx
     const linkedProduct = trayProductCode
 
     // Cerramos el modal de inmediato; la subida sigue en segundo plano.
     setShowCaptureTray(false)
     setCaptureTray([])
+    setTrayComments([])
+    setTrayFullIdx(null)
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
     setTrayProductCode(null)
@@ -923,8 +952,9 @@ export function WizardPage() {
         } else {
           await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'PATCH', body: { comment: message } })
         }
-        for (const p of extras) {
-          await uploadSinglePhoto(p.split(',')[1] ?? '', '', false)
+        extras.forEach(() => { /* el comentario por foto se aplica abajo */ })
+        for (let e = 0; e < extras.length; e++) {
+          await uploadSinglePhoto(extras[e].split(',')[1] ?? '', commentAt(e + 1), false)
         }
         await loadOperation()
         setFeedback('✓ Foto actualizada')
@@ -954,7 +984,7 @@ export function WizardPage() {
         const items = photos
           .map((p, i) => ({
             base64Image: p.split(',')[1] ?? '',
-            comment: i === 0 ? message : '',
+            comment: commentAt(i),
             clientTimestamp,
             clientKey: makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`),
           }))
@@ -981,10 +1011,11 @@ export function WizardPage() {
         const base64 = photos[i].split(',')[1] ?? ''
         if (!base64) continue
         const clientKey = makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`)
-        const cached = await cachePhoto({ trackingCode, base64, comment: i === 0 ? message : '', clientKey })
+        const cmt = commentAt(i)
+        const cached = await cachePhoto({ trackingCode, base64, comment: cmt, clientKey })
         setLocalPhotos((prev) => [...prev, cached])
         cachedIds.push(cached.id)
-        items.push({ base64Image: base64, comment: i === 0 ? message : '', clientTimestamp, clientKey })
+        items.push({ base64Image: base64, comment: cmt, clientTimestamp, clientKey })
       }
       setFeedback(photos.length > 1 ? `⏳ Subiendo ${photos.length} fotos...` : '⏳ Subiendo foto...')
       // SIEMPRE batch (una sola petición atómica e idempotente).
@@ -1488,6 +1519,7 @@ export function WizardPage() {
     if (!src) { setFeedback('No se puede editar esta foto (aún no está disponible).'); return }
     setTrayEditingPhotoIdx(photoIndex)
     setCaptureTray([src])
+    setTrayComments([photo.comment ?? ''])
     setTrayMessage(photo.comment ?? '')
     setEditingPhotoIdx(null)
     setShowCaptureTray(true)
@@ -3276,7 +3308,12 @@ export function WizardPage() {
               >
                 {captureTray.map((src, i) => (
                   <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
-                    <img src={src} className="w-full h-full object-cover" />
+                    {/* Tocar la foto abre el visor a pantalla completa para
+                        agregarle un comentario opcional (estilo WhatsApp). */}
+                    <button type="button" onClick={() => setTrayFullIdx(i)} aria-label="Abrir foto y agregar comentario"
+                      className="absolute inset-0 w-full h-full">
+                      <img src={src} className="w-full h-full object-cover" />
+                    </button>
                     {features.markerEditor && (
                       <button onClick={() => setTrayEditIdx(i)} aria-label="Editar foto"
                         className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
@@ -3286,6 +3323,15 @@ export function WizardPage() {
                     <button onClick={() => removeTrayPhoto(i)} aria-label="Quitar foto"
                       className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
                       <X className="w-3.5 h-3.5 text-white" />
+                    </button>
+                    {/* Indicador de comentario (abajo). Si tiene texto, lo
+                        muestra; si no, invita a tocar para agregarlo. */}
+                    <button type="button" onClick={() => setTrayFullIdx(i)}
+                      className="absolute bottom-0 inset-x-0 flex items-center gap-1 px-1.5 py-1 bg-gradient-to-t from-black/70 to-transparent text-left">
+                      <MessageCircle className="w-3 h-3 text-white/90 flex-shrink-0" />
+                      <span className={`text-[9px] truncate ${trayComments[i]?.trim() ? 'text-white' : 'text-white/60'}`}>
+                        {trayComments[i]?.trim() || 'Añade un comentario…'}
+                      </span>
                     </button>
                   </div>
                 ))}
@@ -3376,16 +3422,17 @@ export function WizardPage() {
                 </div>
               )}
 
-              {/* Mensaje (como en WhatsApp) */}
+              {/* Mensaje general (opcional). Aplica a las fotos que no tengan
+                  su propio comentario. Toca cada foto para comentarla aparte. */}
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-gray-600">Mensaje (opcional)</label>
+                <label className="text-xs font-medium text-gray-600">Comentario general (opcional)</label>
                 <textarea
                   value={trayMessage}
                   onChange={(e) => setTrayMessage(e.target.value)}
-                  placeholder="Escribe un comentario para estas fotos... (o pega una imagen)"
+                  placeholder="Comentario para las fotos sin texto propio… (toca una foto para comentarla aparte)"
                   rows={2}
-                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 resize-none"
-                  autoFocus />
+                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 resize-none" />
+                <p className="text-[10px] text-gray-400">Toca una foto para agregarle un comentario individual.</p>
               </div>
             </div>
 
@@ -3404,6 +3451,83 @@ export function WizardPage() {
                   : trayProductCode
                     ? `Guardar en ${trayProductCode} (${captureTray.length})`
                     : `Enviar ${captureTray.length > 0 ? `(${captureTray.length})` : ''}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Visor de foto a pantalla completa con comentario (estilo WhatsApp) ──
+          Estructura: imagen grande, header con cerrar/editar, tira de
+          miniaturas y barra "Añade un comentario…" + botón enviar. El
+          comentario es opcional y se guarda por foto. Usa la paleta propia
+          (no los colores de WhatsApp). */}
+      {trayFullIdx !== null && captureTray[trayFullIdx] && (
+        <div className="fixed inset-0 z-[98] bg-black flex flex-col">
+          {/* Header */}
+          <div className="flex-shrink-0 flex items-center justify-between px-3 py-3">
+            <button onClick={() => setTrayFullIdx(null)} aria-label="Cerrar"
+              className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
+              <X className="w-5 h-5 text-white" />
+            </button>
+            <span className="text-white/80 text-xs font-medium">
+              {trayFullIdx + 1} / {captureTray.length}
+            </span>
+            {features.markerEditor ? (
+              <button onClick={() => { const idx = trayFullIdx; setTrayFullIdx(null); setTrayEditIdx(idx) }} aria-label="Editar foto"
+                className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
+                <Pencil className="w-5 h-5 text-white" />
+              </button>
+            ) : <span className="w-10 h-10" />}
+          </div>
+
+          {/* Imagen */}
+          <div className="flex-1 min-h-0 flex items-center justify-center px-2">
+            <img src={captureTray[trayFullIdx]} alt={`Foto ${trayFullIdx + 1}`} className="max-w-full max-h-full object-contain" />
+          </div>
+
+          {/* Pie: comentario + miniaturas + enviar */}
+          <div className="flex-shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 space-y-2.5">
+            {/* Barra de comentario */}
+            <div className="flex items-center gap-2 bg-white/10 rounded-full px-3 py-2">
+              <MessageCircle className="w-4 h-4 text-white/60 flex-shrink-0" />
+              <input
+                type="text"
+                value={trayComments[trayFullIdx] ?? ''}
+                onChange={(e) => setTrayCommentAt(trayFullIdx!, e.target.value)}
+                placeholder="Añade un comentario…"
+                className="flex-1 bg-transparent text-white text-sm placeholder-white/50 focus:outline-none"
+                autoFocus
+              />
+            </div>
+
+            {/* Tira de miniaturas + botón enviar */}
+            <div className="flex items-end gap-2">
+              <div className="flex-1 flex items-center gap-1.5 overflow-x-auto py-1">
+                {captureTray.map((src, i) => (
+                  <button key={i} type="button" onClick={() => setTrayFullIdx(i)}
+                    className={`relative w-11 h-11 rounded-md overflow-hidden flex-shrink-0 ${i === trayFullIdx ? 'ring-2 ring-white' : 'opacity-70'}`}>
+                    <img src={src} className="w-full h-full object-cover" />
+                    {trayComments[i]?.trim() && (
+                      <span className="absolute bottom-0 right-0 w-3 h-3 rounded-tl bg-[var(--color-primary)] flex items-center justify-center">
+                        <MessageCircle className="w-2 h-2 text-white" />
+                      </span>
+                    )}
+                  </button>
+                ))}
+                {/* Agregar otra foto desde el visor */}
+                <button type="button" onClick={openNativeCamera} aria-label="Tomar otra foto"
+                  className="w-11 h-11 rounded-md border-2 border-dashed border-white/40 flex items-center justify-center flex-shrink-0 text-white/70">
+                  <Camera className="w-5 h-5" />
+                </button>
+              </div>
+              {/* Enviar toda la bandeja */}
+              <button
+                onClick={() => void sendCaptureTray()}
+                disabled={traySending || captureTray.length === 0}
+                aria-label="Enviar"
+                className="w-12 h-12 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center flex-shrink-0 disabled:opacity-50 active:scale-95 shadow-lg">
+                {traySending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
               </button>
             </div>
           </div>
