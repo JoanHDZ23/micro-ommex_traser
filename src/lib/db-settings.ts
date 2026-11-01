@@ -61,9 +61,19 @@ const LS_KEY = 'ommex_db_settings:'
 function readLocal(companyId: string): CompanyDbSettings {
   try {
     const raw = localStorage.getItem(LS_KEY + companyId)
-    if (raw) return JSON.parse(raw) as CompanyDbSettings
+    if (raw) return normalize(JSON.parse(raw))
   } catch { /* ignore */ }
   return { columns: {} }
+}
+
+/** Garantiza que el objeto tenga siempre `columns` como mapa válido. */
+function normalize(data: unknown): CompanyDbSettings {
+  const obj = (data && typeof data === 'object' ? data : {}) as Partial<CompanyDbSettings>
+  return {
+    primarySheetId: obj.primarySheetId,
+    primarySheetName: obj.primarySheetName,
+    columns: (obj.columns && typeof obj.columns === 'object' ? obj.columns : {}) as Record<string, SheetColumnSettings>,
+  }
 }
 
 function writeLocal(companyId: string, data: CompanyDbSettings): void {
@@ -77,6 +87,8 @@ function getCompany(companyId: string): CompanyDbSettings {
     data = readLocal(companyId)
     cache.set(companyId, data)
   }
+  // Blindaje: datos antiguos/respuestas sin `columns` no deben romper las lecturas.
+  if (!data.columns) data.columns = {}
   return data
 }
 
