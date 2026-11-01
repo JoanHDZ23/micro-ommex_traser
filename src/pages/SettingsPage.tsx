@@ -1,14 +1,25 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Activity, CheckCircle2, FileSpreadsheet, Save, Trash2, Camera, Package, Share2, type LucideIcon } from 'lucide-react'
+import {
+  Activity, CheckCircle2, FileSpreadsheet, Save, Trash2, Camera, Package,
+  Mail, Mic, FileText, Link2, ClipboardPaste, Image as ImageIcon, ListChecks,
+} from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
-import { Button, Card, ErrorState, Input, LoadingState, SectionHeader } from '../components/ui'
+import {
+  Button, Card, ErrorState, Input, LoadingState, SectionHeader,
+  SettingsGroup, SettingsToggleRow, SettingsNavRow, SettingsCustomRow,
+} from '../components/ui'
 import { invalidateTracerFeaturesCache } from '../lib/tracer-features'
 
 const SETTINGS_GUIDE: GuideStep[] = [
+  {
+    emoji: '🎛️',
+    title: 'Funciones de trazabilidad',
+    description: 'Activa o desactiva cada función desde los interruptores. Están agrupadas por tipo, igual que los ajustes de tu teléfono.',
+  },
   {
     emoji: '🗑️',
     title: 'Limpieza automática',
@@ -17,39 +28,11 @@ const SETTINGS_GUIDE: GuideStep[] = [
   {
     emoji: '💾',
     title: 'Guarda',
-    description: 'Presiona "Guardar" en cada sección para aplicar los cambios.',
+    description: 'Presiona "Guardar" al final de cada bloque para aplicar los cambios.',
   },
 ]
 
 const DAYS_OPTIONS = [7, 14, 20, 30, 45, 60, 90]
-
-/** Encabezado de un grupo de funciones dentro de la tarjeta de trazabilidad. */
-function GroupHeader({ icon: Icon, title }: { icon: LucideIcon; title: string }) {
-  return (
-    <div className="flex items-center gap-2 pt-1">
-      <Icon className="w-4 h-4 text-indigo-500" />
-      <h4 className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-text-2)]">{title}</h4>
-    </div>
-  )
-}
-
-/** Fila de toggle reutilizable (etiqueta + descripción + interruptor). */
-function ToggleRow({
-  label, description, checked, onToggle,
-}: { label: string; description?: string; checked: boolean; onToggle: () => void }) {
-  return (
-    <div className="space-y-0.5">
-      <label className="flex items-center justify-between gap-3 cursor-pointer">
-        <span className="text-sm font-medium text-[var(--color-text)]">{label}</span>
-        <div className="relative flex-shrink-0" onClick={onToggle}>
-          <div className={`w-11 h-6 rounded-full transition-colors ${checked ? 'bg-indigo-600' : 'bg-gray-300'}`} />
-          <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0'}`} />
-        </div>
-      </label>
-      {description && <p className="text-[11px] text-[var(--color-text-3)]">{description}</p>}
-    </div>
-  )
-}
 
 export function SettingsPage() {
   const navigate = useNavigate()
@@ -251,299 +234,291 @@ export function SettingsPage() {
   const sheetsSuccess = feedbackSheets?.startsWith('✓') ? feedbackSheets : null
   const sheetsError = feedbackSheets && !feedbackSheets.startsWith('✓') ? feedbackSheets : null
 
+  // Indica si hay al menos una función de trazabilidad editable por el admin.
+  const hasTracerGroups = canAny(
+    'markerEditor', 'whatsappCatalog', 'addProduct', 'selectImage', 'pasteImage',
+    'activityLog', 'registrarActividad', 'whatsappUnified', 'whatsappAudio', 'whatsappDocument', 'sendEmail',
+  )
+
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 space-y-6">
       <GuideModal storageKey="settings" heading="Configuración" steps={SETTINGS_GUIDE} />
 
       {/* Header */}
       <SectionHeader
         title="Configuración"
-        subtitle="Limpieza automática y herramientas"
+        subtitle="Funciones, limpieza y herramientas"
         onBack={() => navigate('/')}
       />
 
-      {/* Sección "Carpeta de Google Drive" eliminada: las fotos se almacenan
-          automáticamente en la nube; ya no se configura carpeta de Drive. */}
+      {/* ── FUNCIONES DE TRAZABILIDAD (estilo ajustes iOS) ── */}
+      {hasTracerGroups && (
+        <div className="space-y-5">
+          {/* Grupo: Captura y edición de fotos */}
+          {can('markerEditor') && (
+            <SettingsGroup
+              title="Captura y edición de fotos"
+              footer="El editor permite dibujar o marcar sobre las fotos antes de guardarlas, igual que en WhatsApp."
+            >
+              <SettingsToggleRow
+                icon={Camera}
+                iconColor="#f97316"
+                label="Editor de imágenes"
+                checked={markerEditor}
+                onToggle={() => setMarkerEditor((v) => !v)}
+              />
+            </SettingsGroup>
+          )}
 
-      {/* ── Limpieza automática ── */}
-      <Card as="section" className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Trash2 className="w-5 h-5 text-red-500" />
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Limpieza automática de registros</h3>
-        </div>
-        <p className="text-xs text-[var(--color-text-2)]">
-          Cuando está activa, los registros más antiguos del tiempo configurado se eliminan del almacenamiento
-          (R2 y GitHub) y del historial. Puedes recuperarlos desde <strong>Recuperar registros</strong> dentro de 30 días.
-        </p>
+          {/* Grupo: Productos y datos */}
+          {can('whatsappCatalog') && (
+            <SettingsGroup
+              title="Productos y datos"
+              footer="Permite seleccionar productos del catálogo dentro de los registros."
+            >
+              <SettingsToggleRow
+                icon={Package}
+                iconColor="#d97706"
+                label="Catálogo de productos"
+                checked={whatsappCatalog}
+                onToggle={() => setWhatsappCatalog((v) => !v)}
+              />
+            </SettingsGroup>
+          )}
 
-        {/* Toggle habilitar */}
-        <label className="flex items-center justify-between gap-3 cursor-pointer">
-          <span className="text-sm font-medium text-[var(--color-text)]">Habilitar limpieza automática</span>
-          <div className="relative flex-shrink-0" onClick={() => setCleanupEnabled((v) => !v)}>
-            <div className={`w-11 h-6 rounded-full transition-colors ${cleanupEnabled ? 'bg-red-500' : 'bg-gray-300'}`} />
-            <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${cleanupEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-          </div>
-        </label>
+          {/* Grupo: Acciones del registro (menú +) */}
+          {canAny('addProduct', 'selectImage', 'pasteImage') && (
+            <SettingsGroup
+              title="Acciones del registro"
+              footer="Controla qué opciones aparecen en el botón + dentro de cada registro."
+            >
+              {can('addProduct') && (
+                <SettingsToggleRow
+                  icon={Package} iconColor="#2563eb"
+                  label="Agregar producto"
+                  checked={addProduct}
+                  onToggle={() => setAddProduct((v) => !v)}
+                />
+              )}
+              {can('selectImage') && (
+                <SettingsToggleRow
+                  icon={ImageIcon} iconColor="#9333ea"
+                  label="Seleccionar imagen"
+                  checked={selectImage}
+                  onToggle={() => setSelectImage((v) => !v)}
+                />
+              )}
+              {can('pasteImage') && (
+                <SettingsToggleRow
+                  icon={ClipboardPaste} iconColor="#0ea5e9"
+                  label="Pegar imagen"
+                  checked={pasteImage}
+                  onToggle={() => setPasteImage((v) => !v)}
+                />
+              )}
+            </SettingsGroup>
+          )}
 
-        {/* Selector de días */}
-        <div className={`space-y-2 transition-opacity ${cleanupEnabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-          <label className="text-xs font-medium text-[var(--color-text-2)]">Eliminar registros con más de:</label>
-          <div className="flex flex-wrap gap-2">
-            {DAYS_OPTIONS.map((d) => (
-              <button key={d} type="button"
-                onClick={() => setCleanupDays(d)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  cleanupDays === d
-                    ? 'bg-red-500 text-white'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}>
-                {d} días
-              </button>
-            ))}
-          </div>
-          <p className="text-[10px] text-[var(--color-text-3)]">
-            Los registros que superen <strong>{cleanupDays} días</strong> desde su creación se eliminarán del almacenamiento (R2/GitHub). El sistema revisa diariamente.
-          </p>
-        </div>
+          {/* Grupo: Registro de actividad */}
+          {canAny('activityLog', 'registrarActividad') && (
+            <SettingsGroup
+              title="Registro de actividad"
+              footer="El historial muestra acciones recientes en la pantalla principal; el registro manual permite anotar novedades en cada operación."
+            >
+              {can('activityLog') && (
+                <SettingsToggleRow
+                  icon={Activity} iconColor="#4f46e5"
+                  label="Historial de actividades"
+                  checked={activityLog}
+                  onToggle={() => setActivityLog((v) => !v)}
+                />
+              )}
+              {can('registrarActividad') && (
+                <SettingsToggleRow
+                  icon={ListChecks} iconColor="#4f46e5"
+                  label="Registrar actividad manual"
+                  checked={registrarActividad}
+                  onToggle={() => setRegistrarActividad((v) => !v)}
+                />
+              )}
+            </SettingsGroup>
+          )}
 
-        {/* Aviso cuando está activo */}
-        {cleanupEnabled && (
-          <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
-            <span className="text-base leading-none">⚠️</span>
-            <span>Los registros se <strong>eliminarán del almacenamiento</strong> (R2/GitHub). Tienes 30 días para recuperarlos desde "Recuperar registros".</span>
-          </div>
-        )}
-      </Card>
+          {/* Grupo: Compartir y envío */}
+          {canAny('whatsappUnified', 'whatsappAudio', 'whatsappDocument', 'sendEmail') && (
+            <SettingsGroup
+              title="Compartir y envío"
+              footer={sendEmail
+                ? 'Los registros completados se enviarán al correo indicado. Para varios destinatarios, sepáralos con coma.'
+                : 'Activa notas de voz, documentos adjuntos o el envío por correo según lo que necesite tu empresa.'}
+            >
+              {can('whatsappUnified') && (
+                <SettingsToggleRow
+                  icon={Link2} iconColor="#16a34a"
+                  label="Usar WhatsApp de Turnos"
+                  sublabel="Comparte la cuenta de WhatsApp de Turnos"
+                  checked={whatsappUnified}
+                  onToggle={() => setWhatsappUnified((v) => !v)}
+                />
+              )}
+              {can('whatsappAudio') && (
+                <SettingsToggleRow
+                  icon={Mic} iconColor="#f97316"
+                  label="Notas de voz"
+                  checked={whatsappAudio}
+                  onToggle={() => setWhatsappAudio((v) => !v)}
+                />
+              )}
+              {can('whatsappDocument') && (
+                <SettingsToggleRow
+                  icon={FileText} iconColor="#2563eb"
+                  label="Adjuntar documentos"
+                  checked={whatsappDocument}
+                  onToggle={() => setWhatsappDocument((v) => !v)}
+                />
+              )}
+              {can('sendEmail') && (
+                <>
+                  <SettingsToggleRow
+                    icon={Mail} iconColor="#4f46e5"
+                    label="Enviar por correo"
+                    checked={sendEmail}
+                    onToggle={() => setSendEmail((v) => !v)}
+                  />
+                  {sendEmail && (
+                    <SettingsCustomRow>
+                      <Input
+                        type="email"
+                        label="Correo(s) destinatario(s)"
+                        value={emailTo}
+                        onChange={(e) => setEmailTo(e.target.value)}
+                        placeholder="correo@empresa.com (o varios separados por coma)"
+                      />
+                    </SettingsCustomRow>
+                  )}
+                </>
+              )}
+            </SettingsGroup>
+          )}
 
-      <Button
-        onClick={() => void handleSaveCleanup()}
-        loading={savingCleanup}
-        fullWidth
-        leftIcon={<Save className="w-4 h-4" />}
-      >
-        Guardar configuración de limpieza
-      </Button>
-
-      {cleanupSuccess && (
-        <div className="flex items-start gap-2 p-3 rounded-xl text-sm bg-emerald-50 text-emerald-700">
-          <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>{cleanupSuccess}</span>
-        </div>
-      )}
-      {cleanupError && (
-        <ErrorState message={cleanupError} onRetry={() => void handleSaveCleanup()} />
-      )}
-
-      {/* ── Función: Documentos a Google Sheets (solo si el root la permite) ── */}
-      {can('sheetsEnabled') && (
-      <Card as="section" className="space-y-3">
-        <div className="flex items-center gap-2">
-          <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Documentos a Google Sheets</h3>
-        </div>
-        <p className="text-xs text-[var(--color-text-2)]">
-          Permite a esta empresa subir documentos (CSV, Excel o PDF con tablas) y crear
-          hojas de Google Sheets filtrables a partir de ellos. Cada hoja puede eliminarse cuando ya no se necesite.
-        </p>
-
-        {/* Toggle habilitar */}
-        <label className="flex items-center justify-between gap-3 cursor-pointer">
-          <span className="text-sm font-medium text-[var(--color-text)]">Habilitar para esta empresa</span>
-          <div className="relative flex-shrink-0" onClick={() => { if (!savingSheets) void handleToggleSheets(!sheetsEnabled) }}>
-            <div className={`w-11 h-6 rounded-full transition-colors ${sheetsEnabled ? 'bg-emerald-500' : 'bg-gray-300'}`} />
-            <div className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${sheetsEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
-          </div>
-        </label>
-
-        {sheetsSuccess && (
-          <div className="flex items-start gap-2 p-2.5 rounded-lg text-xs bg-emerald-50 text-emerald-700">
-            <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-            <span>{sheetsSuccess}</span>
-          </div>
-        )}
-        {sheetsError && (
-          <ErrorState message={sheetsError} onRetry={() => void handleToggleSheets(sheetsEnabled)} />
-        )}
-
-        {sheetsEnabled && (
           <Button
-            variant="success"
-            onClick={() => navigate('/documentos')}
+            onClick={() => void handleSaveTracer()}
+            loading={savingTracer}
             fullWidth
-            leftIcon={<FileSpreadsheet className="w-4 h-4" />}
+            leftIcon={<Save className="w-4 h-4" />}
           >
-            Abrir herramienta de documentos
+            Guardar funciones de trazabilidad
           </Button>
-        )}
-      </Card>
+
+          {feedbackTracer?.startsWith('✓') && (
+            <div className="flex items-start gap-2 p-3 rounded-xl text-sm bg-emerald-50 text-emerald-700">
+              <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+              <span>{feedbackTracer}</span>
+            </div>
+          )}
+          {feedbackTracer && !feedbackTracer.startsWith('✓') && (
+            <ErrorState message={feedbackTracer} onRetry={() => void handleSaveTracer()} />
+          )}
+        </div>
       )}
 
-      {/* ── WhatsApp (sincronización por QR + envío) — solo si el root lo permite ── */}
+      {/* ── Documentos a Google Sheets (solo si el root la permite) ── */}
+      {can('sheetsEnabled') && (
+        <div className="space-y-2">
+          <SettingsGroup
+            title="Base de datos"
+            footer="Sube documentos (CSV, Excel o PDF con tablas) y crea hojas filtrables a partir de ellos."
+          >
+            <SettingsToggleRow
+              icon={FileSpreadsheet}
+              iconColor="#059669"
+              label="Documentos a Google Sheets"
+              sublabel="Habilitar para esta empresa"
+              checked={sheetsEnabled}
+              disabled={savingSheets}
+              onToggle={() => { if (!savingSheets) void handleToggleSheets(!sheetsEnabled) }}
+            />
+            {sheetsEnabled && (
+              <SettingsNavRow
+                icon={FileSpreadsheet}
+                iconColor="#059669"
+                label="Abrir herramienta de documentos"
+                onClick={() => navigate('/documentos')}
+              />
+            )}
+          </SettingsGroup>
+          {sheetsSuccess && (
+            <div className="flex items-start gap-2 px-4 text-xs text-emerald-700">
+              <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+              <span>{sheetsSuccess}</span>
+            </div>
+          )}
+          {sheetsError && (
+            <div className="px-1"><ErrorState message={sheetsError} onRetry={() => void handleToggleSheets(sheetsEnabled)} /></div>
+          )}
+        </div>
+      )}
+
+      {/* ── WhatsApp (sincronización por QR + destinos) — solo si el root lo permite ── */}
       {can('whatsappTrazabilidad') && <WhatsAppSync />}
 
-      {/* ── Subconfiguración de Trazabilidad ──
-          Solo se muestra si el root permitió al menos una de estas funciones. */}
-      {canAny('activityLog', 'registrarActividad', 'sendEmail', 'whatsappUnified', 'whatsappAudio', 'whatsappCatalog', 'whatsappDocument', 'markerEditor') && (<>
-      <Card as="section" className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Activity className="w-5 h-5 text-indigo-600" />
-          <h3 className="text-sm font-semibold text-[var(--color-text)]">Funciones de Trazabilidad</h3>
-        </div>
-        <p className="text-xs text-[var(--color-text-2)]">
-          Activa o desactiva cada función según lo que necesite tu empresa. Están agrupadas por tipo.
-        </p>
-
-        {/* ── Grupo: Captura y edición de fotos ── */}
-        {can('markerEditor') && (
-          <div className="space-y-2.5">
-            <GroupHeader icon={Camera} title="Captura y edición de fotos" />
-            <ToggleRow
-              label="Editor de imágenes"
-              description="Permite dibujar/rayar sobre las fotos antes de guardarlas (estilo WhatsApp)."
-              checked={markerEditor}
-              onToggle={() => setMarkerEditor((v) => !v)}
-            />
-          </div>
-        )}
-
-        {/* ── Grupo: Productos y datos ── */}
-        {can('whatsappCatalog') && (
-          <div className="space-y-2.5 pt-1 border-t border-[var(--color-border)]">
-            <GroupHeader icon={Package} title="Productos y datos" />
-            <ToggleRow
-              label="Catálogo de productos"
-              description="Permite seleccionar productos del catálogo en los registros."
-              checked={whatsappCatalog}
-              onToggle={() => setWhatsappCatalog((v) => !v)}
-            />
-          </div>
-        )}
-
-        {/* ── Grupo: Acciones del registro (menú +) ── */}
-        {canAny('addProduct', 'selectImage', 'pasteImage') && (
-          <div className="space-y-2.5 pt-1 border-t border-[var(--color-border)]">
-            <GroupHeader icon={Package} title="Acciones del registro" />
-            {can('addProduct') && (
-              <ToggleRow
-                label="Agregar producto"
-                description="Muestra la acción para agregar productos dentro del registro."
-                checked={addProduct}
-                onToggle={() => setAddProduct((v) => !v)}
-              />
-            )}
-            {can('selectImage') && (
-              <ToggleRow
-                label="Seleccionar imagen"
-                description="Permite elegir imágenes de la galería dentro del registro."
-                checked={selectImage}
-                onToggle={() => setSelectImage((v) => !v)}
-              />
-            )}
-            {can('pasteImage') && (
-              <ToggleRow
-                label="Pegar imagen"
-                description="Permite pegar imágenes del portapapeles dentro del registro."
-                checked={pasteImage}
-                onToggle={() => setPasteImage((v) => !v)}
-              />
-            )}
-          </div>
-        )}
-
-        {/* ── Grupo: Registro de actividad ── */}
-        {canAny('activityLog', 'registrarActividad') && (
-          <div className="space-y-2.5 pt-1 border-t border-[var(--color-border)]">
-            <GroupHeader icon={Activity} title="Registro de actividad" />
-            {can('activityLog') && (
-              <ToggleRow
-                label="Historial de actividades"
-                description="Muestra un historial de acciones (creación, finalización, envíos) en la pantalla principal."
-                checked={activityLog}
-                onToggle={() => setActivityLog((v) => !v)}
-              />
-            )}
-            {can('registrarActividad') && (
-              <ToggleRow
-                label="Registrar actividad manual"
-                description="Permite anotar actividades manualmente dentro de cada operación (ej. novedades, observaciones)."
-                checked={registrarActividad}
-                onToggle={() => setRegistrarActividad((v) => !v)}
-              />
-            )}
-          </div>
-        )}
-
-        {/* ── Grupo: Compartir y envío ── */}
-        {canAny('whatsappUnified', 'whatsappAudio', 'whatsappDocument', 'sendEmail') && (
-          <div className="space-y-2.5 pt-1 border-t border-[var(--color-border)]">
-            <GroupHeader icon={Share2} title="Compartir y envío" />
-            {can('whatsappUnified') && (
-              <ToggleRow
-                label="Usar WhatsApp de Turnos"
-                description="Usa la misma cuenta de WhatsApp de Turnos para enviar los registros de trazabilidad."
-                checked={whatsappUnified}
-                onToggle={() => setWhatsappUnified((v) => !v)}
-              />
-            )}
-            {can('whatsappAudio') && (
-              <ToggleRow
-                label="Notas de voz"
-                description="Permite adjuntar notas de voz en los registros (estilo WhatsApp)."
-                checked={whatsappAudio}
-                onToggle={() => setWhatsappAudio((v) => !v)}
-              />
-            )}
-            {can('whatsappDocument') && (
-              <ToggleRow
-                label="Adjuntar documentos"
-                description="Permite adjuntar archivos (PDF, Excel, etc.) en los registros."
-                checked={whatsappDocument}
-                onToggle={() => setWhatsappDocument((v) => !v)}
-              />
-            )}
-            {can('sendEmail') && (<>
-              <ToggleRow
-                label="Enviar por correo"
-                description="Envía automáticamente cada registro completado por correo electrónico."
-                checked={sendEmail}
-                onToggle={() => setSendEmail((v) => !v)}
-              />
-              <div className={`space-y-2 transition-opacity ${sendEmail ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-                <Input
-                  type="email"
-                  label="Correo(s) destinatario(s)"
-                  value={emailTo}
-                  onChange={(e) => setEmailTo(e.target.value)}
-                  placeholder="correo@empresa.com (o varios separados por coma)"
-                />
-                <p className="text-[10px] text-[var(--color-text-3)]">
-                  Los registros completados se enviarán a este correo. Para varios destinatarios, sepáralos con coma.
-                </p>
+      {/* ── Limpieza automática de registros ── */}
+      <div className="space-y-2">
+        <SettingsGroup
+          title="Almacenamiento"
+          footer="Cuando está activa, los registros más antiguos del tiempo configurado se eliminan del almacenamiento (R2 y GitHub) y del historial. Puedes recuperarlos dentro de 30 días."
+        >
+          <SettingsToggleRow
+            icon={Trash2}
+            iconColor="#dc2626"
+            label="Limpieza automática de registros"
+            accent="red"
+            checked={cleanupEnabled}
+            onToggle={() => setCleanupEnabled((v) => !v)}
+          />
+          {cleanupEnabled && (
+            <SettingsCustomRow>
+              <p className="text-xs font-medium text-[var(--color-text-2)] mb-2">Eliminar registros con más de:</p>
+              <div className="flex flex-wrap gap-2">
+                {DAYS_OPTIONS.map((d) => (
+                  <button key={d} type="button"
+                    onClick={() => setCleanupDays(d)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      cleanupDays === d
+                        ? 'bg-red-500 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}>
+                    {d} días
+                  </button>
+                ))}
               </div>
-            </>)}
+              <p className="mt-2 text-[10px] text-[var(--color-text-3)]">
+                Los registros que superen <strong>{cleanupDays} días</strong> se eliminarán del almacenamiento. El sistema revisa diariamente.
+              </p>
+            </SettingsCustomRow>
+          )}
+        </SettingsGroup>
+
+        <Button
+          onClick={() => void handleSaveCleanup()}
+          loading={savingCleanup}
+          fullWidth
+          variant="danger"
+          leftIcon={<Save className="w-4 h-4" />}
+        >
+          Guardar configuración de limpieza
+        </Button>
+
+        {cleanupSuccess && (
+          <div className="flex items-start gap-2 px-4 text-sm text-emerald-700">
+            <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <span>{cleanupSuccess}</span>
           </div>
         )}
-      </Card>
-
-      <Button
-        onClick={() => void handleSaveTracer()}
-        loading={savingTracer}
-        fullWidth
-        leftIcon={<Save className="w-4 h-4" />}
-      >
-        Guardar opciones de trazabilidad
-      </Button>
-
-      {feedbackTracer?.startsWith('✓') && (
-        <div className="flex items-start gap-2 p-3 rounded-xl text-sm bg-emerald-50 text-emerald-700">
-          <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>{feedbackTracer}</span>
-        </div>
-      )}
-      {feedbackTracer && !feedbackTracer.startsWith('✓') && (
-        <ErrorState message={feedbackTracer} onRetry={() => void handleSaveTracer()} />
-      )}
-      </>)}
+        {cleanupError && (
+          <div className="px-1"><ErrorState message={cleanupError} onRetry={() => void handleSaveCleanup()} /></div>
+        )}
+      </div>
 
       {/* ── Tipos de operación ── */}
       <Card as="section" className="space-y-3">
@@ -631,9 +606,6 @@ export function SettingsPage() {
       >
         Guardar tipos de operación
       </Button>
-
-      {/* Sección "Recuperar registros desde Drive" eliminada: el almacenamiento
-          de fotos ya no usa Google Drive. */}
     </div>
   )
 }

@@ -41,3 +41,10 @@ export type { ModalSurfaceProps } from './ModalSurface'
 export { Modal } from './Modal'
 export type { ModalProps } from './Modal'
 export { useModalA11y } from './useModalA11y'
+
+export {
+  SettingsGroup,
+  SettingsToggleRow,
+  SettingsNavRow,
+  SettingsCustomRow,
+} from './SettingsList'
