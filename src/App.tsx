@@ -78,6 +78,23 @@ export default function App() {
     return () => window.removeEventListener('message', onMessage)
   }, [])
 
+  // Sincronización con el panel root: cuando el root cambia las funciones de la
+  // empresa, el cliente puede estar en otra pestaña/ventana y no recibir el
+  // postMessage. Al volver el foco o la visibilidad a la app, revalidamos las
+  // funciones contra el backend (que ya tiene el valor efectivo del root), de
+  // modo que los cambios se reflejan sin recargar manualmente.
+  useEffect(() => {
+    if (isShareRoute) return
+    const refresh = () => invalidateTracerFeaturesCache()
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh() }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', refresh)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [isShareRoute])
+
   // Escucha el cierre de sesión (app cerrada >1h) para avisar al usuario.
   useEffect(() => {
     const onExpired = () => setSessionExpired(true)
