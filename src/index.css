@@ -93,6 +93,15 @@
   --hero-icon-bg: rgba(37, 99, 235, 0.12);
   --hero-icon-text: #1d4ed8;
   --hero-accent-ring: rgba(37, 99, 235, 0.18);
+  /* Chat estilo WhatsApp (modo claro) */
+  --chat-bg: #efeae2;              /* beige clásico del fondo de chat */
+  --chat-bubble-out: #d9fdd3;      /* burbuja del emisor (verde claro) */
+  --chat-bubble-out-border: #c5f0bd;
+  --chat-bubble-in: #ffffff;       /* burbuja del receptor (blanca) */
+  --chat-bubble-in-border: #ece5dd;
+  --chat-text: #111b21;            /* texto dentro de las burbujas */
+  --chat-meta: #667781;            /* hora/estado */
+  --chat-tick: #53bdeb;            /* check de "enviado" */
 }
 
 /* ── MODO OSCURO tokens completos ──────────────────── */
@@ -126,6 +135,15 @@
   --hero-icon-bg: rgba(255, 255, 255, 0.18);
   --hero-icon-text: #ffffff;
   --hero-accent-ring: rgba(255, 255, 255, 0.22);
+  /* Chat estilo WhatsApp (modo oscuro) */
+  --chat-bg: #0b141a;
+  --chat-bubble-out: #005c4b;      /* verde oscuro del emisor */
+  --chat-bubble-out-border: #0a7261;
+  --chat-bubble-in: #202c33;       /* burbuja del receptor (gris oscuro) */
+  --chat-bubble-in-border: #2a3942;
+  --chat-text: #e9edef;
+  --chat-meta: #8696a0;
+  --chat-tick: #53bdeb;
 }
 
 body {
@@ -203,4 +221,29 @@ body {
   height: 56px;
   border-radius: 50%;
   background: white;
+}
+
+/* ── Fondo de chat estilo WhatsApp ──────────────────────────────
+   Color base beige/oscuro + un patrón de puntos muy sutil para dar
+   la textura característica sin cargar una imagen externa. */
+.chat-surface {
+  background-color: var(--chat-bg);
+  background-image: radial-gradient(rgba(0, 0, 0, 0.035) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+:root[data-theme="dark"] .chat-surface {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+}
+
+/* Burbuja emisor (saliente): verde, con "cola" en la esquina superior derecha */
+.chat-bubble-out {
+  background-color: var(--chat-bubble-out);
+  border: 1px solid var(--chat-bubble-out-border);
+  color: var(--chat-text);
+}
+/* Burbuja receptor (entrante): clara/gris, "cola" en la esquina superior izquierda */
+.chat-bubble-in {
+  background-color: var(--chat-bubble-in);
+  border: 1px solid var(--chat-bubble-in-border);
+  color: var(--chat-text);
 }

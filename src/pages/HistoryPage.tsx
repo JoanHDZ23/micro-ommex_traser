@@ -217,70 +217,79 @@ export function HistoryPage() {
           title="No se encontraron operaciones"
         />
       ) : (
-        <div className="space-y-4">
+        /* Lista estilo "Chats" (inspiración WhatsApp): items compactos con
+           avatar redondo, separadores de día y una tarjeta contenedora. */
+        <Card as="div" padding="none" className="overflow-hidden divide-y divide-[var(--color-border)]">
           {groupOperationsByDay(operations).map((group) => (
-            <section key={group.key} className="space-y-2">
-              <div className="flex items-center gap-2 px-1 sticky top-0 z-[1] py-1 bg-[var(--color-bg)]/90 backdrop-blur">
-                <Calendar className="w-3.5 h-3.5 text-[var(--color-text-3)]" />
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-2)] first-letter:uppercase">
+            <section key={group.key}>
+              {/* Separador de día centrado tipo "pill" (estilo chat) */}
+              <div className="flex items-center justify-center py-2 bg-[var(--color-bg)]/60 sticky top-0 z-[1] backdrop-blur">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--color-surface)] border border-[var(--color-border)] text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-2)] shadow-sm first-letter:uppercase">
+                  <Calendar className="w-3 h-3 text-[var(--color-text-3)]" />
                   {group.label}
-                </h3>
-                <span className="text-[10px] text-[var(--color-text-3)]">· {group.items.length}</span>
-                <div className="flex-1 h-px bg-[var(--color-border)]" />
+                  <span className="text-[var(--color-text-3)] font-normal">· {group.items.length}</span>
+                </span>
               </div>
-              {group.items.map((op) => {
-            const Icon = (TYPE_ICONS as Record<string, React.ComponentType<{ className?: string }>>)[op.operationType] ?? Package
-            const date = new Date(op.createdAt)
-            return (
-              <Card
-                key={op.trackingCode}
-                as="article"
-                padding="sm"
-                interactive
-                role="button"
-                tabIndex={0}
-                onClick={() => navigate(`/operation/${op.trackingCode}`)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    navigate(`/operation/${op.trackingCode}`)
-                  }
-                }}
-                className="flex items-center gap-3 text-left focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:outline-none"
-              >
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                  op.status === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
-                }`}>
-                  <Icon className="w-5 h-5" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-[var(--color-text)] truncate">
-                    {op.trackingCode}
-                  </p>
-                  <p className="text-xs text-[var(--color-text-2)] truncate">
-                    {operationTypeLabel(op.operationType, opTypes)} · {op.operatorName}
-                    {op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
-                    {op.lineaBlanca?.length ? ` · ${op.lineaBlanca.length} producto(s)` : ''}
-                  </p>
-                  <p className="text-[10px] text-[var(--color-text-3)] mt-0.5">
-                    {date.toLocaleDateString('es-CO')} {date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                  </p>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <Badge tone={operationStatusTone(op.status)}>
-                    {operationStatusLabel(op.status)}
-                  </Badge>
-                  <span className="text-[10px] text-[var(--color-text-3)]">
-                    {op.photos.length} fotos
-                  </span>
-                </div>
-                <ChevronRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
-              </Card>
-            )
-              })}
+              <ul className="divide-y divide-[var(--color-border)]">
+                {group.items.map((op) => {
+                  const Icon = (TYPE_ICONS as Record<string, React.ComponentType<{ className?: string }>>)[op.operationType] ?? Package
+                  const date = new Date(op.createdAt)
+                  const completed = op.status === 'COMPLETADO'
+                  return (
+                    <li key={op.trackingCode}>
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/operation/${op.trackingCode}`)}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 min-h-[64px] text-left transition-colors hover:bg-[var(--color-bg)] active:bg-[var(--color-bg)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:outline-none"
+                      >
+                        {/* Avatar redondo (estilo contacto de chat) */}
+                        <div className={`relative w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${
+                          completed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+                        }`}>
+                          <Icon className="w-6 h-6" />
+                          {/* Punto de estado */}
+                          <span className={`absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-[var(--color-surface)] ${
+                            completed ? 'bg-emerald-500' : 'bg-amber-500'
+                          }`} />
+                        </div>
+                        {/* Centro: título + subtítulo (una línea cada uno, como chat) */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="flex-1 text-sm font-semibold text-[var(--color-text)] truncate">
+                              {op.trackingCode}
+                            </p>
+                            <span className="text-[10px] text-[var(--color-text-3)] flex-shrink-0">
+                              {date.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <p className="flex-1 text-xs text-[var(--color-text-2)] truncate">
+                              {operationTypeLabel(op.operationType, opTypes)} · {op.operatorName}
+                              {op.vehiclePlate ? ` · ${op.vehiclePlate}` : ''}
+                              {op.lineaBlanca?.length ? ` · ${op.lineaBlanca.length} producto(s)` : ''}
+                            </p>
+                            {/* Burbuja contador de fotos (estilo "no leídos") */}
+                            {op.photos.length > 0 && (
+                              <span className="flex-shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[var(--color-primary)] text-white text-[10px] font-bold">
+                                {op.photos.length}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1">
+                            <Badge tone={operationStatusTone(op.status)}>
+                              {operationStatusLabel(op.status)}
+                            </Badge>
+                          </div>
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
             </section>
           ))}
-        </div>
+        </Card>
       )}
 
       {/* Pagination */}

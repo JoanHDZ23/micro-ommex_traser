@@ -1887,7 +1887,7 @@ export function WizardPage() {
       )}
 
       {/* Chat body */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 bg-gray-50">
+      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 chat-surface">
 
         {/* Completed actions */}
         {isCompleted && (
@@ -1994,7 +1994,7 @@ export function WizardPage() {
                             {sel && <CheckCircle2 className="w-4 h-4 text-white" />}
                           </span>
                         )}
-                        <div className={`max-w-[85%] bg-[var(--color-primary-bg)] border rounded-lg rounded-tr-none p-2 shadow-sm relative ${sel ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30' : 'border-[var(--color-primary)]/20'}`}>
+                        <div className={`max-w-[85%] chat-bubble-out rounded-lg rounded-tr-none p-2 shadow-sm relative ${sel ? 'ring-2 ring-[var(--color-primary)]/40' : ''}`}>
                           {/* Audio: reproductor */}
                           {photo.mediaType === 'audio' ? (
                             <div className="flex items-center gap-2 mb-1.5">
@@ -2126,7 +2126,7 @@ export function WizardPage() {
                           {groupSel && <CheckCircle2 className="w-4 h-4 text-white" />}
                         </span>
                       )}
-                      <div className={`w-full max-w-[92%] bg-[var(--color-primary-bg)] border rounded-xl shadow-sm overflow-hidden ${groupSel ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30' : 'border-[var(--color-primary)]/20'}`}>
+                      <div className={`w-full max-w-[92%] chat-bubble-out rounded-xl shadow-sm overflow-hidden ${groupSel ? 'ring-2 ring-[var(--color-primary)]/40' : ''}`}>
                         {/* Header de la tarjeta álbum */}
                         <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
                           <div className="flex items-center gap-1.5">
@@ -2273,7 +2273,7 @@ export function WizardPage() {
                       {prodSel && <CheckCircle2 className="w-4 h-4 text-white" />}
                     </span>
                   )}
-                  <div className={`w-[92%] bg-[var(--color-primary-bg)] border rounded-lg rounded-tr-none shadow-sm overflow-hidden relative ${prodSel ? 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30' : 'border-[var(--color-primary)]/20'} ${selectMode ? 'pointer-events-none' : ''}`}>
+                  <div className={`w-[92%] chat-bubble-out rounded-lg rounded-tr-none shadow-sm overflow-hidden relative ${prodSel ? 'ring-2 ring-[var(--color-primary)]/40' : ''} ${selectMode ? 'pointer-events-none' : ''}`}>
                     {/* Photo grid */}
                     {/* Fotos tomadas pendientes de subir (storage temporal → GitHub) */}
                     {pendingLocal.length > 0 && (
