@@ -285,6 +285,79 @@ settingsRouter.get('/locations/by-vehicle/:placa/products', async (req, res) => 
   }
 })
 
+// ── Ajustes de Base de datos (DATA) por compañía ────────────────────────
+/** Configuración de columnas de una tabla (sheet). */
+type SheetColumnSettings = { codeColumn: number; descColumn: number; extraColumns: number[] }
+/** Ajustes de la DATA de la empresa: tabla principal + columnas por tabla. */
+type DbSettings = {
+  primarySheetId?: string
+  primarySheetName?: string
+  columns: Record<string, SheetColumnSettings>
+}
+
+/** Normaliza/valida los ajustes de DATA recibidos del cliente. */
+function sanitizeDbSettings(raw: unknown): DbSettings {
+  const obj = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const columnsIn = (obj.columns && typeof obj.columns === 'object' ? obj.columns : {}) as Record<string, unknown>
+  const columns: Record<string, SheetColumnSettings> = {}
+  for (const [sheetId, v] of Object.entries(columnsIn)) {
+    const c = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+    const code = Number(c.codeColumn)
+    const desc = Number(c.descColumn)
+    const extra = Array.isArray(c.extraColumns) ? c.extraColumns.map(Number).filter((n) => Number.isFinite(n) && n >= 0) : []
+    columns[sheetId] = {
+      codeColumn: Number.isFinite(code) && code >= 0 ? code : 0,
+      descColumn: Number.isFinite(desc) ? desc : -1,
+      extraColumns: extra,
+    }
+  }
+  return {
+    primarySheetId: typeof obj.primarySheetId === 'string' ? obj.primarySheetId : undefined,
+    primarySheetName: typeof obj.primarySheetName === 'string' ? obj.primarySheetName : undefined,
+    columns,
+  }
+}
+
+/**
+ * GET /api/settings/db?companyId=xxx
+ * Devuelve los ajustes de la base de datos (tabla principal + columnas por tabla)
+ * de la empresa.
+ */
+settingsRouter.get('/db', async (req, res) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const doc = await getDb().collection(COLLECTION).findOne({ companyId }) as Record<string, unknown> | null
+    const saved = doc?.dbSettings ? sanitizeDbSettings(doc.dbSettings) : { columns: {} }
+    res.json(saved)
+  } catch (err) {
+    console.error('[settings] Error al leer dbSettings:', err)
+    res.status(500).json({ message: 'Error al leer los ajustes de base de datos.' })
+  }
+})
+
+/**
+ * PUT /api/settings/db
+ * Body: { companyId, primarySheetId?, primarySheetName?, columns: { [sheetId]: {...} } }
+ * Guarda la configuración COMPLETA de la DATA de la empresa.
+ */
+settingsRouter.put('/db', async (req, res) => {
+  const { companyId } = req.body ?? {}
+  if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  const clean = sanitizeDbSettings(req.body)
+  try {
+    await getDb().collection(COLLECTION).updateOne(
+      { companyId: companyId.trim() },
+      { $set: { companyId: companyId.trim(), dbSettings: clean, updatedAt: new Date().toISOString() } },
+      { upsert: true },
+    )
+    res.json({ message: 'Ajustes de base de datos guardados.', ...clean })
+  } catch (err) {
+    console.error('[settings] Error al guardar dbSettings:', err)
+    res.status(500).json({ message: 'Error al guardar los ajustes de base de datos.' })
+  }
+})
+
 /**
  * GET /api/settings/cleanup?companyId=xxx
  * Obtiene la configuración de limpieza automática de una empresa.
