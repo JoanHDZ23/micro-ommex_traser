@@ -1,15 +1,22 @@
 /**
- * Ajustes de la BASE DE DATOS (DATA).
+ * Ajustes de la BASE DE DATOS (DATA), persistidos EN LA BASE DE DATOS por compañía
+ * (colección company_settings.dbSettings del backend de trazabilidad).
  *
  * Hay dos niveles:
  *  1) EMPRESA: cuál es la tabla marcada como DATA PRINCIPAL (la que se usa por
  *     defecto en los registros para buscar/traer productos).
- *  2) TABLA (sheet): qué COLUMNAS se traen de ESA tabla al vincular un producto
- *     a un registro (código, descripción y columnas adicionales). Cada tabla
- *     tiene su propia configuración de columnas.
+ *  2) TABLA (sheet): qué COLUMNAS se traen de ESA tabla (código, descripción y
+ *     columnas adicionales). Cada tabla tiene su propia configuración.
  *
- * Todo se guarda en localStorage.
+ * Para no cambiar la firma síncrona que usan WizardPage/SheetsModal en render, se
+ * mantiene un CACHÉ en memoria (+ copia en localStorage como respaldo offline):
+ *  - `hydrateDbSettings(companyId)` carga desde el backend al abrir la app/vista.
+ *  - las lecturas (`getSheetColumns`, `getPrimarySheetId`, `getDbSettings`) usan el caché.
+ *  - las escrituras (`setSheetColumns`, `setPrimarySheet`) actualizan el caché y
+ *    guardan en el backend (fire-and-forget), de modo que la configuración queda
+ *    en la base de datos y sincronizada entre dispositivos.
  */
+import { apiRequest } from './api'
 
 /** Configuración de columnas de UNA tabla (sheet). */
 export interface SheetColumnSettings {
@@ -27,15 +34,9 @@ export const DEFAULT_SHEET_COLUMNS: SheetColumnSettings = {
   extraColumns: [],
 }
 
-/**
- * Ajustes efectivos de la DATA para la empresa: la tabla principal + la
- * configuración de columnas de ESA tabla. Se mantiene la forma anterior para
- * compatibilidad con el resto del código (getDbSettings).
- */
+/** Ajustes efectivos de la DATA de la empresa (tabla principal + columnas de esa tabla). */
 export interface DbSettings extends SheetColumnSettings {
-  /** Id de la tabla marcada como DATA principal. */
   primarySheetId?: string
-  /** Nombre legible de la tabla principal (solo para mostrar). */
   primarySheetName?: string
 }
 
@@ -45,69 +46,105 @@ export const DEFAULT_DB_SETTINGS: DbSettings = {
   ...DEFAULT_SHEET_COLUMNS,
 }
 
-// Empresa → { primarySheetId, primarySheetName }.
-const KEY_PRIMARY = 'ommex_db_primary:'
-// (empresa, tabla) → configuración de columnas de esa tabla.
-const KEY_SHEET_COLS = 'ommex_db_cols:'
-
-interface PrimaryRef {
+/** Forma completa guardada por compañía. */
+interface CompanyDbSettings {
   primarySheetId?: string
   primarySheetName?: string
+  columns: Record<string, SheetColumnSettings>
 }
 
-function readPrimary(companyId: string): PrimaryRef {
-  if (!companyId) return {}
+// Caché en memoria por compañía (fuente de verdad para las lecturas síncronas).
+const cache = new Map<string, CompanyDbSettings>()
+// Respaldo local para arrancar sin esperar al backend (offline / primer render).
+const LS_KEY = 'ommex_db_settings:'
+
+function readLocal(companyId: string): CompanyDbSettings {
   try {
-    const raw = localStorage.getItem(KEY_PRIMARY + companyId)
-    if (raw) return JSON.parse(raw) as PrimaryRef
+    const raw = localStorage.getItem(LS_KEY + companyId)
+    if (raw) return JSON.parse(raw) as CompanyDbSettings
   } catch { /* ignore */ }
-  return {}
+  return { columns: {} }
 }
 
-function writePrimary(companyId: string, ref: PrimaryRef): void {
+function writeLocal(companyId: string, data: CompanyDbSettings): void {
+  try { localStorage.setItem(LS_KEY + companyId, JSON.stringify(data)) } catch { /* cuota */ }
+}
+
+function getCompany(companyId: string): CompanyDbSettings {
+  if (!companyId) return { columns: {} }
+  let data = cache.get(companyId)
+  if (!data) {
+    data = readLocal(companyId)
+    cache.set(companyId, data)
+  }
+  return data
+}
+
+/** Persiste en el backend (fire-and-forget) y en el respaldo local. */
+function persist(companyId: string): void {
   if (!companyId) return
-  try { localStorage.setItem(KEY_PRIMARY + companyId, JSON.stringify(ref)) } catch { /* cuota */ }
+  const data = getCompany(companyId)
+  writeLocal(companyId, data)
+  void apiRequest('/settings/db', {
+    method: 'PUT',
+    body: { companyId, ...data },
+  }).catch(() => { /* se reintenta en la próxima escritura; el caché local conserva el valor */ })
 }
 
-/** Lee la configuración de columnas de una tabla concreta. */
+/**
+ * Carga los ajustes de la DATA de la empresa desde el backend al caché. Llamar al
+ * abrir la app o la vista de base de datos. Seguro de llamar varias veces.
+ */
+export async function hydrateDbSettings(companyId: string): Promise<void> {
+  if (!companyId) return
+  try {
+    const r = await apiRequest<CompanyDbSettings>(`/settings/db?companyId=${encodeURIComponent(companyId)}`)
+    const data: CompanyDbSettings = {
+      primarySheetId: r?.primarySheetId,
+      primarySheetName: r?.primarySheetName,
+      columns: r?.columns ?? {},
+    }
+    cache.set(companyId, data)
+    writeLocal(companyId, data)
+  } catch { /* conserva el respaldo local si falla la red */ }
+}
+
+/** Lee la configuración de columnas de una tabla concreta (síncrono, desde caché). */
 export function getSheetColumns(companyId: string, sheetId: string): SheetColumnSettings {
   if (!companyId || !sheetId) return { ...DEFAULT_SHEET_COLUMNS }
-  try {
-    const raw = localStorage.getItem(`${KEY_SHEET_COLS}${companyId}:${sheetId}`)
-    if (!raw) return { ...DEFAULT_SHEET_COLUMNS }
-    const parsed = JSON.parse(raw) as Partial<SheetColumnSettings>
-    return { ...DEFAULT_SHEET_COLUMNS, ...parsed }
-  } catch {
-    return { ...DEFAULT_SHEET_COLUMNS }
-  }
+  const saved = getCompany(companyId).columns[sheetId]
+  return saved ? { ...DEFAULT_SHEET_COLUMNS, ...saved } : { ...DEFAULT_SHEET_COLUMNS }
 }
 
-/** Guarda la configuración de columnas de una tabla concreta. */
+/** Guarda la configuración de columnas de una tabla concreta (caché + backend). */
 export function setSheetColumns(companyId: string, sheetId: string, cols: SheetColumnSettings): void {
   if (!companyId || !sheetId) return
-  try {
-    localStorage.setItem(`${KEY_SHEET_COLS}${companyId}:${sheetId}`, JSON.stringify(cols))
-  } catch { /* cuota / modo privado */ }
+  const data = getCompany(companyId)
+  data.columns[sheetId] = cols
+  cache.set(companyId, data)
+  persist(companyId)
 }
 
-/** Marca (o desmarca con undefined) la tabla principal de la empresa. */
+/** Marca (o desmarca con undefined) la tabla principal de la empresa (caché + backend). */
 export function setPrimarySheet(companyId: string, sheetId?: string, sheetName?: string): void {
-  writePrimary(companyId, { primarySheetId: sheetId, primarySheetName: sheetName })
+  if (!companyId) return
+  const data = getCompany(companyId)
+  data.primarySheetId = sheetId
+  data.primarySheetName = sheetName
+  cache.set(companyId, data)
+  persist(companyId)
 }
 
 /** Id de la tabla principal de la empresa (si hay). */
 export function getPrimarySheetId(companyId: string): string | undefined {
-  return readPrimary(companyId).primarySheetId
+  return getCompany(companyId).primarySheetId
 }
 
-/**
- * Ajustes efectivos de la DATA de la empresa: tabla principal + columnas de esa
- * tabla. Si no hay tabla principal, devuelve columnas por defecto.
- */
+/** Ajustes efectivos de la DATA: tabla principal + columnas de esa tabla. */
 export function getDbSettings(companyId: string): DbSettings {
-  const prim = readPrimary(companyId)
-  const cols = prim.primarySheetId
-    ? getSheetColumns(companyId, prim.primarySheetId)
+  const data = getCompany(companyId)
+  const cols = data.primarySheetId
+    ? getSheetColumns(companyId, data.primarySheetId)
     : { ...DEFAULT_SHEET_COLUMNS }
-  return { ...prim, ...cols }
+  return { primarySheetId: data.primarySheetId, primarySheetName: data.primarySheetName, ...cols }
 }

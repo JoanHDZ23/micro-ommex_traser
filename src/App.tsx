@@ -8,6 +8,7 @@ import { invalidateTracerFeaturesCache } from './lib/tracer-features'
 import { apiRequest } from './lib/api'
 import { getCompanyId, hasIdentity } from './lib/context'
 import { renewSession } from './lib/auth'
+import { hydrateDbSettings } from './lib/db-settings'
 
 // Code-splitting por ruta: cada pantalla se descarga solo cuando se visita, así
 // el arranque es más rápido y la primera vista (Home) carga menos JS. Las libs
@@ -85,7 +86,11 @@ export default function App() {
   // modo que los cambios se reflejan sin recargar manualmente.
   useEffect(() => {
     if (isShareRoute) return
-    const refresh = () => invalidateTracerFeaturesCache()
+    const refresh = () => {
+      invalidateTracerFeaturesCache()
+      const companyId = getCompanyId()
+      if (companyId) void hydrateDbSettings(companyId)
+    }
     const onVisible = () => { if (document.visibilityState === 'visible') refresh() }
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('focus', refresh)
@@ -106,6 +111,15 @@ export default function App() {
   useEffect(() => {
     if (isShareRoute) return
     prefetchCommonRoutes()
+  }, [isShareRoute])
+
+  // Carga los ajustes de la base de datos (DATA) de la empresa desde el backend
+  // al caché local, para que el mapeo de columnas y la tabla principal estén
+  // disponibles de inmediato en los registros (persisten por compañía en Mongo).
+  useEffect(() => {
+    if (isShareRoute) return
+    const companyId = getCompanyId()
+    if (companyId) void hydrateDbSettings(companyId)
   }, [isShareRoute])
 
   // Auto-sincroniza WhatsApp al iniciar la app: si ya hay sesión guardada,
