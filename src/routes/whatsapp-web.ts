@@ -428,7 +428,10 @@ whatsappWebRouter.post('/send-operation', async (req, res) => {
         sent += r.count
         i += group.length
       } else {
-        await uSendImage(to, item.driveUrl as string, item.comment || item.stepName || '', companyId)
+        // Solo el comentario real del usuario; NO el stepName ("Registro
+        // fotográfico") que no debe enviarse como texto.
+        const cap = (item.comment ?? '').trim() || undefined
+        await uSendImage(to, item.driveUrl as string, cap, companyId)
         sent++
         i++
       }
@@ -567,8 +570,10 @@ whatsappWebRouter.post('/send-photo-group', async (req, res) => {
       })
     if (sendable.length === 0) { res.status(400).json({ message: 'Ninguna de las fotos seleccionadas está disponible para envío.' }); return }
 
-    const caption = sendable.find((p) => p.comment ?? p.stepName)
-    const captionText = (caption?.comment ?? caption?.stepName ?? '').trim() || undefined
+    // Caption = solo el comentario real del usuario (si alguna foto lo tiene).
+    // NO se usa stepName ("Registro fotográfico") como texto del mensaje.
+    const withComment = sendable.find((p) => (p.comment ?? '').trim())
+    const captionText = (withComment?.comment ?? '').trim() || undefined
     const r = await uSendAlbum(to, sendable.map((p) => p.driveUrl as string), captionText, companyId)
     res.json({ message: `Álbum enviado (${r.count} foto(s)).`, to, sent: r.count })
   } catch (err) {
@@ -627,7 +632,9 @@ whatsappWebRouter.post('/send-photo', async (req, res) => {
       res.status(400).json({ message: 'La foto aún no está disponible para envío (pendiente de subida).' }); return
     }
 
-    const caption = (photo.comment ?? photo.stepName ?? '').trim() || undefined
+    // Solo el comentario real del usuario; NO el stepName ("Registro
+    // fotográfico") como texto del mensaje.
+    const caption = (photo.comment ?? '').trim() || undefined
 
     // Audio, documento o imagen — usar el helper adecuado.
     if (photo.mediaType === 'audio') {
