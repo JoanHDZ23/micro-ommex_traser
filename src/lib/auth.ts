@@ -46,6 +46,15 @@ interface SessionRecord extends SessionIdentity {
 /** Store de sesiones activas en memoria, indexado por sessionId. */
 const sessions = new Map<string, SessionRecord>()
 
+/**
+ * Sesiones revocadas explícitamente (logout). Se guardan por sessionId para que
+ * la re-hidratación tras un reinicio NO reviva un token que el usuario cerró.
+ * Nota: como el store es en memoria, un logout no sobrevive a un reinicio del
+ * backend; en ese caso el token caducará igualmente por su antigüedad (iat)
+ * dentro de la ventana de inactividad.
+ */
+const revoked = new Set<string>()
+
 /** Token payload que se firma y viaja al cliente. */
 interface TokenPayload {
   sid: string
@@ -120,10 +129,33 @@ export function verifyToken(token: string | undefined): VerifyResult {
     return { ok: false, reason: 'malformed' }
   }
 
-  const session = sessions.get(payload.sid)
-  if (!session) return { ok: false, reason: 'no_session' }
-
   const now = Date.now()
+  let session = sessions.get(payload.sid)
+
+  // Resiliencia a reinicios del backend: el store de sesiones vive en memoria,
+  // así que al reiniciar (deploy, cold start) se pierde. Si el token tiene firma
+  // válida y no es más antiguo que la ventana de inactividad, RE-HIDRATAMOS la
+  // sesión desde el payload en vez de rechazarlo con "no_session". Así un usuario
+  // activo no queda fuera tras un reinicio; su token sigue sirviendo.
+  if (!session) {
+    // No revivir sesiones cerradas explícitamente (logout).
+    if (revoked.has(payload.sid)) return { ok: false, reason: 'no_session' }
+    if (typeof payload.iat === 'number' && now - payload.iat > INACTIVITY_MS) {
+      // Token demasiado antiguo: se trata como sesión caducada por inactividad.
+      return { ok: false, reason: 'expired' }
+    }
+    session = {
+      sessionId: payload.sid,
+      companyId: payload.companyId,
+      user: payload.user,
+      role: payload.role,
+      createdAt: typeof payload.iat === 'number' ? payload.iat : now,
+      lastActivity: now,
+    }
+    sessions.set(session.sessionId, session)
+    return { ok: true, session }
+  }
+
   if (now - session.lastActivity > INACTIVITY_MS) {
     // Sesión caducada por inactividad: se elimina y se rechaza.
     sessions.delete(session.sessionId)
@@ -142,6 +174,8 @@ export function destroySession(token: string | undefined): boolean {
   if (!body) return false
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as TokenPayload
+    // Marca la sesión como revocada para que no se re-hidrate tras un reinicio.
+    revoked.add(payload.sid)
     return sessions.delete(payload.sid)
   } catch {
     return false
@@ -158,12 +192,22 @@ export function sweepExpiredSessions(): number {
       removed++
     }
   }
+  // Evita que el set de revocados crezca sin límite (memoria acotada).
+  if (revoked.size > 10000) revoked.clear()
   return removed
 }
 
 /** Número de sesiones activas (diagnóstico). */
 export function activeSessionCount(): number {
   return sessions.size
+}
+
+/**
+ * SOLO PARA PRUEBAS: simula un reinicio del backend vaciando el store de
+ * sesiones en memoria (sin tocar los revocados). No usar en producción.
+ */
+export function __resetSessionsForTest(): void {
+  sessions.clear()
 }
 
 declare global {

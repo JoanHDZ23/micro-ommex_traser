@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createSession, verifyToken, destroySession } from './auth.ts'
+import { createSession, verifyToken, destroySession, __resetSessionsForTest } from './auth.ts'
 
 // Nota: sin AUTH_TOKEN_SECRET definido, el módulo usa un secreto temporal
 // estable dentro del proceso y sigue emitiendo tokens (Req 1.6/1.7).
@@ -34,4 +34,22 @@ test('token de sesión destruida → no_session (fuerza re-crear sesión)', () =
 test('token vacío/malformado → malformed', () => {
   assert.equal(verifyToken(undefined).reason, 'malformed')
   assert.equal(verifyToken('sinpunto').reason, 'malformed')
+})
+
+test('token válido con sesión perdida (reinicio del backend) → se re-hidrata, no 401', () => {
+  const { token } = createSession({ companyId: 'c4', user: 'leo', role: 'admin' })
+  // Simula un reinicio del backend: el store de sesiones se pierde.
+  __resetSessionsForTest()
+  const r = verifyToken(token)
+  assert.equal(r.ok, true, 'un token válido debe re-hidratar su sesión tras un reinicio')
+  assert.equal(r.session?.companyId, 'c4')
+  assert.equal(r.session?.role, 'admin')
+})
+
+test('token revocado (logout) NO se re-hidrata tras perder el store', () => {
+  const { token } = createSession({ companyId: 'c5', user: 'mia', role: 'operativo' })
+  destroySession(token) // logout → revocado
+  const r = verifyToken(token)
+  assert.equal(r.ok, false)
+  assert.equal(r.reason, 'no_session')
 })
