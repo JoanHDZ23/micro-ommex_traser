@@ -102,11 +102,23 @@ export interface LineaBlancaProduct {
 
 // ── Esquema de operación ────────────────────────────────────────────────
 
+/** Lugar/ubicación donde se realiza la operación (configurado por empresa). */
+export interface CompanyLocation {
+  id: string
+  name: string
+  address?: string
+  city?: string
+}
+
 export interface OperationLog {
   trackingCode: string
   operationType: OperationType
   operatorName: string
   vehiclePlate?: string            // Opcional — el usuario decide si incluirla
+  /** Lugar donde se realiza la operación (id del lugar configurado). */
+  locationId?: string
+  /** Nombre del lugar (desnormalizado para historial aunque se borre el lugar). */
+  locationName?: string
   companyId?: string
   photos: PhotoRecord[]
   lineaBlanca: LineaBlancaProduct[]

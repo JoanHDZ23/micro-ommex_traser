@@ -136,7 +136,7 @@ operationsRouter.get('/stats', async (req, res) => {
  * Crea una nueva operación (Productos Entrantes o Productos Salientes).
  */
 operationsRouter.post('/', async (req, res) => {
-  const { operationType, operatorName, vehiclePlate, companyId } = req.body ?? {}
+  const { operationType, operatorName, vehiclePlate, companyId, locationId } = req.body ?? {}
 
   if (!operationType || typeof operationType !== 'string' || !operationType.trim()) {
     res.status(400).json({ message: 'operationType es requerido.' })
@@ -167,11 +167,29 @@ operationsRouter.post('/', async (req, res) => {
     const trackingCode = await generateTrackingCode()
     const now = new Date().toISOString()
 
+    // Resuelve el lugar (ubicación) configurado por la empresa. Se guarda el id
+    // y el nombre desnormalizado para conservarlo en el historial aunque luego
+    // se elimine el lugar de la configuración.
+    let resolvedLocationId: string | undefined
+    let resolvedLocationName: string | undefined
+    const locId = typeof locationId === 'string' ? locationId.trim() : ''
+    if (locId && companyId) {
+      const settings = await getDb().collection('company_settings').findOne({ companyId: companyId.trim() })
+      const locations = Array.isArray(settings?.locations) ? (settings!.locations as Array<{ id?: string; name?: string }>) : []
+      const match = locations.find((l) => l?.id === locId)
+      if (match) {
+        resolvedLocationId = match.id
+        resolvedLocationName = (match.name ?? '').trim() || undefined
+      }
+    }
+
     const operation = {
       trackingCode,
       operationType,
       operatorName: operatorName.trim(),
       vehiclePlate: vehiclePlate?.trim() || undefined,
+      locationId: resolvedLocationId,
+      locationName: resolvedLocationName,
       companyId: companyId?.trim() ?? undefined,
       photos: [],
       lineaBlanca: [],
@@ -1288,7 +1306,7 @@ operationsRouter.post('/:trackingCode/attachment', async (req, res) => {
  */
 operationsRouter.patch('/:trackingCode', async (req, res) => {
   const { trackingCode } = req.params
-  const { vehiclePlate, operatorName, newTrackingCode, createdAt, updatedAt } = req.body ?? {}
+  const { vehiclePlate, operatorName, newTrackingCode, createdAt, updatedAt, locationId } = req.body ?? {}
 
   try {
     const col = getOperationsCollection()
@@ -1299,6 +1317,20 @@ operationsRouter.patch('/:trackingCode', async (req, res) => {
     if (vehiclePlate?.trim()) updates.vehiclePlate = vehiclePlate.trim()
     if (operatorName?.trim()) updates.operatorName = operatorName.trim()
     if (createdAt) updates.createdAt = createdAt
+    // Lugar: permite fijar/cambiar/quitar la ubicación de la operación.
+    if (locationId !== undefined) {
+      const locId = typeof locationId === 'string' ? locationId.trim() : ''
+      if (!locId) {
+        updates.locationId = undefined
+        updates.locationName = undefined
+      } else {
+        const settings = await getDb().collection('company_settings').findOne({ companyId: operation.companyId })
+        const locations = Array.isArray(settings?.locations) ? (settings!.locations as Array<{ id?: string; name?: string }>) : []
+        const match = locations.find((l) => l?.id === locId)
+        updates.locationId = match?.id ?? locId
+        updates.locationName = (match?.name ?? '').trim() || undefined
+      }
+    }
     if (newTrackingCode?.trim() && newTrackingCode.trim() !== trackingCode) {
       // Verifica que el nuevo trackingCode no exista
       const existing = await col.findOne({ trackingCode: newTrackingCode.trim() })

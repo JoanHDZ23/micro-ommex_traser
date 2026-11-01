@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { getDb } from '../lib/mongodb.js'
+import { getDb, getOperationsCollection } from '../lib/mongodb.js'
 import {
   FEATURE_KEYS, DEFAULT_OPERATION_TYPES_LIMIT, TURNOS_API_URL,
   readAllowed, type FeatureKey,
@@ -160,6 +160,111 @@ settingsRouter.delete('/plates', async (req, res) => {
   }
 })
 
+// ── Lugares / ubicaciones ───────────────────────────────────────────────
+/** Lugar donde se realiza una operación. */
+type CompanyLocation = { id: string; name: string; address?: string; city?: string }
+
+/** Genera un id estable y corto para un lugar. */
+function makeLocationId(): string {
+  return `loc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+}
+
+/** Normaliza y valida la lista de lugares (nombre requerido, sin duplicados por nombre). */
+function sanitizeLocations(raw: unknown): CompanyLocation[] {
+  const list = Array.isArray(raw) ? (raw as Array<Partial<CompanyLocation>>) : []
+  const seen = new Set<string>()
+  const clean: CompanyLocation[] = []
+  for (const l of list) {
+    const name = String(l?.name ?? '').trim()
+    if (!name) continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    const id = (l?.id && String(l.id).trim()) ? String(l.id).trim() : makeLocationId()
+    clean.push({
+      id,
+      name,
+      address: String(l?.address ?? '').trim() || undefined,
+      city: String(l?.city ?? '').trim() || undefined,
+    })
+  }
+  return clean
+}
+
+/**
+ * GET /api/settings/locations?companyId=xxx
+ * Devuelve los lugares configurados de la empresa.
+ */
+settingsRouter.get('/locations', async (req, res) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const doc = await getDb().collection(COLLECTION).findOne({ companyId }) as Record<string, unknown> | null
+    const locations = Array.isArray(doc?.locations) ? sanitizeLocations(doc!.locations) : []
+    res.json({ locations })
+  } catch (err) {
+    console.error('[settings] Error al leer lugares:', err)
+    res.status(500).json({ message: 'Error al leer los lugares.' })
+  }
+})
+
+/**
+ * PUT /api/settings/locations
+ * Body: { companyId, locations: Array<{ id?, name, address?, city? }> }
+ * Guarda la lista COMPLETA de lugares de la empresa.
+ */
+settingsRouter.put('/locations', async (req, res) => {
+  const { companyId, locations } = req.body ?? {}
+  if (!companyId?.trim()) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  if (!Array.isArray(locations)) { res.status(400).json({ message: 'locations debe ser un arreglo.' }); return }
+  const clean = sanitizeLocations(locations)
+  try {
+    await getDb().collection(COLLECTION).updateOne(
+      { companyId: companyId.trim() },
+      { $set: { companyId: companyId.trim(), locations: clean, updatedAt: new Date().toISOString() } },
+      { upsert: true },
+    )
+    res.json({ message: 'Lugares guardados.', locations: clean })
+  } catch (err) {
+    console.error('[settings] Error al guardar lugares:', err)
+    res.status(500).json({ message: 'Error al guardar los lugares.' })
+  }
+})
+
+/**
+ * GET /api/settings/locations/:locationId/products?companyId=xxx
+ * Devuelve los productos registrados en operaciones de ese lugar (para saber
+ * dónde está ubicado cada producto).
+ */
+settingsRouter.get('/locations/:locationId/products', async (req, res) => {
+  const { locationId } = req.params
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) { res.status(400).json({ message: 'companyId es requerido.' }); return }
+  try {
+    const ops = getOperationsCollection()
+    const pipeline = [
+      { $match: { companyId, locationId } },
+      { $unwind: { path: '$lineaBlanca', preserveNullAndEmptyArrays: false } },
+      {
+        $group: {
+          _id: { $toLower: '$lineaBlanca.productCode' },
+          productCode: { $first: '$lineaBlanca.productCode' },
+          descripcion: { $first: '$lineaBlanca.labelData.descripcion' },
+          lastSeen: { $max: '$updatedAt' },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { lastSeen: -1 } },
+      { $limit: 500 },
+    ]
+    const rows = await ops.aggregate(pipeline).toArray()
+    res.json({ products: rows.map((r) => ({ productCode: r.productCode, descripcion: r.descripcion, lastSeen: r.lastSeen, count: r.count })) })
+  } catch (err) {
+    console.error('[settings] Error al leer productos por lugar:', err)
+    res.status(500).json({ message: 'Error al leer los productos del lugar.' })
+  }
+})
+
 /**
  * GET /api/settings/cleanup?companyId=xxx
  * Obtiene la configuración de limpieza automática de una empresa.
@@ -247,6 +352,7 @@ settingsRouter.get('/features', async (req, res) => {
       whatsappDocument: eff('whatsappDocument'),
       markerEditor: eff('markerEditor'),
       registrarActividad: eff('registrarActividad'),
+      locationsEnabled: effDefaultOn('locationsEnabled'),
       addProduct: effDefaultOn('addProduct'),
       selectImage: effDefaultOn('selectImage'),
       pasteImage: effDefaultOn('pasteImage'),
