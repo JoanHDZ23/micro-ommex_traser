@@ -135,9 +135,9 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
       } catch {
         throw new Error('No se pudo reconectar la sesión. Intenta de nuevo.')
       }
-    } else {
-      window.dispatchEvent(new CustomEvent('session:expired'))
     }
+    // Si la renovación falla, se deja seguir el flujo normal (error del request);
+    // ya no se muestra el modal de "sesión cerrada".
   }
 
   // 304 Not Modified (puede llegar de un proxy/CDN aunque pidamos no-store):

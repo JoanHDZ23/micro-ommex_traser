@@ -1,5 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
-import { Suspense, lazy, useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { Layout } from './components/Layout'
 import { HomePage } from './pages/HomePage'
 import { LoadingState } from './components/ui'
@@ -7,7 +7,6 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { invalidateTracerFeaturesCache } from './lib/tracer-features'
 import { apiRequest } from './lib/api'
 import { getCompanyId, hasIdentity } from './lib/context'
-import { renewSession } from './lib/auth'
 import { hydrateDbSettings } from './lib/db-settings'
 
 // Code-splitting por ruta: cada pantalla se descarga solo cuando se visita, así
@@ -57,9 +56,8 @@ function prefetchCommonRoutes(): void {
 }
 
 export default function App() {
-  // Aviso cuando la sesión se cierra: ocurre solo si la app estuvo cerrada por
-  // completo más de 1 hora (ya no por inactividad con la app abierta).
-  const [sessionExpired, setSessionExpired] = useState(false)
+  // El cierre de sesión se eliminó: la sesión no expira ni se avisa. El token se
+  // renueva de forma transparente si el backend lo invalida.
 
   // Req 1.5: si no hay forma de identificar la empresa (ni por URL, ni por
   // backup de pestaña, ni por último usuario guardado), mostramos un mensaje
@@ -99,13 +97,6 @@ export default function App() {
       window.removeEventListener('focus', refresh)
     }
   }, [isShareRoute])
-
-  // Escucha el cierre de sesión (app cerrada >1h) para avisar al usuario.
-  useEffect(() => {
-    const onExpired = () => setSessionExpired(true)
-    window.addEventListener('session:expired', onExpired as EventListener)
-    return () => window.removeEventListener('session:expired', onExpired as EventListener)
-  }, [])
 
   // Precarga ociosa de las vistas más visitadas (navegación instantánea).
   useEffect(() => {
@@ -156,23 +147,6 @@ export default function App() {
 
   return (
     <BrowserRouter>
-      {sessionExpired && (
-        <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-white rounded-2xl p-5 space-y-4 shadow-xl text-center">
-            <div className="text-3xl">🔒</div>
-            <h3 className="text-base font-bold text-gray-800">Sesión cerrada</h3>
-            <p className="text-sm text-gray-500">
-              La app estuvo cerrada por más de una hora. Vuelve a iniciar sesión para continuar.
-            </p>
-            <button
-              onClick={() => { setSessionExpired(false); void renewSession() }}
-              className="w-full py-2.5 rounded-xl bg-[var(--color-primary)] text-white text-sm font-semibold"
-            >
-              Reanudar sesión
-            </button>
-          </div>
-        </div>
-      )}
       <ErrorBoundary>
       <Suspense fallback={<div className="flex-1 flex items-center justify-center p-8"><LoadingState label="Cargando…" /></div>}>
         <Routes>
