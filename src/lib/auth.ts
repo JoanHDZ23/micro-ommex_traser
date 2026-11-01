@@ -137,13 +137,12 @@ export function verifyToken(token: string | undefined): VerifyResult {
   // válida y no es más antiguo que la ventana de inactividad, RE-HIDRATAMOS la
   // sesión desde el payload en vez de rechazarlo con "no_session". Así un usuario
   // activo no queda fuera tras un reinicio; su token sigue sirviendo.
+  // El cierre de sesión por inactividad se eliminó: un token con firma válida
+  // sirve indefinidamente (salvo que se haya cerrado con logout). Si la sesión
+  // no está en memoria (reinicio del backend), se re-hidrata desde el payload.
   if (!session) {
     // No revivir sesiones cerradas explícitamente (logout).
     if (revoked.has(payload.sid)) return { ok: false, reason: 'no_session' }
-    if (typeof payload.iat === 'number' && now - payload.iat > INACTIVITY_MS) {
-      // Token demasiado antiguo: se trata como sesión caducada por inactividad.
-      return { ok: false, reason: 'expired' }
-    }
     session = {
       sessionId: payload.sid,
       companyId: payload.companyId,
@@ -156,13 +155,7 @@ export function verifyToken(token: string | undefined): VerifyResult {
     return { ok: true, session }
   }
 
-  if (now - session.lastActivity > INACTIVITY_MS) {
-    // Sesión caducada por inactividad: se elimina y se rechaza.
-    sessions.delete(session.sessionId)
-    return { ok: false, reason: 'expired' }
-  }
-
-  // Actividad válida → renueva la marca (mantiene la sesión viva).
+  // Renueva la marca de actividad (sin usarla para expirar).
   session.lastActivity = now
   return { ok: true, session }
 }
@@ -182,19 +175,14 @@ export function destroySession(token: string | undefined): boolean {
   }
 }
 
-/** Elimina sesiones caducadas (barrido periódico para no acumular memoria). */
+/**
+ * Barrido periódico. El cierre de sesión por inactividad se eliminó, por lo que
+ * ya NO se borran sesiones por antigüedad; solo se acota el set de revocados
+ * para mantener la memoria bajo control. Devuelve 0 (no cierra sesiones).
+ */
 export function sweepExpiredSessions(): number {
-  const now = Date.now()
-  let removed = 0
-  for (const [sid, s] of sessions) {
-    if (now - s.lastActivity > INACTIVITY_MS) {
-      sessions.delete(sid)
-      removed++
-    }
-  }
-  // Evita que el set de revocados crezca sin límite (memoria acotada).
   if (revoked.size > 10000) revoked.clear()
-  return removed
+  return 0
 }
 
 /** Número de sesiones activas (diagnóstico). */

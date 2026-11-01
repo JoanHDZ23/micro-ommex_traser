@@ -301,7 +301,8 @@ async function start() {
     console.log(`[ommex-tracer] Servidor corriendo en http://localhost:${PORT}`)
   })
 
-  // Barrido periódico de sesiones caducadas por inactividad (cada 10 min).
+  // Barrido periódico (cada 10 min): ya no cierra sesiones por inactividad,
+  // solo acota memoria. Se mantiene por si en el futuro se reactiva.
   setInterval(() => {
     const removed = sweepExpiredSessions()
     if (removed > 0) console.log(`[auth] ${removed} sesión(es) cerrada(s) por inactividad.`)
