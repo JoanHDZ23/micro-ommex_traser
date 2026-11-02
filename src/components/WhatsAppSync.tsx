@@ -41,13 +41,45 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
   const [groupMsg, setGroupMsg] = useState<string | null>(null)
 
   const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null } }
+  // Poll continuo del estado mientras el componente está montado: refleja
+  // "Conectado" en cuanto el backend lo esté, y reintenta conectar si cae.
+  const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    void refreshStatus()
     void loadDestino()
-    return () => stopPolling()
+    // Comprobación inicial + intento de conexión usando las credenciales
+    // guardadas (sin pedir QR si ya hay sesión), para que quede "Conectado" solo.
+    void ensureConnected()
+    // Revalida el estado cada 4s: si el backend reconecta por su cuenta, la UI
+    // pasa a "Conectado" sin que el usuario haga nada; si cae, reintenta.
+    statusPollRef.current = setInterval(() => { void ensureConnected() }, 4000)
+    return () => {
+      stopPolling()
+      if (statusPollRef.current) { clearInterval(statusPollRef.current); statusPollRef.current = null }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  /**
+   * Garantiza la conexión: lee el estado y, si está desconectado, dispara un
+   * start (reutiliza la sesión guardada; solo pide QR si de verdad no hay
+   * credenciales). No muestra errores en este flujo automático.
+   */
+  const ensureConnected = async () => {
+    try {
+      const s = await apiRequest<StatusResp>(`/whatsapp-web/status?${cq}`)
+      setStatus(s.status)
+      setUnavailable(false)
+      if (s.status === 'open') { setQr(null); return }
+      // Si no está abierto y no estamos mostrando un QR activo, intenta arrancar
+      // la sesión en segundo plano (reconexión silenciosa con credenciales).
+      if (s.status === 'disconnected' && !qr) {
+        await apiRequest('/whatsapp-web/start', { method: 'POST', body: { companyId } }).catch(() => { /* sin romper */ })
+      }
+    } catch {
+      setUnavailable(true)
+    }
+  }
 
   const loadDestino = async () => {
     try {
@@ -156,13 +188,17 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
       <div className="flex items-center gap-2">
         <MessageCircle className="w-5 h-5 text-green-600" />
         <h3 className="text-sm font-semibold text-[var(--color-text)]">WhatsApp</h3>
-        {status === 'open' && (
+        {status === 'open' ? (
           <span className="ml-auto">
             <Badge tone={waStatusTone(status)} icon={<CheckCircle2 className="w-3 h-3" />}>
               Conectado
             </Badge>
           </span>
-        )}
+        ) : status === 'connecting' ? (
+          <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-[var(--color-text-2)]">
+            <RefreshCw className="w-3 h-3 animate-spin" /> Conectando…
+          </span>
+        ) : null}
       </div>
       <p className="text-xs text-[var(--color-text-2)]">
         {syncOnly
@@ -183,6 +219,11 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
         !qr ? (
           loading ? (
             <LoadingState label="Generando QR…" />
+          ) : status === 'connecting' ? (
+            // Reconexión en curso con credenciales guardadas: no pedir QR aún.
+            <div className="flex items-center justify-center gap-2 p-3 rounded-xl bg-gray-50 border border-[var(--color-border)] text-xs text-[var(--color-text-2)]">
+              <RefreshCw className="w-4 h-4 animate-spin" /> Reconectando WhatsApp…
+            </div>
           ) : (
             <Button
               onClick={() => void connect()}
