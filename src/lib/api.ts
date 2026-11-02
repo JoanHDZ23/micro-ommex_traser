@@ -16,6 +16,7 @@ const NO_QUEUE_PATTERNS = [
   /\/photos\/upload/,
   /\/photos\/upload-batch/,
   /\/linea-blanca\/.*\/photo$/,
+  /\/linea-blanca\/.*\/photo-batch$/,
   /\/auth\/login/,
   /\/whatsapp-web\//,
 ]

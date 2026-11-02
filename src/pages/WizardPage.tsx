@@ -764,15 +764,31 @@ export function WizardPage() {
       clientTimestamp,
       clientKey: makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`),
     }))
+    // Cache local INMEDIATO de cada foto (con su producto) ANTES de subir: si no
+    // hay conexión, quedan visibles y se reintentan en vez de perderse.
+    const cachedIds: string[] = []
+    for (let i = 0; i < items.length; i++) {
+      const cached = await cachePhoto({
+        trackingCode,
+        base64: items[i].base64Image,
+        comment: items[i].comment,
+        clientKey: items[i].clientKey,
+        productCode: targetProduct,
+      })
+      setLocalPhotos((prev) => [...prev, cached])
+      cachedIds.push(cached.id)
+    }
     try {
       if (targetProduct) {
         await uploadProductPhotosBatch({ trackingCode, productCode: targetProduct, groupId, comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
       } else {
         await uploadPhotosBatch({ trackingCode, groupId, comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
       }
+      for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
       await loadOperation()
       setFeedback(`✓ ${base64s.length} foto(s) enviada(s)`)
     } catch (err) {
+      // Sin conexión: las fotos quedan en cache local (visibles y reintentables).
       setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
     }
   }
@@ -1160,6 +1176,17 @@ export function WizardPage() {
 
     let lastProduct: string | null = null
     try {
+      // ── 1) Cache local INMEDIATO de TODAS las fotos (generales y de producto) ──
+      // Se hace ANTES de subir para que, sin conexión, ninguna foto se pierda:
+      // quedan visibles (marcador local) y se reintentan en segundo plano. El
+      // clientKey se genera aquí y se reutiliza al subir (reconciliación).
+      const batches: Array<{
+        key: string
+        groupPhotos: typeof photos
+        groupId: string
+        items: Array<{ base64Image: string; comment: string; clientTimestamp: string; clientKey: string }>
+        cachedIds: string[]
+      }> = []
       for (const [key, groupPhotos] of groups) {
         const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         // Clave de idempotencia por foto (dedupe en el servidor + reconciliación).
@@ -1169,16 +1196,27 @@ export function WizardPage() {
           clientTimestamp,
           clientKey: makeClientKey(trackingCode, `${clientTimestamp}:${Math.random().toString(36).slice(2, 8)}`),
         }))
+        const cachedIds: string[] = []
+        for (let i = 0; i < groupPhotos.length; i++) {
+          const cached = await cachePhoto({
+            trackingCode,
+            base64: groupPhotos[i].base64,
+            comment: groupPhotos[i].comment,
+            clientKey: items[i].clientKey,
+            productCode: groupPhotos[i].productCode,
+          })
+          setLocalPhotos((prev) => [...prev, cached])
+          cachedIds.push(cached.id)
+        }
+        batches.push({ key, groupPhotos, groupId, items, cachedIds })
+      }
+
+      // ── 2) Subida por grupo (fotos generales y de producto) ──
+      for (const batch of batches) {
+        const { key, groupPhotos, groupId, items, cachedIds } = batch
 
         // ── Fotos GENERALES (sin producto) ──
         if (key === '__general__') {
-          // Cache local inmediato (con clientKey para reconciliar luego).
-          const cachedIds: string[] = []
-          for (let i = 0; i < groupPhotos.length; i++) {
-            const cached = await cachePhoto({ trackingCode, base64: groupPhotos[i].base64, comment: groupPhotos[i].comment, clientKey: items[i].clientKey })
-            setLocalPhotos((prev) => [...prev, cached])
-            cachedIds.push(cached.id)
-          }
           // SIEMPRE batch (una sola petición atómica e idempotente).
           await uploadPhotosBatch({ trackingCode, groupId, comment: groupPhotos[0].comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
           for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
@@ -1201,12 +1239,15 @@ export function WizardPage() {
         }
         // UNA sola petición batch para TODAS las fotos del producto (sin carrera).
         await uploadProductPhotosBatch({ trackingCode, productCode, groupId, comment: groupPhotos[0].comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
+        for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
         lastProduct = productCode
       }
       if (lastProduct) setActiveLbProduct(lastProduct)
       await loadOperation()
       setFeedback(`✓ ${photos.length} foto(s) enviada(s)`)
     } catch (err) {
+      // Si la subida falla (sin conexión), las fotos YA quedaron en el cache
+      // local: siguen visibles y se reintentan; no se pierde ninguna.
       setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
     } finally {
       // Libera el guard al terminar (éxito o error) para permitir nuevas tandas.
