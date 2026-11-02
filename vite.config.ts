@@ -34,7 +34,7 @@ export default defineConfig({
           {
             urlPattern: ({ url }) =>
               url.pathname.startsWith('/api') ||
-              url.hostname === 'micro-ommex-traser.onrender.com',
+              url.hostname === 'ommex-backend.onrender.com',
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-responses',
