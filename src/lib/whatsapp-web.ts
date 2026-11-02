@@ -236,6 +236,25 @@ function ensureOpen(companyId?: string): WASocket {
 }
 
 /**
+ * Espera a que la conexión esté 'open' hasta `timeoutMs`. Si está reconectando
+ * (tiene credenciales), intenta arrancarla. Así un envío disparado justo cuando
+ * la sesión está reconectando no falla de inmediato: le da margen a recuperarse.
+ * Devuelve el socket abierto o lanza si no se pudo en el tiempo dado.
+ */
+async function waitForOpen(companyId: string | undefined, timeoutMs = 12_000): Promise<WASocket> {
+  const S = getState(companyId)
+  if (S.sock && S.status === 'open') return S.sock
+  // Si no hay socket y el usuario no cerró sesión, intenta (re)conectar.
+  if (!S.sock && !S.loggedOut) { void startWhatsAppWeb(sessionKey(companyId)) }
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (S.sock && S.status === 'open') return S.sock
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  return ensureOpen(companyId) // lanza el error claro si sigue sin conectar
+}
+
+/**
  * Envía un mensaje con reintentos automáticos ante fallos temporales de red
  * o saturación del socket.
  */
@@ -246,7 +265,9 @@ async function sendMessageWithRetry<T>(
   options: Record<string, unknown> = {},
   retries = 2
 ): Promise<T> {
-  const sock = ensureOpen(companyId)
+  // Espera a que la conexión esté abierta (con margen para reconexiones) en vez
+  // de fallar al instante si está reconectando.
+  const sock = await waitForOpen(companyId)
   const jid = toJid(to)
   
   for (let attempt = 0; attempt <= retries; attempt++) {
@@ -382,9 +403,9 @@ export async function sendAlbum(
 ): Promise<{ id: string | null; count: number }> {
   if (images.length === 0) return { id: null, count: 0 }
 
-  // 0. Falla rápido si WhatsApp Web no está conectado: así el endpoint no
-  //    reporta "0 fotos" como éxito. ensureOpen lanza un error claro con guía.
-  ensureOpen(companyId)
+  // 0. Espera a que la conexión esté abierta (reconexión incluida) antes de
+  //    enviar; si tras el margen sigue caída, lanza un error claro con guía.
+  await waitForOpen(companyId)
 
   // 1. Descarga TODAS las imágenes a Buffer primero (robusto). Las que no se
   //    puedan descargar se omiten, pero no rompen el resto del álbum.
