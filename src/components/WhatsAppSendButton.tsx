@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Send, Loader2, CheckCircle2 } from 'lucide-react'
+import { Send, Loader2, CheckCircle2, MessageCircle } from 'lucide-react'
 import { apiRequest } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { Modal } from './ui'
@@ -39,11 +39,18 @@ interface Props {
   onResult?: (msg: string) => void
   /** Se llama cuando el envío termina con al menos un éxito. */
   onSent?: () => void
+  /** Se llama con el mensaje final cuando hubo al menos un envío exitoso. */
+  onSuccess?: (msg: string) => void
+  /** Se llama con el mensaje final cuando no hubo éxitos. */
+  onError?: (msg: string) => void
 }
 
-export function WhatsAppSendButton({ target, children, className, title, disabled, onResult, onSent }: Props) {
+export function WhatsAppSendButton({
+  target, children, className, title, disabled, onResult, onSent, onSuccess, onError,
+}: Props) {
   const [sending, setSending] = useState(false)
   const [localMsg, setLocalMsg] = useState<string | null>(null)
+  const [successModal, setSuccessModal] = useState<string | null>(null)
   // Selector de destino(s).
   const [modal, setModal] = useState<{ open: boolean; options: WaDest[]; resolve: ((tos: string[] | null) => void) | null }>(
     { open: false, options: [], resolve: null },
@@ -157,12 +164,22 @@ export function WhatsAppSendButton({ target, children, className, title, disable
     }
     setSending(false)
     if (ok > 0 && failed === 0) {
-      notify(`✓ Enviado a ${ok} chat(s).`); onSent?.()
+      const msg = `✓ Enviado a ${ok} chat(s).`
+      notify(msg)
+      setSuccessModal(msg)
+      onSuccess?.(msg)
+      onSent?.()
     } else if (ok > 0 && failed > 0) {
       // Éxito parcial: informa claramente qué pasó sin ocultar el fallo.
-      notify(`✓ Enviado a ${ok} · ✗ ${failed} falló(s). ${lastErr}`); onSent?.()
+      const msg = `✓ Enviado a ${ok} · ✗ ${failed} falló(s). ${lastErr}`
+      notify(msg)
+      setSuccessModal(msg)
+      onSuccess?.(msg)
+      onSent?.()
     } else {
-      notify(lastErr || 'No se pudo enviar.')
+      const msg = lastErr || 'No se pudo enviar.'
+      notify(msg)
+      onError?.(msg)
     }
   }
 
@@ -241,6 +258,32 @@ export function WhatsAppSendButton({ target, children, className, title, disable
               </div>
             )}
             <p className="text-[10px] text-gray-400 mt-1">Solo números, con código de país. No se guarda en la configuración.</p>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(successModal)}
+        onClose={() => setSuccessModal(null)}
+        z={98}
+        size="sm"
+        title="Enviado"
+        icon={<MessageCircle className="w-4 h-4 text-[#128c7e]" />}
+        footer={
+          <button
+            type="button"
+            onClick={() => setSuccessModal(null)}
+            className="w-full py-2.5 rounded-xl bg-[#128c7e] text-white text-sm font-semibold"
+          >
+            Listo
+          </button>
+        }
+      >
+        <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+          <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <p className="font-semibold">Mensaje enviado por WhatsApp</p>
+            <p className="mt-1 text-xs text-emerald-700">{successModal}</p>
           </div>
         </div>
       </Modal>

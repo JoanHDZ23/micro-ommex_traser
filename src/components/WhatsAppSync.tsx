@@ -233,8 +233,8 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
       </div>
       <p className="text-xs text-[var(--color-text-2)]">
         {syncOnly
-          ? 'Vincula el WhatsApp de esta empresa escaneando el QR (como WhatsApp Web).'
-          : 'Vincula el WhatsApp de esta empresa (como WhatsApp Web) y define el chat o grupo al que se enviarán los registros. Cada empresa usa su propia cuenta de WhatsApp.'}
+          ? 'Vincula el WhatsApp de esta empresa con código QR o con número de teléfono.'
+          : 'Vincula el WhatsApp de esta empresa con código QR o con número de teléfono, y define el chat o grupo al que se enviarán los registros. Cada empresa usa su propia cuenta de WhatsApp.'}
       </p>
 
       {unavailable && (
@@ -296,9 +296,22 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
                   Abre WhatsApp → <strong>Dispositivos vinculados</strong> → <strong>Vincular un dispositivo</strong> y escanea:
                 </p>
                 <img src={qr} alt="QR de WhatsApp" className="w-56 h-56 rounded-lg bg-white p-2" />
-                <button onClick={() => void pollQr()} className="text-[11px] text-[var(--color-primary)] flex items-center gap-1">
-                  <RefreshCw className="w-3 h-3" /> Actualizar QR
-                </button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button onClick={() => void pollQr()} className="text-[11px] text-[var(--color-primary)] flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3" /> Actualizar QR
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('pairing')
+                      setQr(null)
+                      setError(null)
+                    }}
+                    className="text-[11px] text-green-700 flex items-center gap-1"
+                  >
+                    <Link2 className="w-3 h-3" /> Vincular por número
+                  </button>
+                </div>
               </div>
             )
           ) : (
@@ -335,9 +348,22 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
                   <div className="font-mono text-2xl font-bold tracking-[.18em] text-teal-700 bg-white rounded-lg px-4 py-2 shadow">
                     {pairingCode}
                   </div>
-                  <button onClick={() => void requestCode()} className="text-[11px] text-[var(--color-primary)] flex items-center gap-1">
-                    <RefreshCw className="w-3 h-3" /> Generar otro código
-                  </button>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button onClick={() => void requestCode()} className="text-[11px] text-[var(--color-primary)] flex items-center gap-1">
+                      <RefreshCw className="w-3 h-3" /> Generar otro código
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('qr')
+                        setPairingCode(null)
+                        setError(null)
+                      }}
+                      className="text-[11px] text-green-700 flex items-center gap-1"
+                    >
+                      <QrCode className="w-3 h-3" /> Usar código QR
+                    </button>
+                  </div>
                 </>
               )}
             </div>

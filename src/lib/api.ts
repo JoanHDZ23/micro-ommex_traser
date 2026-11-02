@@ -1,5 +1,6 @@
 import { enqueue } from './sync-queue'
 import { ensureSession, getToken, renewSession, touchActivity } from './auth'
+import { cacheSheetData, getOfflineSheetData, lookupOfflineSheet, searchOfflineSheet } from './local-tables'
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -78,6 +79,7 @@ const GET_CACHE_PATTERNS = [
   /^\/settings\//,                // config (whatsapp, operation-types, plates…)
   /^\/products-catalog(\?|$)/,    // catálogo de productos
 ]
+const SHEET_DATA_PATTERN = /^\/sheets\/[^/?]+(?:\?|$)/
 function shouldCacheGet(endpoint: string): boolean {
   return GET_CACHE_PATTERNS.some((p) => p.test(endpoint))
 }
@@ -89,6 +91,13 @@ function readGetCache(endpoint: string): unknown | undefined {
 }
 function writeGetCache(endpoint: string, data: unknown): void {
   try { localStorage.setItem(GET_CACHE_PREFIX + endpoint, JSON.stringify(data)) } catch { /* cuota llena */ }
+}
+
+function getCompanyIdFromEndpoint(endpoint: string): string | null {
+  const queryIndex = endpoint.indexOf('?')
+  if (queryIndex < 0) return null
+  const params = new URLSearchParams(endpoint.slice(queryIndex + 1))
+  return params.get('companyId')
 }
 
 interface ApiOptions {
@@ -250,6 +259,13 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
   // Guarda la respuesta exitosa de GET para lectura offline posterior.
   if (isGet && shouldCacheGet(endpoint) && data !== null) {
     writeGetCache(endpoint, data)
+  }
+
+  if (isGet && SHEET_DATA_PATTERN.test(endpoint) && data && typeof data === 'object' && 'rows' in (data as Record<string, unknown>)) {
+    const companyId = getCompanyIdFromEndpoint(endpoint)
+    if (companyId) {
+      cacheSheetData(companyId, data as SheetData)
+    }
   }
 
   return (data ?? null) as T
@@ -447,7 +463,19 @@ export async function lookupInSheet(params: {
   q.set('code', params.code)
   q.set('codeColumn', String(params.codeColumn ?? 0))
   if (typeof params.descColumn === 'number' && params.descColumn >= 0) q.set('descColumn', String(params.descColumn))
-  return apiRequest<SheetLookupResult>(`/sheets/${encodeURIComponent(params.sheetId)}/lookup?${q.toString()}`)
+  try {
+    const result = await apiRequest<SheetLookupResult>(`/sheets/${encodeURIComponent(params.sheetId)}/lookup?${q.toString()}`)
+    if (!getOfflineSheetData(params.companyId, params.sheetId)) {
+      void apiRequest<SheetData>(`/sheets/${encodeURIComponent(params.sheetId)}?companyId=${encodeURIComponent(params.companyId)}`).catch(() => {})
+    }
+    return result
+  } catch (err) {
+    if (err instanceof NetworkError) {
+      const offline = lookupOfflineSheet(params)
+      if (offline) return offline
+    }
+    throw err
+  }
 }
 
 export interface SheetSearchItem {
@@ -486,7 +514,19 @@ export async function searchInSheet(params: {
   qs.set('codeColumn', String(params.codeColumn ?? 0))
   if (typeof params.descColumn === 'number' && params.descColumn >= 0) qs.set('descColumn', String(params.descColumn))
   if (params.limit) qs.set('limit', String(params.limit))
-  return apiRequest<SheetSearchResult>(`/sheets/${encodeURIComponent(params.sheetId)}/search?${qs.toString()}`)
+  try {
+    const result = await apiRequest<SheetSearchResult>(`/sheets/${encodeURIComponent(params.sheetId)}/search?${qs.toString()}`)
+    if (!getOfflineSheetData(params.companyId, params.sheetId)) {
+      void apiRequest<SheetData>(`/sheets/${encodeURIComponent(params.sheetId)}?companyId=${encodeURIComponent(params.companyId)}`).catch(() => {})
+    }
+    return result
+  } catch (err) {
+    if (err instanceof NetworkError) {
+      const offline = searchOfflineSheet(params)
+      if (offline) return offline
+    }
+    throw err
+  }
 }
 
 /**

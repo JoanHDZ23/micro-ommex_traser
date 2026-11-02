@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, Search, Send, SlidersHorizontal, Trash2, Wifi, WifiOff, X } from 'lucide-react'
 import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
@@ -91,6 +91,7 @@ export function WizardPage() {
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
+  const [sentModalMessage, setSentModalMessage] = useState<string | null>(null)
   const [showCamera, setShowCamera] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
 
@@ -111,7 +112,7 @@ export function WizardPage() {
         id: 'product',
         label: 'Producto',
         icon: Package,
-        color: 'bg-blue-500',
+        color: 'from-sky-500 to-blue-600',
         onClick: () => { setShowPlusMenu(false); setShowAddProductModal(true) }
       })
     }
@@ -120,7 +121,7 @@ export function WizardPage() {
         id: 'database',
         label: 'Base Datos',
         icon: Database,
-        color: 'bg-emerald-600',
+        color: 'from-emerald-500 to-teal-600',
         onClick: () => { setShowPlusMenu(false); setShowDbModal(true) }
       })
     }
@@ -129,7 +130,7 @@ export function WizardPage() {
         id: 'gallery',
         label: 'Galería',
         icon: ImageIcon,
-        color: 'bg-purple-500',
+        color: 'from-fuchsia-500 to-purple-600',
         onClick: () => { setShowPlusMenu(false); lbFileInputRef.current?.click() }
       })
     }
@@ -138,7 +139,7 @@ export function WizardPage() {
         id: 'paste',
         label: 'Pegar',
         icon: ClipboardPaste,
-        color: 'bg-sky-600',
+        color: 'from-cyan-500 to-sky-600',
         onClick: () => { setShowPlusMenu(false); void pasteImageFromClipboard() }
       })
     }
@@ -147,7 +148,7 @@ export function WizardPage() {
         id: 'audio',
         label: 'Audio',
         icon: Mic,
-        color: 'bg-orange-500',
+        color: 'from-orange-500 to-rose-500',
         onClick: () => { setShowPlusMenu(false); setShowAudioRecorder(true) }
       })
     }
@@ -156,7 +157,7 @@ export function WizardPage() {
         id: 'catalog',
         label: 'Catálogo',
         icon: Package,
-        color: 'bg-amber-600',
+        color: 'from-amber-400 to-orange-500',
         onClick: () => { setShowPlusMenu(false); setShowCatalogPicker(true) }
       })
     }
@@ -165,7 +166,7 @@ export function WizardPage() {
         id: 'document',
         label: 'Documento',
         icon: FileText,
-        color: 'bg-blue-600',
+        color: 'from-indigo-500 to-blue-700',
         onClick: () => { document.getElementById('plus-menu-doc-input')?.click() }
       })
     }
@@ -174,7 +175,7 @@ export function WizardPage() {
         id: 'activity',
         label: 'Actividad',
         icon: Activity,
-        color: 'bg-indigo-600',
+        color: 'from-violet-500 to-indigo-600',
         onClick: () => { setShowPlusMenu(false); setShowActivityModal(true) }
       })
     }
@@ -524,7 +525,9 @@ export function WizardPage() {
     }
     setMatrixSending(false)
     setMatrixModal({ open: false, dests: [] })
-    setFeedback(fail === 0 ? `✓ Enviado (${ok} envío/s).` : `✓ ${ok} enviado(s), ${fail} fallido(s).`)
+    const msg = fail === 0 ? `✓ Enviado (${ok} envío/s).` : `✓ ${ok} enviado(s), ${fail} fallido(s).`
+    setFeedback(msg)
+    if (ok > 0) setSentModalMessage(msg)
   }
 
   const confirmDestinations = () => {
@@ -776,9 +779,14 @@ export function WizardPage() {
       // Comprime/redimensiona para subida rápida y para mostrar la miniatura.
       const base64 = await compressImageToBase64(file, stampOpts)
       const dataUrl = `data:image/jpeg;base64,${base64}`
-      setCaptureTray((prev) => [...prev, dataUrl])
+      let nextIdx = 0
+      setCaptureTray((prev) => {
+        nextIdx = prev.length
+        return [...prev, dataUrl]
+      })
       setTrayComments((prev) => [...prev, ''])
       setShowCaptureTray(true)
+      setTrayFullIdx(nextIdx)
     } catch {
       setFeedback('No se pudo leer la foto')
     }
@@ -829,8 +837,13 @@ export function WizardPage() {
       else failed++
     }
     if (dataUrls.length) {
-      setCaptureTray((prev) => [...prev, ...dataUrls])
+      let nextIdx = 0
+      setCaptureTray((prev) => {
+        nextIdx = prev.length
+        return [...prev, ...dataUrls]
+      })
       setTrayComments((prev) => [...prev, ...dataUrls.map(() => '')])
+      if (dataUrls.length === 1) setTrayFullIdx(nextIdx)
     }
     if (failed) setFeedback(`No se pudieron procesar ${failed} imagen(es)`)
   }, [])
@@ -1057,6 +1070,9 @@ export function WizardPage() {
 
   // ── Local photo cache ──
   const [localPhotos, setLocalPhotos] = useState<CachedPhoto[]>([])
+  const pendingGeneralPhotos = localPhotos.filter((p) => !p.uploaded && !p.productCode)
+  const stalledGeneralPhotos = pendingGeneralPhotos.filter((p) => (p.uploadAttempts ?? 0) >= 6)
+  const syncingGeneralPhotos = pendingGeneralPhotos.length - stalledGeneralPhotos.length
 
   // Clean expired photos on mount
   useEffect(() => { void cleanExpiredPhotos() }, [])
@@ -1602,7 +1618,9 @@ export function WizardPage() {
     }
     setSendingSelected(false)
     setShowSendSelector(false)
-    setFeedback(fail === 0 ? `✓ Enviados ${ok} envío(s) por WhatsApp.` : `✓ ${ok} enviado(s), ${fail} fallido(s).`)
+    const msg = fail === 0 ? `✓ Enviados ${ok} envío(s) por WhatsApp.` : `✓ ${ok} enviado(s), ${fail} fallido(s).`
+    setFeedback(msg)
+    if (ok > 0) setSentModalMessage(msg)
   }
 
   const toggleSelectedItem = (code: string) => {
@@ -1661,13 +1679,17 @@ export function WizardPage() {
     try {
       if (!tos || tos.length === 0) {
         const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, headerFields: [...headerFields] } })
-        setFeedback(`✓ ${r.message}`)
+        const msg = `✓ ${r.message}`
+        setFeedback(msg)
+        setSentModalMessage(msg)
       } else {
         let ok = 0
         for (const to of tos) {
           try { await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to, headerFields: [...headerFields] } }); ok++ } catch { /* sigue */ }
         }
-        setFeedback(ok === tos.length ? `✓ Registro enviado a ${ok} chat(s).` : `✓ Enviado a ${ok} de ${tos.length} chat(s).`)
+        const msg = ok === tos.length ? `✓ Registro enviado a ${ok} chat(s).` : `✓ Enviado a ${ok} de ${tos.length} chat(s).`
+        setFeedback(msg)
+        if (ok > 0) setSentModalMessage(msg)
       }
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
@@ -1943,6 +1965,7 @@ export function WizardPage() {
                 productCodes: Array.from(selectedProducts),
               }}
               onResult={setFeedback}
+              onSuccess={setSentModalMessage}
               onSent={exitSelectMode}
               title="Enviar seleccionados por WhatsApp"
               className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-semibold"
@@ -1959,6 +1982,43 @@ export function WizardPage() {
               <Trash2 className="w-5 h-5" />
             </button>
           )}
+        </div>
+      )}
+
+      {!selectMode && pendingGeneralPhotos.length > 0 && (
+        <div className={`mx-3 mt-2 flex-shrink-0 rounded-xl border px-3 py-2.5 shadow-sm ${
+          stalledGeneralPhotos.length > 0
+            ? 'border-red-200 bg-red-50 text-red-700'
+            : 'border-amber-200 bg-amber-50 text-amber-800'
+        }`}>
+          <div className="flex items-start gap-2">
+            {stalledGeneralPhotos.length > 0 ? (
+              <WifiOff className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            ) : (
+              <Wifi className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold">
+                {stalledGeneralPhotos.length > 0
+                  ? `${stalledGeneralPhotos.length} foto(s) quedaron sin enviar`
+                  : `Sincronizando ${syncingGeneralPhotos} foto(s) del registro`}
+              </p>
+              <p className="mt-0.5 text-[11px] opacity-90">
+                {stalledGeneralPhotos.length > 0
+                  ? 'Puedes reintentar el envío desde aquí sin salir del registro.'
+                  : 'Las fotos ya están guardadas en este dispositivo mientras terminan de subirse.'}
+              </p>
+            </div>
+            {stalledGeneralPhotos.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void retryPendingPhotos()}
+                className="flex-shrink-0 rounded-full bg-white px-3 py-1.5 text-[11px] font-semibold text-red-700 shadow-sm hover:bg-red-100"
+              >
+                Reintentar
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -2018,8 +2078,18 @@ export function WizardPage() {
 
         {/* Feedback */}
         {feedback && (
-          <div className={`flex items-start gap-2 p-2.5 rounded-lg text-xs ${feedback.startsWith('✓') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
-            {feedback.startsWith('✓') ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5" /> : <AlertCircle className="w-3.5 h-3.5 mt-0.5" />}
+          <div className={`mx-auto max-w-xl flex items-start gap-2 p-3 rounded-xl text-xs shadow-sm border ${
+            feedback.startsWith('✓')
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              : feedback.startsWith('⏳')
+                ? 'bg-blue-50 text-blue-700 border-blue-200'
+                : 'bg-red-50 text-red-700 border-red-200'
+          }`}>
+            {feedback.startsWith('✓')
+              ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5" />
+              : feedback.startsWith('⏳')
+                ? <Loader2 className="w-3.5 h-3.5 mt-0.5 animate-spin" />
+                : <AlertCircle className="w-3.5 h-3.5 mt-0.5" />}
             <span>{feedback}</span>
           </div>
         )}
@@ -2679,7 +2749,7 @@ export function WizardPage() {
                   onClick={item.onClick}
                   className="flex flex-col items-center gap-2 group outline-none"
                 >
-                  <div className={`w-14 h-14 rounded-full ${item.color} flex items-center justify-center text-white shadow-md group-active:scale-95 transition-transform`}>
+                  <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${item.color} flex items-center justify-center text-white shadow-[0_12px_24px_-12px_rgba(15,23,42,0.45)] group-active:scale-95 transition-transform`}>
                     <item.icon className="w-6 h-6" />
                   </div>
                   <span className="text-[11px] text-gray-600 font-medium text-center leading-tight">
@@ -3041,6 +3111,34 @@ export function WizardPage() {
       <Modal open={showWaSync} onClose={() => setShowWaSync(false)} z={95}
         title="Sincronizar WhatsApp" icon={<MessageCircle className="w-4 h-4 text-[#128c7e]" />}>
         <WhatsAppSync syncOnly />
+      </Modal>
+
+      <Modal
+        open={Boolean(sentModalMessage)}
+        onClose={() => setSentModalMessage(null)}
+        z={99}
+        size="sm"
+        title="Enviado"
+        icon={<MessageCircle className="w-4 h-4 text-[#128c7e]" />}
+        footer={
+          <button
+            type="button"
+            onClick={() => setSentModalMessage(null)}
+            className="w-full py-2.5 rounded-xl bg-[#128c7e] text-white text-sm font-semibold"
+          >
+            Cerrar
+          </button>
+        }
+      >
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="w-5 h-5 mt-0.5 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="font-semibold">El contenido fue enviado por WhatsApp.</p>
+              <p className="mt-1 text-xs text-emerald-700">{sentModalMessage}</p>
+            </div>
+          </div>
+        </div>
       </Modal>
 
       {/* Ajustes de ESTE registro (marca de agua y partes del sello) */}
@@ -4029,4 +4127,3 @@ export function WizardPage() {
     </div>
   )
 }
-

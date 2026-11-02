@@ -11,9 +11,10 @@
  */
 
 import * as XLSX from 'xlsx'
-import type { CompanySheet, ParsedTable, SheetData } from './api'
+import type { CompanySheet, ParsedTable, SheetData, SheetLookupResult, SheetSearchItem, SheetSearchResult } from './api'
 
 const STORAGE_KEY = 'ommex_local_tables_v1'
+const SNAPSHOT_KEY = 'ommex_sheet_snapshots_v1'
 
 export function isPdf(fileName: string, mimeType?: string): boolean {
   return fileName.toLowerCase().endsWith('.pdf') || (mimeType ?? '').includes('pdf')
@@ -130,6 +131,19 @@ interface LocalTable {
   createdAt: string
 }
 
+interface CachedSheetSnapshot {
+  id: string
+  companyId: string
+  sheetName: string
+  sourceFileName: string
+  headers: string[]
+  rows: string[][]
+  rowCount: number
+  rowsTruncated: boolean
+  createdAt: string
+  cachedAt: string
+}
+
 function readAll(): LocalTable[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -139,6 +153,17 @@ function readAll(): LocalTable[] {
 
 function writeAll(tables: LocalTable[]) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(tables)) } catch { /* cuota llena */ }
+}
+
+function readSnapshots(): CachedSheetSnapshot[] {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY)
+    return raw ? (JSON.parse(raw) as CachedSheetSnapshot[]) : []
+  } catch { return [] }
+}
+
+function writeSnapshots(items: CachedSheetSnapshot[]) {
+  try { localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(items)) } catch { /* cuota llena */ }
 }
 
 const genId = () => Math.random().toString(36).slice(2, 12)
@@ -187,6 +212,146 @@ export function getLocalTable(companyId: string, id: string): SheetData | null {
     rowCount: t.rowCount,
     rowsTruncated: t.rowsTruncated,
     createdAt: t.createdAt,
+  }
+}
+
+/** Guarda una copia local utilizable de una tabla remota para búsquedas offline. */
+export function cacheSheetData(companyId: string, data: SheetData): void {
+  const all = readSnapshots().filter((x) => !(x.companyId === companyId && x.id === data.id))
+  const record: CachedSheetSnapshot = {
+    id: data.id,
+    companyId,
+    sheetName: data.sheetName,
+    sourceFileName: data.sourceFileName,
+    headers: data.headers ?? [],
+    rows: data.rows ?? [],
+    rowCount: data.rowCount ?? (data.rows ?? []).length,
+    rowsTruncated: data.rowsTruncated === true,
+    createdAt: data.createdAt,
+    cachedAt: new Date().toISOString(),
+  }
+  writeSnapshots([record, ...all].slice(0, 25))
+}
+
+/** Devuelve una tabla utilizable offline: primero local, luego snapshot remoto cacheado. */
+export function getOfflineSheetData(companyId: string, id: string): SheetData | null {
+  const local = getLocalTable(companyId, id)
+  if (local) return local
+  const cached = readSnapshots().find((x) => x.companyId === companyId && x.id === id)
+  if (!cached) return null
+  return {
+    id: cached.id,
+    sheetName: cached.sheetName,
+    sourceFileName: cached.sourceFileName,
+    headers: cached.headers,
+    rows: cached.rows,
+    rowCount: cached.rowCount,
+    rowsTruncated: cached.rowsTruncated,
+    createdAt: cached.createdAt,
+    source: 'stored',
+  }
+}
+
+function normalize(value: string): string {
+  return (value ?? '').trim().toLowerCase()
+}
+
+function buildItem(row: string[], headers: string[], rowIndex: number, codeColumn: number, descColumn: number): SheetSearchItem {
+  const data: Record<string, string> = {}
+  headers.forEach((header, index) => {
+    data[header || `Columna ${index + 1}`] = row[index] ?? ''
+  })
+  return {
+    rowIndex,
+    code: row[codeColumn] ?? '',
+    descripcion: descColumn >= 0 ? (row[descColumn] ?? '') : '',
+    row,
+    data,
+  }
+}
+
+/** Busca en la copia offline de una tabla (local o cacheada desde servidor). */
+export function searchOfflineSheet(params: {
+  companyId: string
+  sheetId: string
+  q: string
+  codeColumn?: number
+  descColumn?: number
+  limit?: number
+}): SheetSearchResult | null {
+  const sheet = getOfflineSheetData(params.companyId, params.sheetId)
+  if (!sheet) return null
+
+  const q = normalize(params.q)
+  const codeColumn = params.codeColumn ?? 0
+  const descColumn = params.descColumn ?? -1
+  const limit = Math.max(1, params.limit ?? 25)
+  if (!q) {
+    return { results: [], total: 0, headers: sheet.headers ?? [], sheetName: sheet.sheetName }
+  }
+
+  const ranked = (sheet.rows ?? []).map((row, rowIndex) => {
+    const code = normalize(row[codeColumn] ?? '')
+    const desc = descColumn >= 0 ? normalize(row[descColumn] ?? '') : ''
+    const all = normalize(row.join(' '))
+    let score = 0
+
+    if (code === q) score = 1000
+    else if (code.startsWith(q)) score = 700
+    else if (code.includes(q)) score = 500
+    else if (desc.startsWith(q)) score = 350
+    else if (desc.includes(q)) score = 250
+    else if (all.includes(q)) score = 100
+
+    return score > 0
+      ? { score, item: buildItem(row, sheet.headers ?? [], rowIndex, codeColumn, descColumn) }
+      : null
+  }).filter((entry): entry is { score: number; item: SheetSearchItem } => Boolean(entry))
+
+  ranked.sort((a, b) => b.score - a.score || a.item.rowIndex - b.item.rowIndex)
+  return {
+    results: ranked.slice(0, limit).map((entry) => entry.item),
+    total: ranked.length,
+    headers: sheet.headers ?? [],
+    sheetName: sheet.sheetName,
+  }
+}
+
+/** Busca coincidencia exacta en la copia offline de una tabla. */
+export function lookupOfflineSheet(params: {
+  companyId: string
+  sheetId: string
+  code: string
+  codeColumn?: number
+  descColumn?: number
+}): SheetLookupResult | null {
+  const sheet = getOfflineSheetData(params.companyId, params.sheetId)
+  if (!sheet) return null
+
+  const codeColumn = params.codeColumn ?? 0
+  const descColumn = params.descColumn ?? -1
+  const target = normalize(params.code)
+  const row = (sheet.rows ?? []).find((item) => normalize(item[codeColumn] ?? '') === target)
+  if (!row) {
+    return {
+      found: false,
+      sheetName: sheet.sheetName,
+      headers: sheet.headers ?? [],
+    }
+  }
+
+  const data: Record<string, string> = {}
+  ;(sheet.headers ?? []).forEach((header, index) => {
+    data[header || `Columna ${index + 1}`] = row[index] ?? ''
+  })
+  return {
+    found: true,
+    sheetName: sheet.sheetName,
+    headers: sheet.headers ?? [],
+    row,
+    code: row[codeColumn] ?? '',
+    descripcion: descColumn >= 0 ? (row[descColumn] ?? '') : '',
+    data,
   }
 }
 
