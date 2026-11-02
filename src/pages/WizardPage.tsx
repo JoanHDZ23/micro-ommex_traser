@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { apiRequest, fileToBase64, makeClientKey, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
@@ -11,7 +11,7 @@ import { AudioRecorder } from '../components/AudioRecorder'
 import { CatalogPicker } from '../components/CatalogPicker'
 import { ImageEditor } from '../components/ImageEditor'
 import { Button, ErrorState, LoadingState, Modal, ModalSurface } from '../components/ui'
-import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, type CachedPhoto } from '../lib/photo-cache'
+import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, resetPendingForRetry, uploadPendingInBackground, type CachedPhoto } from '../lib/photo-cache'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { compressImageToBase64 } from '../lib/image-compress'
@@ -1071,6 +1071,30 @@ export function WizardPage() {
       setLocalPhotos(pendingLocalPhotos(cached, serverPhotos))
     })
   }, [operation, trackingCode])
+
+  /**
+   * Reintento manual del envío de las fotos que quedaron pendientes/sin enviar.
+   * Reinicia el backoff y fuerza una subida inmediata; luego refresca la lista
+   * local y recarga la operación para reflejar las que sí subieron.
+   */
+  const retryPendingPhotos = useCallback(async () => {
+    setFeedback('⏳ Reintentando envío de fotos…')
+    try {
+      await resetPendingForRetry()
+      const n = await uploadPendingInBackground(
+        (url, opts) => apiRequest(url as string, opts as { method: string; body?: unknown }),
+      )
+      if (trackingCode) {
+        const cached = await getCachedPhotos(trackingCode)
+        if (operation) setLocalPhotos(pendingLocalPhotos(cached, collectAllServerPhotos(operation)))
+      }
+      await loadOperation()
+      setFeedback(n > 0 ? `✓ ${n} foto(s) enviada(s)` : 'No se pudo enviar aún. Revisa la conexión e inténtalo de nuevo.')
+    } catch {
+      setFeedback('No se pudo reintentar. Revisa la conexión.')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackingCode, operation])
 
   /**
    * Resultado de la cámara en modo multi-captura (misma cámara que productos).
@@ -2318,19 +2342,34 @@ export function WizardPage() {
                   )}
                   <div className={`w-[92%] chat-bubble-out rounded-lg rounded-tr-none shadow-sm overflow-hidden relative ${prodSel ? 'ring-2 ring-[var(--color-primary)]/40' : ''} ${selectMode ? 'pointer-events-none' : ''}`}>
                     {/* Photo grid */}
-                    {/* Fotos tomadas pendientes de subir (storage temporal → GitHub) */}
+                    {/* Fotos tomadas pendientes de subir (storage temporal → GitHub).
+                        Si una foto agotó sus reintentos, se marca "sin enviar" con
+                        opción de reintentar, en vez de un spinner infinito. */}
                     {pendingLocal.length > 0 && (
                       <div className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: pendingLocal.length === 1 ? '1fr' : '1fr 1fr' }}>
-                        {pendingLocal.map((ph) => (
-                          <div key={ph.id} className="aspect-square bg-gray-200 rounded overflow-hidden relative">
-                            <img src={ph.dataUrl} className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 bg-black/35 flex items-center justify-center">
-                              <Loader2 className="w-5 h-5 text-white animate-spin" />
+                        {pendingLocal.map((ph) => {
+                          const stalled = (ph.uploadAttempts ?? 0) >= 6
+                          return (
+                            <div key={ph.id} className="aspect-square bg-gray-200 rounded overflow-hidden relative">
+                              <img src={ph.dataUrl} className="w-full h-full object-cover" />
+                              <div className={`absolute inset-0 flex items-center justify-center ${stalled ? 'bg-red-900/50' : 'bg-black/35'}`}>
+                                {stalled
+                                  ? <AlertCircle className="w-5 h-5 text-white" />
+                                  : <Loader2 className="w-5 h-5 text-white animate-spin" />}
+                              </div>
+                              <span className={`absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded-full text-white ${stalled ? 'bg-red-600' : 'bg-black/60'}`}>
+                                {stalled ? 'Sin enviar' : 'Subiendo…'}
+                              </span>
                             </div>
-                            <span className="absolute bottom-1 left-1 text-[9px] bg-black/60 text-white px-1.5 py-0.5 rounded-full">Subiendo…</span>
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
+                    )}
+                    {pendingLocal.some((p) => (p.uploadAttempts ?? 0) >= 6) && (
+                      <button type="button" onClick={() => void retryPendingPhotos()}
+                        className="w-full mt-0.5 py-1.5 rounded-lg bg-red-50 text-red-600 text-[11px] font-semibold flex items-center justify-center gap-1.5 hover:bg-red-100 transition-colors">
+                        <RefreshCw className="w-3.5 h-3.5" /> Reintentar envío de fotos
+                      </button>
                     )}
 
                     {photos.length > 0 && (

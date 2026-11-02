@@ -156,6 +156,44 @@ export async function getCachedPhotoUrl(id: string): Promise<string | null> {
   })
 }
 
+/** Nº de fotos pendientes de subir (no subidas) en todo el almacén. */
+export async function countPendingUploads(): Promise<number> {
+  return (await getPendingUploads()).length
+}
+
+/** True si alguna foto pendiente ya agotó sus reintentos automáticos. */
+export async function hasFailedUploads(): Promise<boolean> {
+  const pending = await getPendingUploads()
+  return pending.some((p) => (p.uploadAttempts ?? 0) >= MAX_UPLOAD_ATTEMPTS)
+}
+
+/**
+ * Reinicia el backoff y el contador de intentos de TODAS las fotos pendientes
+ * para forzar un reintento inmediato (lo usa el botón "Reintentar"). No borra
+ * nada: solo las vuelve a dejar "listas para subir".
+ */
+export async function resetPendingForRetry(): Promise<number> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const store = tx.objectStore(STORE_NAME)
+    const req = store.getAll()
+    let reset = 0
+    req.onsuccess = () => {
+      for (const photo of (req.result ?? []) as CachedPhoto[]) {
+        if (!photo.uploaded) {
+          photo.uploadAttempts = 0
+          photo.lastAttemptAt = 0
+          store.put(photo)
+          reset++
+        }
+      }
+    }
+    tx.oncomplete = () => resolve(reset)
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
 /** Obtiene fotos pendientes de subir */
 export async function getPendingUploads(): Promise<CachedPhoto[]> {
   const db = await openDB()
@@ -244,6 +282,8 @@ async function uploadGroup(api: ApiFn, photos: CachedPhoto[]): Promise<number> {
     // backoff y no reintentar en ráfaga en el siguiente ciclo.
     for (const p of photos) await recordFailedAttempt(p.id)
     console.warn(`[photo-cache] Batch upload failed for ${groupKey(first)} (${photos.length} fotos)`)
+    // Avisa a la UI (banner) que quedaron fotos pendientes/sin enviar.
+    try { window.dispatchEvent(new CustomEvent('photo-cache:pending')) } catch { /* SSR */ }
     return 0
   }
 }

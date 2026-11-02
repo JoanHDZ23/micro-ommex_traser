@@ -10,23 +10,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, CheckCircle2, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { count as queueCount, flush, type QueuedRequest } from '../lib/sync-queue'
-import { uploadPendingInBackground } from '../lib/photo-cache'
+import { uploadPendingInBackground, countPendingUploads, hasFailedUploads, resetPendingForRetry } from '../lib/photo-cache'
 import { apiRequest } from '../lib/api'
 
 export function OfflineBanner() {
   const [isOnline, setIsOnline] = useState(navigator.onLine)
-  const [pending, setPending]   = useState(0)
+  const [pending, setPending]   = useState(0)      // cola de mutaciones + fotos pendientes
+  const [failedPhotos, setFailedPhotos] = useState(false) // alguna foto agotó reintentos
   const [syncing, setSyncing]   = useState(false)
   const [syncMsg, setSyncMsg]   = useState<string | null>(null)
   const [discarded, setDiscarded] = useState(0)   // items descartados por error HTTP
   const syncingRef = useRef(false)                  // guard contra doble flush
 
   const refreshCount = useCallback(async () => {
-    try { setPending(await queueCount()) } catch { /* IDB no listo */ }
+    try {
+      const [q, photos, failed] = await Promise.all([
+        queueCount().catch(() => 0),
+        countPendingUploads().catch(() => 0),
+        hasFailedUploads().catch(() => false),
+      ])
+      setPending(q + photos)
+      setFailedPhotos(failed)
+    } catch { /* IDB no listo */ }
   }, [])
 
-  /** Sincroniza fotos pendientes y cola de mutaciones. Idempotente. */
-  const autoSync = useCallback(async () => {
+  /** Sincroniza fotos pendientes y cola de mutaciones. Idempotente.
+   *  Con `force` (reintento manual) reinicia el backoff de las fotos fallidas. */
+  const autoSync = useCallback(async (force = false) => {
     if (syncingRef.current) return
     syncingRef.current = true
     setSyncing(true)
@@ -34,6 +44,8 @@ export function OfflineBanner() {
     setDiscarded(0)
     let discardCount = 0
     try {
+      // Reintento manual: reinicia el backoff para subir ya mismo.
+      if (force) { try { await resetPendingForRetry() } catch { /* noop */ } }
       // 1. Fotos capturadas offline → photo-cache → backend
       const uploadedPhotos = await uploadPendingInBackground(
         (url, opts) => apiRequest(url as string, opts as { method: string; body?: unknown }),
@@ -68,8 +80,8 @@ export function OfflineBanner() {
     // Al montar: refrescar el conteo y, si ya hay pendientes con red, sincronizar.
     void refreshCount().then(async () => {
       if (navigator.onLine) {
-        const n = await queueCount().catch(() => 0)
-        if (n > 0) void autoSync()
+        const [q, photos] = await Promise.all([queueCount().catch(() => 0), countPendingUploads().catch(() => 0)])
+        if (q + photos > 0) void autoSync()
       }
     })
 
@@ -81,20 +93,25 @@ export function OfflineBanner() {
     window.addEventListener('offline', handleOffline)
     // Evento disparado por api.ts cuando encola una mutation offline
     window.addEventListener('sync-queue:enqueued', handleEnqueue)
+    // Evento disparado cuando se cachea una foto que quedó pendiente de subir.
+    window.addEventListener('photo-cache:pending', handleEnqueue)
 
-    // Poll cada 60 s para detectar pendientes en conexiones intermitentes
+    // Poll cada 30 s para detectar pendientes en conexiones intermitentes
     const poll = setInterval(() => {
       void refreshCount()
-      // Si hay pendientes y hay red, intentar sync silencioso
+      // Si hay pendientes (cola o fotos) y hay red, intentar sync silencioso
       if (navigator.onLine && !syncingRef.current) {
-        void queueCount().then((n) => { if (n > 0) void autoSync() }).catch(() => {})
+        void Promise.all([queueCount().catch(() => 0), countPendingUploads().catch(() => 0)])
+          .then(([q, photos]) => { if (q + photos > 0) void autoSync() })
+          .catch(() => {})
       }
-    }, 60_000)
+    }, 30_000)
 
     return () => {
       window.removeEventListener('online',  handleOnline)
       window.removeEventListener('offline', handleOffline)
       window.removeEventListener('sync-queue:enqueued', handleEnqueue)
+      window.removeEventListener('photo-cache:pending', handleEnqueue)
       clearInterval(poll)
     }
   }, [autoSync, refreshCount])
@@ -108,7 +125,7 @@ export function OfflineBanner() {
       aria-live="polite"
       className={`fixed top-0 inset-x-0 z-[200] flex items-center justify-between gap-2 px-4 py-2 text-xs font-medium shadow-sm transition-all ${
         isOnline
-          ? discarded > 0
+          ? (discarded > 0 || failedPhotos)
             ? 'bg-amber-500 text-white'
             : 'bg-emerald-600 text-white'
           : 'bg-amber-500 text-white'
@@ -125,10 +142,12 @@ export function OfflineBanner() {
             ? syncMsg
             : isOnline
               ? pending > 0
-                ? `${pending} cambio(s) pendiente(s) de sincronizar`
+                ? failedPhotos
+                  ? `${pending} elemento(s) sin enviar — toca Reintentar`
+                  : `${pending} elemento(s) pendiente(s) de sincronizar`
                 : '¡Conectado!'
               : pending > 0
-                ? `Sin red · ${pending} cambio(s) guardado(s) — se enviarán al reconectar`
+                ? `Sin red · ${pending} elemento(s) guardado(s) — se enviarán al reconectar`
                 : 'Sin red · los cambios se guardan automáticamente'}
         </span>
       </div>
@@ -136,10 +155,10 @@ export function OfflineBanner() {
       <div className="flex items-center gap-2 flex-shrink-0">
         {isOnline && pending > 0 && !syncing && (
           <button
-            onClick={() => void autoSync()}
+            onClick={() => void autoSync(true)}
             className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-white/20 hover:bg-white/30 transition-colors text-[11px] font-semibold"
           >
-            <RefreshCw className="w-3 h-3" /> Sincronizar
+            <RefreshCw className="w-3 h-3" /> {failedPhotos ? 'Reintentar' : 'Sincronizar'}
           </button>
         )}
         {syncing && (
