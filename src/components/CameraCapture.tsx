@@ -5,7 +5,7 @@ import { ImageEditor } from './ImageEditor'
 import { BarcodeScanner } from './BarcodeScanner'
 import { DbProductSearch } from './DbProductSearch'
 import { drawStampOnCanvas, getAddress, getAddressNow, getCoordsNow, primeCoords } from '../lib/photo-stamp'
-import { searchInSheet, type SheetSearchItem } from '../lib/api'
+import { searchInSheet, warmSheetCache, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 
 /** Foto capturada dentro de la bandeja de la cámara (modo multi-captura). */
@@ -221,6 +221,19 @@ export function CameraCapture({
     primeCoords()
     return () => stopCamera()
   }, [startCamera, stopCamera])
+
+  // Prepara la copia local de la tabla DATA fijada mientras la cámara está
+  // activa: así, al escanear/buscar un producto SIN internet (o con señal débil),
+  // los datos del producto se resuelven desde la copia local en vez de fallar.
+  useEffect(() => {
+    if (!dbConfig?.sheetId) return
+    const cid = getCompanyId()
+    if (!cid) return
+    void warmSheetCache(dbConfig.sheetId, cid)
+    const onOnline = () => { void warmSheetCache(dbConfig.sheetId, cid) }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [dbConfig?.sheetId])
 
   // Enciende/apaga la linterna físicamente (si el dispositivo la soporta).
   const setTorch = useCallback(async (on: boolean) => {

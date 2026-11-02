@@ -465,9 +465,7 @@ export async function lookupInSheet(params: {
   if (typeof params.descColumn === 'number' && params.descColumn >= 0) q.set('descColumn', String(params.descColumn))
   try {
     const result = await apiRequest<SheetLookupResult>(`/sheets/${encodeURIComponent(params.sheetId)}/lookup?${q.toString()}`)
-    if (!getOfflineSheetData(params.companyId, params.sheetId)) {
-      void apiRequest<SheetData>(`/sheets/${encodeURIComponent(params.sheetId)}?companyId=${encodeURIComponent(params.companyId)}`).catch(() => {})
-    }
+    void warmSheetCache(params.sheetId, params.companyId)
     return result
   } catch (err) {
     if (err instanceof NetworkError) {
@@ -494,6 +492,30 @@ export interface SheetSearchResult {
 }
 
 /**
+ * Descarga y guarda una copia local (snapshot) de una tabla de la DATA para
+ * poder consultarla SIN conexión (búsqueda/escaneo en campo con la cámara).
+ *
+ * Es "best effort": si ya existe una copia local no vuelve a pedirla; si falla
+ * (sin señal) no lanza error, porque se reintentará cuando vuelva la conexión.
+ * Debe llamarse mientras haya internet (al fijar la tabla del registro o al
+ * abrir la cámara) para garantizar datos disponibles offline.
+ */
+export async function warmSheetCache(sheetId: string, companyId: string): Promise<boolean> {
+  if (!sheetId || !companyId) return false
+  if (getOfflineSheetData(companyId, sheetId)) return true
+  try {
+    const data = await apiRequest<SheetData>(`/sheets/${encodeURIComponent(sheetId)}?companyId=${encodeURIComponent(companyId)}`)
+    if (data && typeof data === 'object' && Array.isArray((data as SheetData).rows)) {
+      cacheSheetData(companyId, data as SheetData)
+      return true
+    }
+  } catch {
+    /* sin conexión o error: se reintenta en la próxima llamada */
+  }
+  return false
+}
+
+/**
  * Busca por CÓDIGO o NOMBRE (coincidencia parcial) dentro de una tabla de la
  * DATA y devuelve todos los resultados ordenados por relevancia. Útil para:
  *  - 1 resultado → autocompletar directamente.
@@ -516,9 +538,7 @@ export async function searchInSheet(params: {
   if (params.limit) qs.set('limit', String(params.limit))
   try {
     const result = await apiRequest<SheetSearchResult>(`/sheets/${encodeURIComponent(params.sheetId)}/search?${qs.toString()}`)
-    if (!getOfflineSheetData(params.companyId, params.sheetId)) {
-      void apiRequest<SheetData>(`/sheets/${encodeURIComponent(params.sheetId)}?companyId=${encodeURIComponent(params.companyId)}`).catch(() => {})
-    }
+    void warmSheetCache(params.sheetId, params.companyId)
     return result
   } catch (err) {
     if (err instanceof NetworkError) {

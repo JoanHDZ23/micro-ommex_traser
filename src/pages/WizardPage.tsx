@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, Search, Send, SlidersHorizontal, Trash2, Wifi, WifiOff, X } from 'lucide-react'
-import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
+import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, warmSheetCache, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { DbProductSearch } from '../components/DbProductSearch'
@@ -352,6 +352,22 @@ export function WizardPage() {
       .then((r) => setDbSheets(r.sheets ?? []))
       .catch(() => { /* sin tablas */ })
   }, [showRecordSettings])
+
+  // Descarga y guarda una copia local de la tabla DATA fijada en el registro
+  // mientras haya internet. Así, al tomar fotos o escanear productos en campo
+  // (sin señal o con conexión inestable), los datos se resuelven desde la copia
+  // local en lugar de fallar. Se reintenta al recuperar la conexión.
+  useEffect(() => {
+    const cid = operation?.companyId || getCompanyId()
+    if (!cid) return
+    // Misma tabla que usa la búsqueda real (getDbCols): la fijada o la principal.
+    const sheetId = recordSettings.dbSheetId || getPrimarySheetId(cid)
+    if (!sheetId) return
+    void warmSheetCache(sheetId, cid)
+    const onOnline = () => { void warmSheetCache(sheetId, cid) }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [recordSettings.dbSheetId, operation?.companyId])
 
   // Edición de una foto general existente desde la bandeja de revisión.
   // Si está definido, al enviar la bandeja se ACTUALIZA esa foto (comentario +
