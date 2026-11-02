@@ -39,6 +39,14 @@ export const SEARCH_TIMEOUT_MS = 12_000
 const UPLOAD_PATTERN = /\/photos\/|photo-batch|linea-blanca\/.*\/photo/
 /** Endpoints de búsqueda/validación de la tabla DATA (respuesta debe ser ágil). */
 const SEARCH_PATTERN = /\/sheets\/[^/]+\/(search|lookup)/
+/**
+ * Envíos por WhatsApp Web. Son operaciones LARGAS y NO idempotentes: enviar un
+ * registro completo puede tardar mucho (una foto por vez con pausas). Si el
+ * cliente aborta por timeout y reintenta, el servidor sigue enviando y las
+ * fotos se DUPLICAN en el chat. Por eso: margen amplio y SIN reintentos.
+ */
+const WHATSAPP_SEND_PATTERN = /\/whatsapp-web\/send/
+const WHATSAPP_SEND_TIMEOUT_MS = 300_000
 /** Esperas crecientes entre reintentos ante fallo de RED o TIMEOUT. */
 const RETRY_DELAYS_MS = [700, 2000]
 
@@ -144,13 +152,18 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
   // margen; las búsquedas de la DATA deben responder rápido con error claro.
   const isUpload = UPLOAD_PATTERN.test(endpoint)
   const isSearch = SEARCH_PATTERN.test(endpoint)
-  const timeoutMs = isUpload
-    ? UPLOAD_TIMEOUT_MS
-    : isSearch ? SEARCH_TIMEOUT_MS : REQUEST_TIMEOUT_MS
+  // Los envíos por WhatsApp son no idempotentes: un reintento duplicaría el
+  // mensaje/las fotos en el chat, así que se da mucho margen y NO se reintentan.
+  const isWhatsappSend = WHATSAPP_SEND_PATTERN.test(endpoint)
+  const timeoutMs = isWhatsappSend
+    ? WHATSAPP_SEND_TIMEOUT_MS
+    : isUpload
+      ? UPLOAD_TIMEOUT_MS
+      : isSearch ? SEARCH_TIMEOUT_MS : REQUEST_TIMEOUT_MS
   // Reintentos: los uploads ya tienen su propio backoff en `photo-cache` (un
   // solo intento aquí); las búsquedas reintentan UNA vez para no hacer esperar
   // de más antes de mostrar el aviso de "no se pudo consultar".
-  const retryDelays = isUpload ? [] : isSearch ? RETRY_DELAYS_MS.slice(0, 1) : RETRY_DELAYS_MS
+  const retryDelays = isWhatsappSend || isUpload ? [] : isSearch ? RETRY_DELAYS_MS.slice(0, 1) : RETRY_DELAYS_MS
 
   // Un intento con su propio AbortController: si la red se queda "colgada"
   // (wifi débil), la petición se aborta en vez de esperar indefinidamente.
