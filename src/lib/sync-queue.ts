@@ -127,7 +127,7 @@ export type FlushResult = {
  * Recibe la función `apiRequest` para evitar dependencias circulares.
  */
 export async function flush(
-  apiRequest: (endpoint: string, opts: { method: string; body?: unknown }) => Promise<unknown>,
+  apiRequest: (endpoint: string, opts: { method: string; body?: unknown; fromQueue?: boolean }) => Promise<unknown>,
   onProgress?: (sent: number, total: number) => void,
   onDiscard?: (item: QueuedRequest, error: unknown) => void,
 ): Promise<FlushResult> {
@@ -139,14 +139,19 @@ export async function flush(
     const item = queue[i]
     onProgress?.(i, queue.length)
     try {
-      await apiRequest(item.endpoint, { method: item.method, body: item.body })
+      // `fromQueue: true` evita que un fallo de red vuelva a encolar la misma
+      // petición (duplicaría el item en cada ciclo de sincronización).
+      await apiRequest(item.endpoint, { method: item.method, body: item.body, fromQueue: true })
       await remove(item.id)
       sent++
     } catch (err) {
-      // Detecta error de red por el tipo de error (TypeError = fetch failed),
-      // no por el contenido del mensaje (que puede cambiar con el idioma).
-      const isNetworkError = err instanceof TypeError || !navigator.onLine
-      if (isNetworkError) {
+      // Detecta error de red por el TIPO/NOMBRE del error (no por el mensaje,
+      // que puede cambiar con el idioma): NetworkError de api.ts o TypeError
+      // de fetch cuando no puede conectar.
+      const isNetworkFailure = (err instanceof Error && err.name === 'NetworkError')
+        || err instanceof TypeError
+        || !navigator.onLine
+      if (isNetworkFailure) {
         // Red caída de nuevo — parar el flush para no desperdiciar batería
         await incrementRetries(item)
         failed = queue.length - i

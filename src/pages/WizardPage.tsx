@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, Search, Send, SlidersHorizontal, Trash2, X } from 'lucide-react'
-import { apiRequest, fileToBase64, makeClientKey, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
+import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { DbProductSearch } from '../components/DbProductSearch'
@@ -1334,6 +1334,8 @@ export function WizardPage() {
     results?: SheetSearchItem[]
     headers?: string[]
     total?: number
+    /** Fallo de consulta (red lenta/sin señal): NO significa "no encontrado". */
+    error?: string
   }>({ loading: false })
   // Evita auto-agregar dos veces el mismo código de un único resultado.
   const dbAutoAddedRef = useRef<string | null>(null)
@@ -1389,8 +1391,15 @@ export function WizardPage() {
         const best = exact ?? r.results[0]
         const composed = composeDbDescription(best, r.headers ?? [])
         setDbLookup({ loading: false, found: true, total: r.total, results: r.results, headers: r.headers ?? [], descripcion: composed || best.descripcion, data: best.data })
-      } catch {
-        setDbLookup({ loading: false })
+      } catch (err) {
+        // Fallo de consulta: no se marca como "no encontrado" (el producto puede
+        // existir; la red no respondió). Se muestra un aviso claro al usuario.
+        setDbLookup({
+          loading: false,
+          error: err instanceof NetworkError
+            ? 'No se pudo consultar la base de datos (conexión lenta o sin señal). Puedes reintentar escribiendo de nuevo.'
+            : 'No se pudo consultar la base de datos en este momento.',
+        })
       }
     }, 350)
     return () => clearTimeout(t)
@@ -2895,6 +2904,12 @@ export function WizardPage() {
                   {dbLookup.loading ? (
                     <div className="flex items-center gap-1.5 px-3 py-2.5 rounded-lg border border-emerald-200 bg-emerald-50 text-[11px] font-semibold text-emerald-700 uppercase">
                       <Database className="w-3 h-3" /> Buscando en la base de datos…
+                    </div>
+                  ) : dbLookup.error ? (
+                    /* Fallo de consulta (red lenta/sin señal): no es "no encontrado". */
+                    <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-[11px] text-amber-800">
+                      <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                      <span>{dbLookup.error}</span>
                     </div>
                   ) : (dbLookup.total ?? 0) > 1 ? (
                     /* Varias coincidencias → elegir la correcta */

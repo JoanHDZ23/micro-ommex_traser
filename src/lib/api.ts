@@ -24,6 +24,50 @@ function shouldQueue(endpoint: string, method: string): boolean {
   return !NO_QUEUE_PATTERNS.some((p) => p.test(endpoint))
 }
 
+// ── Timeouts y reintentos (red lenta/débil) ────────────────────────────────
+// Cada petición lleva un timeout propio con AbortController: así una conexión
+// que "se queda colgada" (señal débil) NO deja la petición esperando de forma
+// indefinida (antes la subida de fotos se quedaba trabada).
+const REQUEST_TIMEOUT_MS = 20_000
+/** Los uploads (fotos/archivos) tardan más con señal débil: margen amplio. */
+const UPLOAD_TIMEOUT_MS = 180_000
+/** Peticiones de búsqueda/validación de la DATA: respuesta ágil, con error claro. */
+export const SEARCH_TIMEOUT_MS = 12_000
+/** Endpoints de subida de archivos pesados. */
+const UPLOAD_PATTERN = /\/photos\/|photo-batch|linea-blanca\/.*\/photo/
+/** Endpoints de búsqueda/validación de la tabla DATA (respuesta debe ser ágil). */
+const SEARCH_PATTERN = /\/sheets\/[^/]+\/(search|lookup)/
+/** Esperas crecientes entre reintentos ante fallo de RED o TIMEOUT. */
+const RETRY_DELAYS_MS = [700, 2000]
+
+/**
+ * True si el error es de RED o TIMEOUT (no un error HTTP del servidor).
+ * Incluye el caso en que `navigator.onLine` dice "online" pero la red no
+ * responde (wifi débil, portal cautivo, DNS caído) o la petición expiró.
+ */
+function isNetworkError(err: unknown): boolean {
+  if (err instanceof NetworkError) return true
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return true
+  // fetch() lanza TypeError cuando no puede completar la conexión.
+  if (err instanceof TypeError) return true
+  // AbortController: la petición superó el timeout.
+  if (err instanceof DOMException && err.name === 'AbortError') return true
+  if (typeof DOMException === 'undefined' && (err as { name?: string } | null)?.name === 'AbortError') return true
+  return false
+}
+
+/**
+ * Error de RED/TIMEOUT: no llegó respuesta del servidor (señal débil, sin
+ * conexión, petición expirada). Permite a la UI distinguirlo de un error HTTP
+ * (p. ej. 500) o de un resultado vacío ("no se encontró").
+ */
+export class NetworkError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'NetworkError'
+  }
+}
+
 // ── Caché de lectura (GET) para modo offline ───────────────────────────────
 // Guarda la última respuesta exitosa de cada GET de datos de la app para poder
 // MOSTRARLA sin conexión. No cachea binarios ni endpoints de estado volátil.
@@ -50,10 +94,13 @@ function writeGetCache(endpoint: string, data: unknown): void {
 interface ApiOptions {
   method?: string
   body?: unknown
+  /** true cuando la petición la reenvía la cola de sync: evita re-encolarla
+   *  (duplicaría el item en cada intento fallido). */
+  fromQueue?: boolean
 }
 
 export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
-  const { method = 'GET', body } = options
+  const { method = 'GET', body, fromQueue = false } = options
 
   // Toda llamada al API cuenta como actividad del usuario (mantiene viva la sesión).
   touchActivity()
@@ -82,42 +129,68 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
 
   const isGet = method.toUpperCase() === 'GET'
   let response: Response
-  const doFetch = () => fetch(`${BASE_URL}${endpoint}`, config)
+
+  // Timeout por petición: los uploads de fotos con señal débil necesitan más
+  // margen; las búsquedas de la DATA deben responder rápido con error claro.
+  const isUpload = UPLOAD_PATTERN.test(endpoint)
+  const isSearch = SEARCH_PATTERN.test(endpoint)
+  const timeoutMs = isUpload
+    ? UPLOAD_TIMEOUT_MS
+    : isSearch ? SEARCH_TIMEOUT_MS : REQUEST_TIMEOUT_MS
+  // Reintentos: los uploads ya tienen su propio backoff en `photo-cache` (un
+  // solo intento aquí); las búsquedas reintentan UNA vez para no hacer esperar
+  // de más antes de mostrar el aviso de "no se pudo consultar".
+  const retryDelays = isUpload ? [] : isSearch ? RETRY_DELAYS_MS.slice(0, 1) : RETRY_DELAYS_MS
+
+  // Un intento con su propio AbortController: si la red se queda "colgada"
+  // (wifi débil), la petición se aborta en vez de esperar indefinidamente.
+  const fetchOnce = async (): Promise<Response> => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null
+    try {
+      return await fetch(`${BASE_URL}${endpoint}`, controller ? { ...config, signal: controller.signal } : config)
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  // `fetch` solo lanza en fallo de RED o TIMEOUT (los errores HTTP llegan como
+  // Response): reintentamos esos casos con espera creciente antes de rendirnos.
+  const doFetch = async (): Promise<Response> => {
+    let lastErr: unknown
+    for (let attempt = 0; attempt <= retryDelays.length; attempt++) {
+      try {
+        return await fetchOnce()
+      } catch (err) {
+        lastErr = err
+        if (attempt === retryDelays.length || !isNetworkError(err)) break
+        await new Promise((r) => setTimeout(r, retryDelays[attempt]))
+      }
+    }
+    throw lastErr
+  }
+
   try {
     response = await doFetch()
-  } catch {
-    // Sin red: si es una mutation encolable, guardar para reintento posterior.
-    const isOffline = typeof navigator !== 'undefined' && !navigator.onLine
-    if (isOffline && shouldQueue(endpoint, method)) {
+  } catch (err) {
+    // Fallo de red o timeout — incluso con `navigator.onLine === true` (wifi
+    // débil, DNS caído, portal cautivo). Encolamos la mutation para reintentar.
+    const networkish = isNetworkError(err)
+    if (networkish && !fromQueue && shouldQueue(endpoint, method)) {
       await enqueue(endpoint, method, body)
       // Notificar para que el banner actualice el contador
       window.dispatchEvent(new CustomEvent('sync-queue:enqueued'))
-      throw new Error('Sin conexión. La acción se guardó y se enviará al reconectar.')
+      throw new NetworkError('Sin conexión estable. La acción se guardó y se enviará al reconectar.')
     }
     // GET sin red: devuelve la última copia cacheada si existe (lectura offline).
     if (isGet && shouldCacheGet(endpoint)) {
       const cached = readGetCache(endpoint)
       if (cached !== undefined) return cached as T
     }
-    // Cold start de Render free: reintenta una vez tras una espera corta.
-    await new Promise((r) => setTimeout(r, 1200))
-    try {
-      response = await doFetch()
-    } catch {
-      const offline = typeof navigator !== 'undefined' && !navigator.onLine
-      if (offline && shouldQueue(endpoint, method)) {
-        await enqueue(endpoint, method, body)
-        window.dispatchEvent(new CustomEvent('sync-queue:enqueued'))
-        throw new Error('Sin conexión. La acción se guardó y se enviará al reconectar.')
-      }
-      if (isGet && shouldCacheGet(endpoint)) {
-        const cached = readGetCache(endpoint)
-        if (cached !== undefined) return cached as T
-      }
-      throw new Error(offline
-        ? 'Sin conexión a internet. Verifica tu red e intenta de nuevo.'
-        : 'El servidor está iniciando, espera unos segundos e intenta de nuevo.')
-    }
+    const offline = typeof navigator !== 'undefined' && !navigator.onLine
+    throw new NetworkError(offline || networkish
+      ? 'Sin conexión a internet. Verifica tu red e intenta de nuevo.'
+      : 'El servidor está iniciando, espera unos segundos e intenta de nuevo.')
   }
 
   // 401 en ruta protegida: la sesión pudo expirar/invalidarse. Re-crea el token

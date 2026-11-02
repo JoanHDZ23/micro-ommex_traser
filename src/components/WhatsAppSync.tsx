@@ -3,11 +3,12 @@ import {
   MessageCircle, QrCode, CheckCircle2, LogOut, Save, RefreshCw, Link2,
 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
-import { getCompanyId } from '../lib/context'
+import { getCompanyId, getOperatorName } from '../lib/context'
 import { Card, Button, Badge, LoadingState, ErrorState, waStatusTone } from './ui'
 
 type WaStatus = 'disconnected' | 'connecting' | 'qr' | 'open'
-interface StatusResp { status: WaStatus; hasQr: boolean; error: string | null }
+interface StatusResp { status: WaStatus; hasQr: boolean; hasPairingCode?: boolean; pairingCode?: string | null; error: string | null }
+type LinkMode = 'qr' | 'pairing'
 
 /**
  * Sección de WhatsApp en Configuración:
@@ -19,12 +20,18 @@ interface StatusResp { status: WaStatus; hasQr: boolean; error: string | null }
  */
 export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) {
   const companyId = getCompanyId() || 'demo'
+  // La sesión de WhatsApp es POR USUARIO dentro de la compañía: cada persona
+  // vincula y usa su propio número.
+  const userId = getOperatorName() || ''
 
   const [status, setStatus] = useState<WaStatus>('disconnected')
   const [qr, setQr] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [unavailable, setUnavailable] = useState(false)
+  const [mode, setMode] = useState<LinkMode>('qr')
+  const [phone, setPhone] = useState('')
+  const [pairingCode, setPairingCode] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Destinos configurados (varios chats/grupos)
@@ -74,7 +81,7 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
       // Si no está abierto y no estamos mostrando un QR activo, intenta arrancar
       // la sesión en segundo plano (reconexión silenciosa con credenciales).
       if (s.status === 'disconnected' && !qr) {
-        await apiRequest('/whatsapp-web/start', { method: 'POST', body: { companyId } }).catch(() => { /* sin romper */ })
+        await apiRequest('/whatsapp-web/start', { method: 'POST', body: { companyId, userId } }).catch(() => { /* sin romper */ })
       }
     } catch {
       setUnavailable(true)
@@ -102,15 +109,16 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
     setDestinations((prev) => prev.filter((d) => d.id !== id))
   }
 
-  // Sufijo de companyId para las rutas (cada empresa su propia sesión de WhatsApp).
-  const cq = `companyId=${encodeURIComponent(companyId)}`
+  // Sufijo de companyId/usuario para las rutas (cada usuario de la empresa su
+  // propia sesión de WhatsApp).
+  const cq = `companyId=${encodeURIComponent(companyId)}&userId=${encodeURIComponent(userId)}`
 
   const refreshStatus = async () => {
     try {
       const s = await apiRequest<StatusResp>(`/whatsapp-web/status?${cq}`)
       setStatus(s.status)
       setUnavailable(false)
-      if (s.status === 'open') { setQr(null); stopPolling() }
+      if (s.status === 'open') { setQr(null); setPairingCode(null); stopPolling() }
     } catch {
       setUnavailable(true); stopPolling()
     }
@@ -119,7 +127,7 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
   const connect = async () => {
     setLoading(true); setError(null)
     try {
-      await apiRequest('/whatsapp-web/start', { method: 'POST', body: { companyId } })
+      await apiRequest('/whatsapp-web/start', { method: 'POST', body: { companyId, userId } })
       stopPolling()
       pollRef.current = setInterval(() => { void pollQr() }, 2500)
       void pollQr()
@@ -130,11 +138,34 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
     } finally { setLoading(false) }
   }
 
+  /** Solicita un código de vinculación (pairing code) para el número indicado. */
+  const requestCode = async () => {
+    const cleaned = phone.replace(/[^\d]/g, '')
+    if (cleaned.length < 8) {
+      setError('Ingresa el número en formato internacional y solo dígitos (p. ej. 573001234567).')
+      return
+    }
+    setLoading(true); setError(null)
+    try {
+      const r = await apiRequest<{ pairingCode: string }>('/whatsapp-web/pairing-code', {
+        method: 'POST', body: { companyId, userId, phoneNumber: cleaned },
+      })
+      setPairingCode(r.pairingCode)
+      // Vigila el estado para reflejar "Conectado" en cuanto se ingrese el código.
+      stopPolling()
+      pollRef.current = setInterval(() => { void pollQr() }, 2500)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'No se pudo generar el código de vinculación.'
+      if (/404|not found|cannot (get|post)/i.test(msg)) setUnavailable(true)
+      else setError(msg)
+    } finally { setLoading(false) }
+  }
+
   const pollQr = async () => {
     try {
       const s = await apiRequest<StatusResp>(`/whatsapp-web/status?${cq}`)
       setStatus(s.status)
-      if (s.status === 'open') { setQr(null); stopPolling(); return }
+      if (s.status === 'open') { setQr(null); setPairingCode(null); stopPolling(); return }
       if (s.hasQr) {
         const r = await apiRequest<{ qr: string }>(`/whatsapp-web/qr?format=json&${cq}`)
         setQr(r.qr)
@@ -146,8 +177,8 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
     if (!confirm('¿Desvincular WhatsApp? Tendrás que volver a escanear el QR.')) return
     setLoading(true)
     try {
-      await apiRequest('/whatsapp-web/logout', { method: 'POST', body: { companyId } })
-      setStatus('disconnected'); setQr(null)
+      await apiRequest('/whatsapp-web/logout', { method: 'POST', body: { companyId, userId } })
+      setStatus('disconnected'); setQr(null); setPairingCode(null)
     } catch { /* noop */ }
     finally { setLoading(false) }
   }
@@ -216,36 +247,102 @@ export function WhatsAppSync({ syncOnly = false }: { syncOnly?: boolean } = {}) 
 
       {/* Sincronización */}
       {!unavailable && status !== 'open' && (
-        !qr ? (
-          loading ? (
-            <LoadingState label="Generando QR…" />
-          ) : status === 'connecting' ? (
-            // Reconexión en curso con credenciales guardadas: no pedir QR aún.
-            <div className="flex items-center justify-center gap-2 p-3 rounded-xl bg-gray-50 border border-[var(--color-border)] text-xs text-[var(--color-text-2)]">
-              <RefreshCw className="w-4 h-4 animate-spin" /> Reconectando WhatsApp…
-            </div>
-          ) : (
-            <Button
-              onClick={() => void connect()}
-              disabled={loading}
-              variant="success"
-              fullWidth
-              leftIcon={<QrCode className="w-4 h-4" />}
+        <div className="space-y-2">
+          {/* Selector del método de vinculación */}
+          <div className="flex gap-1 p-1 rounded-lg bg-gray-50 border border-[var(--color-border)]">
+            <button
+              type="button"
+              onClick={() => { setMode('qr'); setError(null) }}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium ${
+                mode === 'qr' ? 'bg-green-600 text-white' : 'text-[var(--color-text-2)]'
+              }`}
             >
-              Sincronizar WhatsApp
-            </Button>
-          )
-        ) : (
-          <div className="flex flex-col items-center gap-2 p-3 rounded-xl bg-gray-50 border border-[var(--color-border)]">
-            <p className="text-xs text-[var(--color-text-2)] text-center">
-              Abre WhatsApp → <strong>Dispositivos vinculados</strong> → <strong>Vincular un dispositivo</strong> y escanea:
-            </p>
-            <img src={qr} alt="QR de WhatsApp" className="w-56 h-56 rounded-lg bg-white p-2" />
-            <button onClick={() => void pollQr()} className="text-[11px] text-[var(--color-primary)] flex items-center gap-1">
-              <RefreshCw className="w-3 h-3" /> Actualizar QR
+              <QrCode className="w-3.5 h-3.5" /> Código QR
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode('pairing'); setError(null) }}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium ${
+                mode === 'pairing' ? 'bg-green-600 text-white' : 'text-[var(--color-text-2)]'
+              }`}
+            >
+              <Link2 className="w-3.5 h-3.5" /> Código de vinculación
             </button>
           </div>
-        )
+
+          {mode === 'qr' ? (
+            !qr ? (
+              loading ? (
+                <LoadingState label="Generando QR…" />
+              ) : status === 'connecting' ? (
+                // Reconexión en curso con credenciales guardadas: no pedir QR aún.
+                <div className="flex items-center justify-center gap-2 p-3 rounded-xl bg-gray-50 border border-[var(--color-border)] text-xs text-[var(--color-text-2)]">
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Reconectando WhatsApp…
+                </div>
+              ) : (
+                <Button
+                  onClick={() => void connect()}
+                  disabled={loading}
+                  variant="success"
+                  fullWidth
+                  leftIcon={<QrCode className="w-4 h-4" />}
+                >
+                  Generar código QR
+                </Button>
+              )
+            ) : (
+              <div className="flex flex-col items-center gap-2 p-3 rounded-xl bg-gray-50 border border-[var(--color-border)]">
+                <p className="text-xs text-[var(--color-text-2)] text-center">
+                  Abre WhatsApp → <strong>Dispositivos vinculados</strong> → <strong>Vincular un dispositivo</strong> y escanea:
+                </p>
+                <img src={qr} alt="QR de WhatsApp" className="w-56 h-56 rounded-lg bg-white p-2" />
+                <button onClick={() => void pollQr()} className="text-[11px] text-[var(--color-primary)] flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3" /> Actualizar QR
+                </button>
+              </div>
+            )
+          ) : (
+            <div className="flex flex-col items-center gap-2 p-3 rounded-xl bg-gray-50 border border-[var(--color-border)]">
+              {!pairingCode ? (
+                <>
+                  <p className="text-xs text-[var(--color-text-2)] text-center">
+                    Ingresa el número de WhatsApp a vincular en formato internacional y solo dígitos:
+                  </p>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="573001234567"
+                    className="w-full max-w-[260px] text-center tracking-wider px-3 py-2.5 rounded-lg border border-[var(--color-border)] text-sm focus:outline-none focus:ring-2 focus:ring-green-500/30"
+                  />
+                  <Button
+                    onClick={() => void requestCode()}
+                    disabled={loading}
+                    loading={loading}
+                    variant="success"
+                    fullWidth
+                    leftIcon={<Link2 className="w-4 h-4" />}
+                  >
+                    Generar código de vinculación
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-[var(--color-text-2)] text-center">
+                    Abre WhatsApp → <strong>Dispositivos vinculados</strong> → <strong>Vincular con número de teléfono</strong> e ingresa este código:
+                  </p>
+                  <div className="font-mono text-2xl font-bold tracking-[.18em] text-teal-700 bg-white rounded-lg px-4 py-2 shadow">
+                    {pairingCode}
+                  </div>
+                  <button onClick={() => void requestCode()} className="text-[11px] text-[var(--color-primary)] flex items-center gap-1">
+                    <RefreshCw className="w-3 h-3" /> Generar otro código
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Conectado: aviso + (en modo completo) destino/link del grupo */}

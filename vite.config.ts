@@ -78,9 +78,15 @@ export default defineConfig({
   server: {
     port: 5174,
     proxy: {
+      // El front local usa el backend UNIFICADO DE RENDER, no el local.
+      // El backend expone cada dominio bajo su prefijo (/turnos, /trazabilidad,
+      // /academia), así que reescribimos /api → /trazabilidad/api. Al ir por
+      // proxy, el navegador sigue viendo el mismo origen (sin CORS).
       '/api': {
-        target: 'http://localhost:4000',
+        target: 'https://ommex-backend.onrender.com',
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '/trazabilidad/api'),
+        // Margen amplio: cubre el cold start del plan Free de Render.
         timeout: 120_000,
       },
     },

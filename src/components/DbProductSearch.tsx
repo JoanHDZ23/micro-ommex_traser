@@ -12,8 +12,8 @@
  * acción final en `onSelect`.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Database, Loader2, Package, QrCode, Search } from 'lucide-react'
-import { searchInSheet, type SheetSearchItem } from '../lib/api'
+import { Database, Loader2, Package, QrCode, Search, WifiOff } from 'lucide-react'
+import { NetworkError, searchInSheet, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 
@@ -54,6 +54,9 @@ export function DbProductSearch({
   const [headers, setHeaders] = useState<string[]>([])
   const [total, setTotal] = useState(0)
   const [searched, setSearched] = useState(false)
+  // Distingue "no se encontró" de "no se pudo consultar" (red lenta/sin señal):
+  // sin esto, un fallo de red se mostraba como si el producto no existiera.
+  const [searchError, setSearchError] = useState<string | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
   // Evita volver a auto-resolver el mismo término (cuando hay 1 resultado).
   const autoResolvedFor = useRef<string | null>(null)
@@ -62,10 +65,11 @@ export function DbProductSearch({
     const q = raw.trim()
     const companyId = getCompanyId()
     if (!q || !companyId || !sheetId) {
-      setResults([]); setTotal(0); setSearched(false)
+      setResults([]); setTotal(0); setSearched(false); setSearchError(null)
       return
     }
     setLoading(true)
+    setSearchError(null)
     try {
       const r = await searchInSheet({ sheetId, companyId, q, codeColumn, descColumn, limit: 25 })
       setResults(r.results)
@@ -77,8 +81,12 @@ export function DbProductSearch({
         autoResolvedFor.current = q.toLowerCase()
         onSelect(r.results[0], r.headers ?? [])
       }
-    } catch {
-      setResults([]); setTotal(0); setSearched(true)
+    } catch (err) {
+      // NO marcar como "no encontrado": es un fallo de consulta, no un vacío.
+      setResults([]); setHeaders([]); setTotal(0); setSearched(true)
+      setSearchError(err instanceof NetworkError
+        ? 'No se pudo consultar la base de datos: conexión lenta o sin señal. Revisa tu red e intenta de nuevo.'
+        : 'No se pudo consultar la base de datos en este momento. Intenta de nuevo.')
     } finally {
       setLoading(false)
     }
@@ -138,6 +146,21 @@ export function DbProductSearch({
         {loading ? (
           <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-3)]">
             <Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando en {sheetName ?? 'la base de datos'}…
+          </div>
+        ) : searchError ? (
+          /* Fallo de consulta (red lenta/sin señal): NO es "no encontrado". */
+          <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+            <WifiOff className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <p>{searchError}</p>
+              <button
+                type="button"
+                onClick={() => { autoResolvedFor.current = null; void runSearch(value) }}
+                className="mt-1.5 text-[11px] font-semibold text-amber-900 underline"
+              >
+                Reintentar
+              </button>
+            </div>
           </div>
         ) : !value.trim() ? (
           <p className="text-[11px] text-[var(--color-text-3)]">
