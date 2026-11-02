@@ -450,14 +450,27 @@ function ShareButton({ trackingCode, companyId, whatsappEnabled = true }: { trac
     setSending(true); setMsg(null)
     try {
       if (tos.length === 0) {
-        const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode } })
+        const r = await apiRequest<{ message: string; partial?: boolean; failedParts?: number; sent?: number }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode } })
         setMsg(`✓ ${r.message}`)
       } else {
         let ok = 0
+        let partial = 0
         for (const to of tos) {
-          try { await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to } }); ok++ } catch { /* sigue */ }
+          try {
+            const r = await apiRequest<{ partial?: boolean; sent?: number; failedParts?: number }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to } })
+            ok++
+            if (r.partial) partial++
+          } catch { /* sigue */ }
         }
-        setMsg(ok === tos.length ? `✓ Registro enviado a ${ok} chat(s).` : `✓ Enviado a ${ok} de ${tos.length} chat(s).`)
+        setMsg(
+          ok === 0
+            ? `No se pudo enviar el registro a ninguno de los ${tos.length} chat(s).`
+            : partial > 0
+              ? `✓ Registro enviado a ${ok} chat(s), con contenido parcial en ${partial}.`
+              : ok === tos.length
+                ? `✓ Registro enviado a ${ok} chat(s).`
+                : `✓ Enviado a ${ok} de ${tos.length} chat(s).`,
+        )
       }
       setOpen(false)
     } catch (err) {

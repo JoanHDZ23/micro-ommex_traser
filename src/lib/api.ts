@@ -46,7 +46,7 @@ const SEARCH_PATTERN = /\/sheets\/[^/]+\/(search|lookup)/
  * fotos se DUPLICAN en el chat. Por eso: margen amplio y SIN reintentos.
  */
 const WHATSAPP_SEND_PATTERN = /\/whatsapp-web\/send/
-const WHATSAPP_SEND_TIMEOUT_MS = 300_000
+const WHATSAPP_SEND_TIMEOUT_MS = 900_000
 /** Esperas crecientes entre reintentos ante fallo de RED o TIMEOUT. */
 const RETRY_DELAYS_MS = [700, 2000]
 

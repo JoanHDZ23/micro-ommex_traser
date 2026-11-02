@@ -1735,16 +1735,27 @@ export function WizardPage() {
     setFeedback('⏳ Enviando registro a WhatsApp…')
     try {
       if (!tos || tos.length === 0) {
-        const r = await apiRequest<{ message: string }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, headerFields: [...headerFields] } })
+        const r = await apiRequest<{ message: string; partial?: boolean; failedParts?: number; sent?: number }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, headerFields: [...headerFields] } })
         const msg = `✓ ${r.message}`
         setFeedback(msg)
         setSentModalMessage(msg)
       } else {
         let ok = 0
+        let partial = 0
         for (const to of tos) {
-          try { await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to, headerFields: [...headerFields] } }); ok++ } catch { /* sigue */ }
+          try {
+            const r = await apiRequest<{ partial?: boolean; sent?: number; failedParts?: number }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to, headerFields: [...headerFields] } })
+            ok++
+            if (r.partial) partial++
+          } catch { /* sigue */ }
         }
-        const msg = ok === tos.length ? `✓ Registro enviado a ${ok} chat(s).` : `✓ Enviado a ${ok} de ${tos.length} chat(s).`
+        const msg = ok === 0
+          ? `No se pudo enviar el registro a ninguno de los ${tos.length} chat(s).`
+          : partial > 0
+            ? `✓ Registro enviado a ${ok} chat(s), con contenido parcial en ${partial}.`
+            : ok === tos.length
+              ? `✓ Registro enviado a ${ok} chat(s).`
+              : `✓ Enviado a ${ok} de ${tos.length} chat(s).`
         setFeedback(msg)
         if (ok > 0) setSentModalMessage(msg)
       }
