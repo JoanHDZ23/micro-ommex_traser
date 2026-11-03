@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Calendar, Camera, CheckCircle2, Clock, Edit3, ExternalLink, FileText, Loader2, Mail, MapPin, MessageCircle, MessageSquare, Mic, Package, Send, Share2, Trash2, User, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Calendar, Camera, CheckCircle2, Clock, Edit3, ExternalLink, FileText, Loader2, Mail, MapPin, MessageCircle, MessageSquare, Mic, Package, Send, Share2, ShieldCheck, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
 import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId } from '../lib/context'
@@ -228,6 +228,9 @@ export function OperationDetailPage() {
       )}
 
       {/* Delete button */}
+      {/* Verificar integridad de las fotos (detecta subidas que fallaron) */}
+      <VerifyPhotosButton trackingCode={operation.trackingCode} />
+
       <DeleteButton trackingCode={operation.trackingCode} />
 
       {/* ── Registro fotográfico ── */}
@@ -590,6 +593,82 @@ function ShareButton({ trackingCode, companyId, whatsappEnabled = true }: { trac
               </>
             )}
           </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Verifica la integridad de las fotos del registro.
+ *
+ * Llama a POST /photos/sync/:trackingCode (diagnóstico de solo lectura) que
+ * cuenta las fotos cuya subida al almacenamiento falló en el pasado y quedaron
+ * irrecuperables (`fileId='pending'`). Muestra cuántas y de qué productos, para
+ * que el operador sepa cuáles volver a tomar. No borra ni modifica nada.
+ */
+type SyncResult = {
+  message: string
+  unrecoverable: number
+  brokenGeneral: number
+  brokenByProduct: Array<{ productCode: string; broken: number }>
+}
+function VerifyPhotosButton({ trackingCode }: { trackingCode: string }) {
+  const [checking, setChecking] = useState(false)
+  const [result, setResult] = useState<SyncResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const verify = async () => {
+    setChecking(true); setError(null); setResult(null)
+    try {
+      const r = await apiRequest<SyncResult>(`/photos/sync/${trackingCode}`, { method: 'POST' })
+      setResult(r)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron verificar las fotos.')
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const ok = result && result.unrecoverable === 0
+
+  return (
+    <div className="space-y-2">
+      <Button
+        variant="secondary"
+        fullWidth
+        loading={checking}
+        leftIcon={<ShieldCheck className="w-4 h-4" />}
+        onClick={() => void verify()}
+        className="border-gray-200 text-gray-600 hover:bg-gray-50"
+      >
+        {checking ? 'Verificando fotos…' : 'Verificar fotos'}
+      </Button>
+
+      {error && (
+        <div className="p-2.5 rounded-lg text-xs text-center bg-red-50 text-red-700">{error}</div>
+      )}
+
+      {result && (
+        <div className={`p-3 rounded-lg text-xs space-y-1.5 ${ok ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>
+          <p className="flex items-center gap-1.5 font-medium">
+            {ok
+              ? <><CheckCircle2 className="w-4 h-4" /> {result.message}</>
+              : <><AlertTriangle className="w-4 h-4" /> {result.message}</>}
+          </p>
+          {!ok && (
+            <>
+              {result.brokenGeneral > 0 && (
+                <p>• Registro fotográfico: {result.brokenGeneral} foto(s) sin subir.</p>
+              )}
+              {result.brokenByProduct.map((p) => (
+                <p key={p.productCode}>• Producto {p.productCode}: {p.broken} foto(s) sin subir.</p>
+              ))}
+              <p className="text-[11px] text-amber-700/80 pt-0.5">
+                Estas fotos no llegaron al servidor y deben volver a tomarse desde “Continuar registro”.
+              </p>
+            </>
+          )}
         </div>
       )}
     </div>
