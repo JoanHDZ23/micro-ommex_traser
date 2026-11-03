@@ -6,7 +6,17 @@ import { BarcodeScanner } from './BarcodeScanner'
 import { DbProductSearch } from './DbProductSearch'
 import { drawStampOnCanvas, getAddress, getAddressNow, getCoordsNow, primeCoords } from '../lib/photo-stamp'
 import { searchInSheet, warmSheetCache, type SheetSearchItem } from '../lib/api'
+import { compressImageToBase64 } from '../lib/image-compress'
 import { getCompanyId } from '../lib/context'
+
+/**
+ * Resolución máxima del frame que se guarda en memoria (preview/bandeja).
+ * La cámara puede entregar 4K, pero mantener strings de ese tamaño en el estado
+ * de React congela el dispositivo. 1600px es suficiente para trazabilidad.
+ */
+const MAX_CAPTURE_DIM = 1600
+/** Calidad JPEG del frame capturado (0–1). */
+const CAPTURE_QUALITY = 0.85
 
 /** Foto capturada dentro de la bandeja de la cámara (modo multi-captura). */
 export interface CapturedPhoto {
@@ -102,12 +112,22 @@ async function applyAdvancedCameraSettings(stream: MediaStream): Promise<void> {
   } catch { /* capacidades no soportadas: se ignora */ }
 }
 
+/**
+ * Canvas reutilizable para medir brillo. Se crea UNA sola vez (en lugar de
+ * crear un canvas nuevo en cada medición, que generaba basura y GC constante).
+ */
+let brightnessCanvas: HTMLCanvasElement | null = null
+
 /** Mide el brillo promedio de un frame de video (0–255). Para auto-flash. */
 function estimateBrightness(video: HTMLVideoElement): number {
   try {
     const w = 64, h = 48
-    const c = document.createElement('canvas')
-    c.width = w; c.height = h
+    if (!brightnessCanvas) {
+      brightnessCanvas = document.createElement('canvas')
+      brightnessCanvas.width = w
+      brightnessCanvas.height = h
+    }
+    const c = brightnessCanvas
     const ctx = c.getContext('2d', { willReadFrequently: true })
     if (!ctx) return 255
     ctx.drawImage(video, 0, 0, w, h)
@@ -138,6 +158,9 @@ export function CameraCapture({
 }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  // Input oculto para abrir la galería del dispositivo desde la cámara.
+  const galleryInputRef = useRef<HTMLInputElement>(null)
+  const [galleryBusy, setGalleryBusy] = useState(false)
   const [preview, setPreview] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [initializing, setInitializing] = useState(true)
@@ -179,10 +202,10 @@ export function CameraCapture({
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: facing ?? facingMode,
-          // Pide la mayor resolución posible para fotos nítidas (el navegador
-          // ajusta a la máxima soportada por el sensor).
-          width: { ideal: 4096 },
-          height: { ideal: 2160 },
+          // 1080p es suficiente para trazabilidad y evita que el dispositivo
+          // tenga que mover frames 4K en tiempo real (causa de lentitud).
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
           // Enfoque y exposición continuos: la imagen se mantiene nítida y
           // bien expuesta como en la cámara nativa del celular.
           focusMode: { ideal: 'continuous' },
@@ -326,27 +349,41 @@ export function CameraCapture({
     setTimeout(() => setFlashing(false), 150)
 
     const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth || 1280
-    canvas.height = video.videoHeight || 720
+    // Redimensiona el frame capturado al máximo permitido (no guarda 4K en
+    // memoria). La proporción se conserva.
+    const srcW = video.videoWidth || 1280
+    const srcH = video.videoHeight || 720
+    let outW = srcW
+    let outH = srcH
+    if (srcW > MAX_CAPTURE_DIM || srcH > MAX_CAPTURE_DIM) {
+      if (srcW >= srcH) {
+        outH = Math.round((srcH * MAX_CAPTURE_DIM) / srcW)
+        outW = MAX_CAPTURE_DIM
+      } else {
+        outW = Math.round((srcW * MAX_CAPTURE_DIM) / srcH)
+        outH = MAX_CAPTURE_DIM
+      }
+    }
+    canvas.width = outW
+    canvas.height = outH
     const ctx = canvas.getContext('2d')
     if (!ctx) { if (turnedTorchForShot) void setTorch(false); return }
 
     // Captura el frame y estampa fecha/hora/ubicación AL INSTANTE con la última
     // posición y dirección ya conocidas (mantenidas por un watch en segundo
     // plano). Nunca espera por el GPS, así la foto queda lista de inmediato.
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    ctx.drawImage(video, 0, 0, outW, outH)
     const when = new Date()
     if (stamp) {
       try {
         const coords = getCoordsNow()
         const address = getAddressNow(coords)
-        drawStampOnCanvas(ctx, canvas.width, canvas.height, coords, when, address, stampParts)
+        drawStampOnCanvas(ctx, outW, outH, coords, when, address, stampParts)
         if (coords && !address) void getAddress(coords) // precarga para la próxima
       } catch { /* si falla la marca, se conserva la foto sin sello */ }
     }
-    // Mayor calidad JPEG (0.95) para fotos más nítidas; la compresión final
-    // para subida la hace image-compress con marca de agua.
-    setPreview(canvas.toDataURL('image/jpeg', 0.95))
+    // Calidad 0.85 sobre una imagen ya acotada: nítida y mucho más ligera.
+    setPreview(canvas.toDataURL('image/jpeg', CAPTURE_QUALITY))
     setShowCommentInput(true)
 
     // Apaga la linterna si la encendimos solo para esta foto (flash, no linterna
@@ -386,6 +423,46 @@ export function CameraCapture({
   const removeFromTray = (idx: number) => {
     setTray((prev) => prev.filter((_, i) => i !== idx))
   }
+
+  /**
+   * Agrega fotos elegidas de la galería del dispositivo a la bandeja de la
+   * cámara. Se comprimen con concurrencia limitada (2 a la vez) y se les graba
+   * la marca de agua igual que a las fotos tomadas, para que el resultado sea
+   * idéntico sin importar el origen.
+   */
+  const handleGalleryPick = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith('image/'))
+    e.target.value = ''
+    if (files.length === 0) return
+    setGalleryBusy(true)
+    try {
+      const added: CapturedPhoto[] = []
+      for (let i = 0; i < files.length; i += 2) {
+        const slice = files.slice(i, i + 2)
+        const settled = await Promise.allSettled(
+          slice.map((f) => compressImageToBase64(f, { stamp, stampParts })),
+        )
+        for (const r of settled) {
+          if (r.status === 'fulfilled') {
+            added.push({ base64: r.value, dataUrl: `data:image/jpeg;base64,${r.value}`, comment: '', productCode })
+          }
+        }
+      }
+      if (added.length) {
+        if (multi) {
+          setTray((prev) => [...prev, ...added])
+        } else {
+          // Modo simple: la última imagen elegida pasa a revisión (comentar/confirmar).
+          setPreview(added[added.length - 1].dataUrl)
+          setComment('')
+          setShowCommentInput(true)
+          stopCamera()
+        }
+      }
+    } finally {
+      setGalleryBusy(false)
+    }
+  }, [stamp, stampParts, productCode, multi, stopCamera])
 
   // Confirma toda la sesión multi-captura (incluye la foto en preview si existe).
   // Guard anti doble-click: solo se envía UNA vez por sesión.
@@ -672,14 +749,24 @@ export function CameraCapture({
               </div>
 
               <div className="w-full flex items-center justify-between px-8">
-                {/* Galería / Miniatura */}
-                <button className="w-12 h-12 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center overflow-hidden">
+                {/* Galería: abre las fotos del dispositivo (antes sin acción). */}
+                <button
+                  type="button"
+                  onClick={() => galleryInputRef.current?.click()}
+                  disabled={galleryBusy}
+                  aria-label="Elegir de la galería"
+                  className="w-12 h-12 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center overflow-hidden active:scale-95 disabled:opacity-50"
+                >
                   {tray.length > 0 ? (
                     <img src={tray[tray.length-1].dataUrl} className="w-full h-full object-cover" />
+                  ) : galleryBusy ? (
+                    <RefreshCw className="w-5 h-5 text-white/70 animate-spin" />
                   ) : (
                     <Plus className="w-6 h-6 text-white/70" />
                   )}
                 </button>
+                <input ref={galleryInputRef} type="file" accept="image/*" multiple className="hidden"
+                  onChange={(e) => void handleGalleryPick(e)} />
 
                 {/* Shutter */}
                 <button

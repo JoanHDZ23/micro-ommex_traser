@@ -44,7 +44,35 @@ function photoSrc(photo: Pick<PhotoRecord, 'driveUrl' | 'fileId'>, size = 400): 
   return `https://lh3.googleusercontent.com/d/${fileId}=w${size}`
 }
 
-/** URL para abrir/compartir la foto (R2 directo o Drive). */
+/**
+ * Procesa una lista con concurrencia limitada.
+ *
+ * Decodificar y comprimir muchas imágenes a la vez dispara el uso de memoria y
+ * bloquea el hilo principal en móviles (la app se "congelaba"). Con un límite
+ * bajo se mantiene fluida sin perder velocidad apreciable.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<Array<PromiseSettledResult<R>>> {
+  const results = new Array<PromiseSettledResult<R>>(items.length)
+  let cursor = 0
+  const size = Math.max(1, Math.min(limit, items.length))
+  const workers = Array.from({ length: size }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++
+      try {
+        results[index] = { status: 'fulfilled', value: await fn(items[index], index) }
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason }
+      }
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 const WIZARD_GUIDE: GuideStep[] = [
   {
     emoji: '💬',
@@ -131,7 +159,7 @@ export function WizardPage() {
         label: 'Galería',
         icon: ImageIcon,
         color: 'from-fuchsia-500 to-purple-600',
-        onClick: () => { setShowPlusMenu(false); lbFileInputRef.current?.click() }
+        onClick: () => { setShowPlusMenu(false); trayGalleryRef.current?.click() }
       })
     }
     if (features.pasteImage) {
@@ -205,6 +233,10 @@ export function WizardPage() {
   // Guarda el índice original para eliminar la foto vieja tras confirmar.
   const [photoEditTarget, setPhotoEditTarget] = useState<{ idx: number; src: string; comment: string } | null>(null)
   const nativeCameraRef = useRef<HTMLInputElement>(null)
+  // Input dedicado para la opción "Galería" del menú "+": antes apuntaba al
+  // input de una tarjeta de producto (que puede no estar montada) y por eso no
+  // hacía nada. Este SIEMPRE existe y alimenta la bandeja de revisión.
+  const trayGalleryRef = useRef<HTMLInputElement>(null)
 
   // Línea Blanca
   const [lbProductCode, setLbProductCode] = useState('')
@@ -742,8 +774,9 @@ export function WizardPage() {
     // Fotos de PRODUCTO (Línea Blanca): subida directa.
     setChatMessage('')
 
-    // Comprime todas las imágenes EN PARALELO (subida más rápida).
-    const comp = await Promise.allSettled(files.map((f) => compressImageToBase64(f, stampOpts)))
+    // Comprime todas las imágenes con concurrencia limitada (2 a la vez) para
+    // evitar picos de memoria que congelaban el dispositivo.
+    const comp = await mapWithConcurrency(files, 2, (f) => compressImageToBase64(f, stampOpts))
     const base64s = comp.filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled').map((r) => r.value)
     if (comp.some((r) => r.status === 'rejected')) setFeedback('No se pudieron leer algunas imágenes')
     if (base64s.length === 0) return
@@ -858,10 +891,9 @@ export function WizardPage() {
     const dest = resolveTrayDestination(trayProductRef.current, activeProductRef.current)
     if (dest) setTrayProductCode(dest)
     setShowCaptureTray(true)
-    // Comprime TODAS las imágenes en paralelo (mucho más rápido que una por una).
-    const results = await Promise.allSettled(
-      images.map((file) => compressImageToBase64(file, stampOptsRef.current)),
-    )
+    // Comprime las imágenes con concurrencia limitada (2 a la vez) para no
+    // saturar memoria/CPU en el móvil cuando se eligen muchas fotos.
+    const results = await mapWithConcurrency(images, 2, (file) => compressImageToBase64(file, stampOptsRef.current))
     const dataUrls: string[] = []
     let failed = 0
     for (const r of results) {
@@ -2923,6 +2955,14 @@ export function WizardPage() {
             {/* Input oculto: cámara nativa (respaldo, aún usado por el menú "+"). */}
             <input ref={nativeCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
               onChange={(e) => void handleNativeCameraShot(e)} />
+            {/* Galería del menú "+": selecciona varias imágenes y las lleva a la
+                bandeja de revisión (comentario por foto antes de enviar). */}
+            <input ref={trayGalleryRef} type="file" accept="image/*" multiple className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? [])
+                e.target.value = ''
+                void addImageFilesToTray(files)
+              }} />
           </div>
           {/* Quick actions */}
           {(operation.photos.length > 0 || lbProducts.length > 0) && (
