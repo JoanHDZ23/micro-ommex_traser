@@ -378,8 +378,13 @@ export function WizardPage() {
     const extra = cols.extraColumns?.length ? cols.extraColumns : (cols.descColumn >= 0 ? [cols.descColumn] : [])
     return { ...cols, extra }
   }, [])
-  // Columna usada como "descripción" para los buscadores (primera configurada).
-  const dbPrimaryDescCol = (() => { const c = getDbCols(); return c.extra[0] ?? c.descColumn })()
+  // Columnas de la DATA memorizadas: se recalculaban en CADA render (y el
+  // wizard re-renderiza cada 5 s por el polling). Pasarlas sin memorizar a
+  // DbProductSearch relanzaba su búsqueda una y otra vez, congelando la app con
+  // una DATA grande. `getDbCols` es estable (useCallback), así que basta con
+  // fijar aquí los valores primitivos.
+  const dbCodeCol = useMemo(() => getDbCols().codeColumn, [getDbCols])
+  const dbPrimaryDescCol = useMemo(() => { const c = getDbCols(); return c.extra[0] ?? c.descColumn }, [getDbCols])
 
   // Carga la lista de tablas de la empresa al abrir los ajustes del registro.
   useEffect(() => {
@@ -961,6 +966,14 @@ export function WizardPage() {
     setTrayEditingPhotoIdx(null)
     setTrayProductCode(null)
   }
+
+  // Callback ESTABLE para el buscador de la DATA en la bandeja: al elegir un
+  // producto, cierra el modal y vincula el grupo de fotos. Se memoriza para que
+  // DbProductSearch no recree su búsqueda en cada render del wizard (polling).
+  const handleTrayDbSelect = useCallback((item: SheetSearchItem) => {
+    setShowTrayDbSearch(false)
+    setTrayProductCode(item.code.trim())
+  }, [])
 
   // Pega imagen(es) desde el portapapeles usando la Clipboard API (funciona en
   // móvil, donde el evento 'paste' no se dispara). Requiere un gesto del usuario
@@ -3962,14 +3975,10 @@ export function WizardPage() {
             <DbProductSearch
               sheetId={recordSettings.dbSheetId}
               sheetName={recordSettings.dbSheetName}
-              codeColumn={getDbCols().codeColumn}
+              codeColumn={dbCodeCol}
               descColumn={dbPrimaryDescCol}
               initialValue={trayDbSearchInitial}
-              onSelect={(item) => {
-                setShowTrayDbSearch(false)
-                // Vincula estas fotos al producto elegido de la DATA.
-                setTrayProductCode(item.code.trim())
-              }}
+              onSelect={handleTrayDbSelect}
             />
           </div>
         </div>

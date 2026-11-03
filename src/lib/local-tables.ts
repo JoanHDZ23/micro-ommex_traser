@@ -290,10 +290,19 @@ export function searchOfflineSheet(params: {
     return { results: [], total: 0, headers: sheet.headers ?? [], sheetName: sheet.sheetName }
   }
 
-  const ranked = (sheet.rows ?? []).map((row, rowIndex) => {
+  // Recorrido eficiente para no congelar el hilo principal con tablas grandes
+  // (móvil): se calcula el score con el mínimo trabajo por fila y el costoso
+  // `row.join(' ')` solo se hace como ÚLTIMO recurso (cuando no hubo match por
+  // código ni descripción). Antes se unía toda la fila SIEMPRE, lo que con
+  // miles de filas bloqueaba la app al teclear/vincular.
+  const rows = sheet.rows ?? []
+  const headers = sheet.headers ?? []
+  const ranked: Array<{ score: number; rowIndex: number; row: string[] }> = []
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex]
     const code = normalize(row[codeColumn] ?? '')
     const desc = descColumn >= 0 ? normalize(row[descColumn] ?? '') : ''
-    const all = normalize(row.join(' '))
     let score = 0
 
     if (code === q) score = 1000
@@ -301,18 +310,25 @@ export function searchOfflineSheet(params: {
     else if (code.includes(q)) score = 500
     else if (desc.startsWith(q)) score = 350
     else if (desc.includes(q)) score = 250
-    else if (all.includes(q)) score = 100
+    else {
+      // Último recurso: buscar en el resto de columnas sin crear un string
+      // gigante (some + includes corta en el primer match).
+      for (let c = 0; c < row.length; c++) {
+        if (c === codeColumn || c === descColumn) continue
+        if (normalize(row[c] ?? '').includes(q)) { score = 100; break }
+      }
+    }
 
-    return score > 0
-      ? { score, item: buildItem(row, sheet.headers ?? [], rowIndex, codeColumn, descColumn) }
-      : null
-  }).filter((entry): entry is { score: number; item: SheetSearchItem } => Boolean(entry))
+    if (score > 0) ranked.push({ score, rowIndex, row })
+  }
 
-  ranked.sort((a, b) => b.score - a.score || a.item.rowIndex - b.item.rowIndex)
+  ranked.sort((a, b) => b.score - a.score || a.rowIndex - b.rowIndex)
+  // `buildItem` (crea el objeto `data` con todas las columnas) solo para los
+  // resultados que se devuelven, no para todas las coincidencias.
   return {
-    results: ranked.slice(0, limit).map((entry) => entry.item),
+    results: ranked.slice(0, limit).map((entry) => buildItem(entry.row, headers, entry.rowIndex, codeColumn, descColumn)),
     total: ranked.length,
-    headers: sheet.headers ?? [],
+    headers,
     sheetName: sheet.sheetName,
   }
 }

@@ -61,6 +61,14 @@ export function DbProductSearch({
   // Evita volver a auto-resolver el mismo término (cuando hay 1 resultado).
   const autoResolvedFor = useRef<string | null>(null)
 
+  // Ref estable a `onSelect`: el padre lo pasa como arrow inline (nueva en cada
+  // render) y, con el polling del wizard cada 5 s, eso recreaba `runSearch` y
+  // RE-DISPARABA la búsqueda sin que el usuario tecleara. Con una DATA grande,
+  // cada búsqueda filtra toda la tabla en el hilo principal → la app se
+  // congelaba/cerraba. Usando un ref, `runSearch` ya NO depende de `onSelect`.
+  const onSelectRef = useRef(onSelect)
+  useEffect(() => { onSelectRef.current = onSelect }, [onSelect])
+
   const runSearch = useCallback(async (raw: string) => {
     const q = raw.trim()
     const companyId = getCompanyId()
@@ -79,7 +87,7 @@ export function DbProductSearch({
       // Un único resultado → resolver automáticamente (una sola vez por término).
       if (r.results.length === 1 && autoResolvedFor.current !== q.toLowerCase()) {
         autoResolvedFor.current = q.toLowerCase()
-        onSelect(r.results[0], r.headers ?? [])
+        onSelectRef.current(r.results[0], r.headers ?? [])
       }
     } catch (err) {
       // NO marcar como "no encontrado": es un fallo de consulta, no un vacío.
@@ -90,9 +98,14 @@ export function DbProductSearch({
     } finally {
       setLoading(false)
     }
-  }, [sheetId, codeColumn, descColumn, onSelect])
+    // `onSelect` NO va en deps: se invoca vía onSelectRef, que siempre apunta
+    // a la versión actual. Así `runSearch` solo cambia si cambia la tabla o las
+    // columnas (primitivos), evitando re-disparos por render del padre.
+  }, [sheetId, codeColumn, descColumn])
 
-  // Debounce de la búsqueda mientras se escribe.
+  // Debounce de la búsqueda mientras se escribe. Depende SOLO de `value`
+  // (runSearch ya es estable), por lo que el polling del wizard no reinicia el
+  // temporizador ni relanza búsquedas en vano.
   useEffect(() => {
     autoResolvedFor.current = null
     const t = setTimeout(() => { void runSearch(value) }, 350)
