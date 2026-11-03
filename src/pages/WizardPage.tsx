@@ -25,6 +25,7 @@ import { getPrimarySheetId, getSheetColumns, type SheetColumnSettings } from '..
 import { useOperationLive } from '../hooks/useOperationLive'
 import { collectAllServerPhotos, pendingLocalPhotos } from '../lib/photo-reconcile'
 import { canReadClipboard, onlyImageFiles, resolveTrayDestination } from '../lib/tray-destination'
+import { saveTrayDraft, loadTrayDraft, clearTrayDraft } from '../lib/tray-cache'
 
 /** URL directa de R2: driveUrl http(s) que no es de Google. */
 function directUrl(photo: Pick<PhotoRecord, 'driveUrl'>): string | null {
@@ -965,6 +966,7 @@ export function WizardPage() {
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
     setTrayProductCode(null)
+    if (trackingCode) clearTrayDraft(trackingCode)
   }
 
   // Callback ESTABLE para el buscador de la DATA en la bandeja: al elegir un
@@ -1103,6 +1105,10 @@ export function WizardPage() {
     const allCachedIndices = [...cachedByIndex.keys()]
 
     // ── 2) Ya están a salvo: cerrar el modal; la subida sigue en segundo plano.
+    // Las fotos ya se persistieron en IndexedDB (cachePhoto), así que el
+    // borrador durable de la bandeja ya no hace falta: se limpia para no
+    // reabrirla tras una futura recarga.
+    if (trackingCode) clearTrayDraft(trackingCode)
     setShowCaptureTray(false)
     setCaptureTray([])
     setTrayComments([])
@@ -1256,6 +1262,66 @@ export function WizardPage() {
       setLocalPhotos(pendingLocalPhotos(cached, serverPhotos))
     })
   }, [operation, trackingCode])
+
+  // ── Restaurar la bandeja de fotos tras una recarga ──
+  // Al tomar una foto con la cámara NATIVA, el SO puede descargar la webview y
+  // recargar la página al volver (móviles con poca RAM), perdiendo la bandeja
+  // que vive en memoria. Al montar el registro recuperamos el borrador durable
+  // (localStorage) para que las fotos tomadas, sus comentarios y el producto
+  // vinculado NO se pierdan: la bandeja se reabre tal como estaba.
+  const trayRestoredRef = useRef(false)
+  useEffect(() => {
+    if (trayRestoredRef.current || !trackingCode) return
+    trayRestoredRef.current = true
+    const draft = loadTrayDraft(trackingCode)
+    if (draft && draft.photos.length > 0) {
+      setCaptureTray(draft.photos)
+      setTrayComments(draft.comments.length === draft.photos.length ? draft.comments : draft.photos.map((_, i) => draft.comments[i] ?? ''))
+      setTrayProductCode(draft.productCode)
+      setTrayMessage(draft.message)
+      setShowCaptureTray(true)
+      setFeedback('Se recuperaron las fotos que estabas registrando.')
+    }
+  }, [trackingCode])
+
+  // Persiste la bandeja en cada cambio (durable): si el SO recarga la página,
+  // al volver se restaura. Solo guarda mientras la bandeja está abierta con
+  // fotos; al enviar/cancelar se limpia el borrador en sus handlers.
+  useEffect(() => {
+    if (!trackingCode) return
+    if (showCaptureTray && captureTray.length > 0) {
+      saveTrayDraft(trackingCode, {
+        photos: captureTray,
+        comments: trayComments,
+        productCode: trayProductCode,
+        message: trayMessage,
+      })
+    }
+  }, [trackingCode, showCaptureTray, captureTray, trayComments, trayProductCode, trayMessage])
+
+  // Seguro adicional: guardar la bandeja JUSTO antes de que el SO suspenda la
+  // página (al abrir la cámara nativa se dispara `visibilitychange`/`pagehide`).
+  // Así, aunque la webview se descargue por memoria, el último estado queda a
+  // salvo en localStorage y se restaura al volver. Usa refs para leer el estado
+  // actual sin re-suscribir el listener en cada cambio.
+  const trayPersistRef = useRef<() => void>(() => {})
+  useEffect(() => {
+    trayPersistRef.current = () => {
+      if (trackingCode && showCaptureTray && captureTray.length > 0) {
+        saveTrayDraft(trackingCode, { photos: captureTray, comments: trayComments, productCode: trayProductCode, message: trayMessage })
+      }
+    }
+  }, [trackingCode, showCaptureTray, captureTray, trayComments, trayProductCode, trayMessage])
+  useEffect(() => {
+    const persist = () => trayPersistRef.current()
+    const onVisibility = () => { if (document.visibilityState === 'hidden') persist() }
+    window.addEventListener('pagehide', persist)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('pagehide', persist)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [])
 
   /**
    * Reintento manual del envío de las fotos que quedaron pendientes/sin enviar.
