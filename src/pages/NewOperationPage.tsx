@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Activity, ArrowDown, ArrowRight, ArrowUp, CheckCircle2, MapPin, ShieldCheck, Truck, UserRound, X } from 'lucide-react'
-import { apiRequest, getLocations, type CompanyLocation, type CreateOperationPayload, type LocationRef, type Operation, type OperationType } from '../lib/api'
+import { apiRequest, getLocations, readCachedOperationTypes, type CompanyLocation, type CreateOperationPayload, type LocationRef, type Operation, type OperationType } from '../lib/api'
 import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { useTracerFeatures } from '../lib/tracer-features'
@@ -46,13 +46,15 @@ export function NewOperationPage() {
 
   // Tipos de operación configurados (por defecto + personalizados).
   type OpTypeDef = { id: string; label: string; descripcion?: string }
-  const [opTypes, setOpTypes] = useState<OpTypeDef[]>([])
+  // Siembra desde el caché local (lazy init) para evitar el parpadeo de mostrar
+  // tipos por defecto antes que los configurados por la empresa.
+  const [opTypes, setOpTypes] = useState<OpTypeDef[]>(() => readCachedOperationTypes(getCompanyId()))
   useEffect(() => {
     const cid = getCompanyId()
     if (!cid) return
     void apiRequest<{ all: OpTypeDef[] }>(`/settings/operation-types?companyId=${encodeURIComponent(cid)}`)
       .then((r) => setOpTypes(r.all ?? []))
-      .catch(() => { /* fallback a defaults */ })
+      .catch(() => { /* conserva el caché/fallback si falla */ })
   }, [])
   const currentTypeDef = opTypes.find((t) => t.id === form.operationType)
   const [showPlate, setShowPlate] = useState(false)

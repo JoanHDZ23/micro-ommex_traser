@@ -108,6 +108,10 @@ const WIZARD_GUIDE: GuideStep[] = [
   },
 ]
 
+/** Tope de fotos por tanda en la bandeja de revisión. Acota el uso de memoria
+ *  (dataURLs base64 en estado) para no cerrar la app en móviles de poca RAM. */
+const MAX_TRAY_PHOTOS = 30
+
 export function WizardPage() {
   const { trackingCode } = useParams<{ trackingCode: string }>()
   const navigate = useNavigate()
@@ -886,6 +890,13 @@ export function WizardPage() {
     const file = e.target.files?.[0]
     e.target.value = '' // permite volver a tomar
     if (!file) return
+    // Tope de fotos en la bandeja: mantener muchas dataURLs base64 en memoria
+    // puede agotar la RAM en móviles de gama baja y cerrar la app. Al llegar al
+    // límite se pide enviar/guardar la tanda actual antes de seguir tomando.
+    if (captureTray.length >= MAX_TRAY_PHOTOS) {
+      setFeedback(`Máximo ${MAX_TRAY_PHOTOS} fotos por envío. Envía estas y continúa con otra tanda.`)
+      return
+    }
     try {
       // Comprime/redimensiona para subida rápida y para mostrar la miniatura.
       const base64 = await compressImageToBase64(file, stampOpts)
@@ -923,16 +934,29 @@ export function WizardPage() {
   // dentro de callbacks estables (sin recrearlos en cada render).
   const trayProductRef = useRef<string | null>(null)
   const activeProductRef = useRef<string | null>(null)
+  // Longitud actual de la bandeja, leída dentro de callbacks estables (deps []).
+  const captureTrayLenRef = useRef(0)
   useEffect(() => { trayProductRef.current = trayProductCode }, [trayProductCode])
   useEffect(() => { activeProductRef.current = activeLbProduct }, [activeLbProduct])
+  useEffect(() => { captureTrayLenRef.current = captureTray.length }, [captureTray.length])
 
   // Cada imagen se comprime y se le graba la marca de agua (fecha/hora/ubicación),
   // igual que las fotos tomadas con la cámara. Si hay un producto activo o la
   // bandeja ya está vinculada, las imágenes se asocian a ese producto (Req 4.4);
   // si no, van solo a fotos generales (Req 4.8).
   const addImageFilesToTray = useCallback(async (files: File[]) => {
-    const images = onlyImageFiles(files)
+    let images = onlyImageFiles(files)
     if (images.length === 0) return
+    // Respeta el tope de la bandeja (memoria): recorta el exceso y avisa.
+    const room = MAX_TRAY_PHOTOS - captureTrayLenRef.current
+    if (room <= 0) {
+      setFeedback(`Máximo ${MAX_TRAY_PHOTOS} fotos por envío. Envía estas y continúa con otra tanda.`)
+      return
+    }
+    if (images.length > room) {
+      images = images.slice(0, room)
+      setFeedback(`Se agregaron ${room} imagen(es); el resto supera el máximo de ${MAX_TRAY_PHOTOS} por envío.`)
+    }
     // Resuelve el destino (producto vinculado > producto activo > generales).
     const dest = resolveTrayDestination(trayProductRef.current, activeProductRef.current)
     if (dest) setTrayProductCode(dest)
@@ -1051,6 +1075,11 @@ export function WizardPage() {
   const sendCaptureTray = async () => {
     if (captureTray.length === 0) { cancelCaptureTray(); return }
     if (!trackingCode) return
+    // Guard SÍNCRONO anti doble-envío: `setTraySending(true)` es asíncrono
+    // (React agrupa el estado), así que dos toques muy rápidos podían colar dos
+    // ejecuciones y duplicar/romper el flujo. El ref corta la segunda al instante.
+    if (sendTrayBusyRef.current) return
+    sendTrayBusyRef.current = true
     setTraySending(true)
     const message = trayMessage.trim()
     const photos = [...captureTray]
@@ -1089,6 +1118,7 @@ export function WizardPage() {
       // No se pudo persistir: se conserva la bandeja intacta (no se pierde nada)
       // para que el usuario pueda reintentar.
       setTraySending(false)
+      sendTrayBusyRef.current = false
       setFeedback('No se pudieron guardar las fotos en este dispositivo. Revisa el espacio e inténtalo de nuevo.')
       return
     }
@@ -1141,6 +1171,7 @@ export function WizardPage() {
         setFeedback(err instanceof Error ? err.message : 'Error al actualizar la foto. Quedó guardada en este dispositivo.')
       } finally {
         setTraySending(false)
+        sendTrayBusyRef.current = false
       }
       return
     }
@@ -1179,6 +1210,7 @@ export function WizardPage() {
         setFeedback(err instanceof Error ? err.message : 'Error al vincular las fotos. Quedaron guardadas y se reintentarán.')
       } finally {
         setTraySending(false)
+        sendTrayBusyRef.current = false
       }
       return
     }
@@ -1206,6 +1238,7 @@ export function WizardPage() {
       setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
     } finally {
       setTraySending(false)
+      sendTrayBusyRef.current = false
     }
   }
 
@@ -1270,6 +1303,8 @@ export function WizardPage() {
   // (localStorage) para que las fotos tomadas, sus comentarios y el producto
   // vinculado NO se pierdan: la bandeja se reabre tal como estaba.
   const trayRestoredRef = useRef(false)
+  // Guard síncrono para que "Enviar" no se ejecute dos veces en paralelo.
+  const sendTrayBusyRef = useRef(false)
   useEffect(() => {
     if (trayRestoredRef.current || !trackingCode) return
     trayRestoredRef.current = true

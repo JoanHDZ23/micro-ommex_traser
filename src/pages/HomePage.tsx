@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { Card, EmptyState, LoadingState, SectionHeader } from '../components/ui'
-import { apiRequest } from '../lib/api'
+import { apiRequest, readCachedOperationTypes } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { useTracerFeatures } from '../lib/tracer-features'
 
@@ -65,14 +65,17 @@ export function HomePage() {
   const [activity, setActivity] = useState<Array<{ _id: string; action: string; detail: string; createdAt: string }>>([])
   const [loadingActivity, setLoadingActivity] = useState(true)
 
-  // Tipos de operación (por defecto + personalizados configurados por la empresa)
-  const [opTypes, setOpTypes] = useState<OpTypeDef[]>([])
+  // Tipos de operación de la empresa. Se SIEMBRA el estado inicial desde el
+  // caché local (lazy init), así en los arranques siguientes el PRIMER render
+  // ya pinta los tipos configurados por la empresa, sin el parpadeo de mostrar
+  // antes los de por defecto. El fetch solo los refresca.
+  const [opTypes, setOpTypes] = useState<OpTypeDef[]>(() => readCachedOperationTypes(getCompanyId()))
   useEffect(() => {
     const companyId = getCompanyId()
     if (!companyId) return
     void apiRequest<{ all: OpTypeDef[] }>(`/settings/operation-types?companyId=${encodeURIComponent(companyId)}`)
       .then((r) => setOpTypes(r.all ?? []))
-      .catch(() => { /* usa fallback por defecto si falla */ })
+      .catch(() => { /* conserva el caché/fallback si falla */ })
   }, [])
 
   useEffect(() => {

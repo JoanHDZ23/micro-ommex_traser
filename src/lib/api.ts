@@ -84,7 +84,6 @@ export class NetworkError extends Error {
 const GET_CACHE_PREFIX = 'ommex_get_cache:'
 const GET_CACHE_PATTERNS = [
   /^\/operations(\?|$)/,          // historial de operaciones
-  /^\/operations\/[^/?]+(\?|$)/,  // una operación por trackingCode
   /^\/settings\//,                // config (whatsapp, operation-types, plates…)
   /^\/products-catalog(\?|$)/,    // catálogo de productos
 ]
@@ -293,6 +292,24 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
 export type DefaultOperationType = 'PRODUCTOS_ENTRANTES' | 'PRODUCTOS_SALIENTES' | 'ACTIVIDAD'
 export type OperationType = DefaultOperationType | (string & {})
 export type OperationStatus = 'EN_PROCESO' | 'COMPLETADO'
+
+/** Tipo de operación configurado por la empresa (para los selectores). */
+export interface OperationTypeDef { id: string; label: string; descripcion?: string }
+
+/**
+ * Lee de forma SÍNCRONA los tipos de operación de la empresa desde el caché
+ * local (los que `apiRequest` guarda tras cada respuesta de
+ * `/settings/operation-types`). Sirve para sembrar el estado inicial de los
+ * selectores y evitar el "parpadeo": en los arranques siguientes se pintan
+ * directamente los tipos de la empresa en el PRIMER render, sin mostrar antes
+ * los de por defecto. Devuelve [] si aún no hay caché (primerísimo uso).
+ */
+export function readCachedOperationTypes(companyId: string): OperationTypeDef[] {
+  if (!companyId) return []
+  const endpoint = `/settings/operation-types?companyId=${encodeURIComponent(companyId)}`
+  const cached = readGetCache(endpoint) as { all?: OperationTypeDef[] } | undefined
+  return Array.isArray(cached?.all) ? cached!.all! : []
+}
 
 export interface PhotoRecord {
   stepIndex: number
