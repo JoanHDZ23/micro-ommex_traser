@@ -3541,7 +3541,7 @@ export function WizardPage() {
       {/* Selector de destino(s) de WhatsApp — selección múltiple de chats/grupos */}
       {destModal.open && (
         <div className="fixed inset-0 z-[96] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] flex flex-col">
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85dvh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
               <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
                 <Send className="w-4 h-4 text-[#128c7e]" /> ¿A qué chats enviar?
@@ -3613,7 +3613,7 @@ export function WizardPage() {
       {/* Selector de elementos a enviar por WhatsApp (después de guardar un registro completado) */}
       {showSendSelector && (
         <div className="fixed inset-0 z-[95] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85vh] flex flex-col">
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85dvh] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
               <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
                 <Send className="w-4 h-4 text-[#128c7e]" /> Enviar por WhatsApp
@@ -3697,8 +3697,12 @@ export function WizardPage() {
       {/* Bandeja de revisión de fotos tomadas con la cámara del dispositivo */}
       {showCaptureTray && trayEditIdx === null && (
         <div className="fixed inset-0 z-[95] bg-black/60 flex items-end sm:items-center justify-center">
-          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] flex flex-col">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+          {/* Alto acotado con `dvh` (viewport DINÁMICO): a diferencia de `vh`,
+              descuenta la barra del navegador móvil, así el modal nunca supera
+              la pantalla visible y el footer con el botón "Enviar" SIEMPRE queda
+              a la vista sin tener que hacer scroll ni ajustar la pantalla. */}
+          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85dvh] flex flex-col overflow-hidden">
+            <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-gray-200">
               <h3 className="text-sm font-bold text-gray-800">
                 {trayEditingPhotoIdx !== null
                   ? 'Editar foto'
@@ -3709,7 +3713,9 @@ export function WizardPage() {
               </button>
             </div>
 
-            <div className="overflow-y-auto px-4 py-4 space-y-4">
+            {/* `flex-1 min-h-0` permite que SOLO esta zona haga scroll y ceda el
+                espacio justo para header y footer (sin empujarlos fuera). */}
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
               {/* Miniaturas + drag & drop zone */}
               <div
                 className="grid grid-cols-3 gap-2"
@@ -3851,7 +3857,7 @@ export function WizardPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200">
+            <div className="flex-shrink-0 flex items-center gap-2 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-gray-200 bg-white">
               <button onClick={cancelCaptureTray} disabled={traySending}
                 className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 disabled:opacity-50">
                 Cancelar
@@ -4248,7 +4254,7 @@ export function WizardPage() {
         const withComment = photos.filter((ph) => (ph.comment ?? '').trim()).length
         return (
           <div className="fixed inset-0 z-[96] bg-black/60 flex items-end sm:items-center justify-center" onClick={() => setCommentsProduct(null)}>
-            <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85dvh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
               {/* Cabecera */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
                 <div className="min-w-0">
