@@ -712,18 +712,33 @@ export function WizardPage() {
   // File picker refs
   const lbFileInputRef = useRef<HTMLInputElement>(null)
 
-  /** Sube una sola foto: cachea local y sube a Drive en background */
-  const uploadSinglePhoto = async (base64: string, comment: string, isProduct: boolean, productCodeArg?: string, groupId?: string) => {
+  /**
+   * Sube una sola foto: cachea local y sube a Drive en background.
+   *
+   * `preCached`/`preClientKey` permiten reutilizar una foto YA persistida en
+   * IndexedDB (por ejemplo, la que se guardó antes de limpiar la bandeja), de
+   * modo que no se duplique el registro ni se cambie su clave de idempotencia.
+   */
+  const uploadSinglePhoto = async (
+    base64: string,
+    comment: string,
+    isProduct: boolean,
+    productCodeArg?: string,
+    groupId?: string,
+    preCached?: CachedPhoto,
+    preClientKey?: string,
+  ) => {
     if (!base64 || !trackingCode) return
     const productCode = isProduct ? productCodeArg ?? activeLbProduct ?? undefined : undefined
 
     // Clave de idempotencia (dedupe en el servidor + reconciliación local).
-    const clientTimestamp = new Date().toISOString()
-    const clientKey = makeClientKey(trackingCode, `${clientTimestamp}:${Math.random().toString(36).slice(2, 8)}`)
+    const clientTimestamp = new Date(preCached?.timestamp ?? Date.now()).toISOString()
+    const clientKey = preClientKey ?? preCached?.clientKey
+      ?? makeClientKey(trackingCode, `${clientTimestamp}:${Math.random().toString(36).slice(2, 8)}`)
 
     // 1. Cache local (instantáneo), con el clientKey para reconciliar.
-    const cached = await cachePhoto({ trackingCode, base64, comment, productCode, clientKey })
-    setLocalPhotos((prev) => [...prev, cached])
+    const cached = preCached ?? await cachePhoto({ trackingCode, base64, comment, productCode, clientKey })
+    if (!preCached) setLocalPhotos((prev) => [...prev, cached])
     // Hora real de captura en el dispositivo (para que el registro muestre la
     // hora correcta y no la del servidor al subir en segundo plano).
     const ts = new Date(cached.timestamp).toISOString()
@@ -798,18 +813,24 @@ export function WizardPage() {
       clientKey: makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`),
     }))
     // Cache local INMEDIATO de cada foto (con su producto) ANTES de subir: si no
-    // hay conexión, quedan visibles y se reintentan en vez de perderse.
+    // hay conexión, quedan visibles y se reintentan en vez de perderse. Si el
+    // guardado local falla, se aborta SIN subir para no dejar fotos a medias.
     const cachedIds: string[] = []
-    for (let i = 0; i < items.length; i++) {
-      const cached = await cachePhoto({
-        trackingCode,
-        base64: items[i].base64Image,
-        comment: items[i].comment,
-        clientKey: items[i].clientKey,
-        productCode: targetProduct,
-      })
-      setLocalPhotos((prev) => [...prev, cached])
-      cachedIds.push(cached.id)
+    try {
+      for (let i = 0; i < items.length; i++) {
+        const cached = await cachePhoto({
+          trackingCode,
+          base64: items[i].base64Image,
+          comment: items[i].comment,
+          clientKey: items[i].clientKey,
+          productCode: targetProduct,
+        })
+        setLocalPhotos((prev) => [...prev, cached])
+        cachedIds.push(cached.id)
+      }
+    } catch {
+      setFeedback('No se pudieron guardar las fotos en este dispositivo. Revisa el espacio e inténtalo de nuevo.')
+      return
     }
     try {
       if (targetProduct) {
@@ -1006,7 +1027,51 @@ export function WizardPage() {
     const editingIdx = trayEditingPhotoIdx
     const linkedProduct = trayProductCode
 
-    // Cerramos el modal de inmediato; la subida sigue en segundo plano.
+    // ── 1) PERSISTENCIA PRIMERO ──
+    // Guarda TODAS las fotos nuevas en el dispositivo ANTES de limpiar la
+    // bandeja. Si no hay conexión (o la app se cierra durante el envío), las
+    // fotos ya quedaron a salvo y se reintentan solas en lugar de perderse.
+    const clientTimestamp = new Date().toISOString()
+    const isDataUrl = (s: string) => s.startsWith('data:')
+    const cachedByIndex = new Map<number, CachedPhoto>()
+    const clientKeyByIndex = new Map<number, string>()
+    try {
+      for (let i = 0; i < photos.length; i++) {
+        if (!isDataUrl(photos[i])) continue // foto que ya vive en el servidor
+        const base64 = photos[i].split(',')[1] ?? ''
+        if (!base64) continue
+        const clientKey = makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`)
+        const cached = await cachePhoto({
+          trackingCode,
+          base64,
+          comment: commentAt(i),
+          clientKey,
+          productCode: linkedProduct ?? undefined,
+        })
+        cachedByIndex.set(i, cached)
+        clientKeyByIndex.set(i, clientKey)
+      }
+    } catch {
+      // No se pudo persistir: se conserva la bandeja intacta (no se pierde nada)
+      // para que el usuario pueda reintentar.
+      setTraySending(false)
+      setFeedback('No se pudieron guardar las fotos en este dispositivo. Revisa el espacio e inténtalo de nuevo.')
+      return
+    }
+    if (cachedByIndex.size > 0) setLocalPhotos((prev) => [...prev, ...cachedByIndex.values()])
+
+    /** Marca como subidas las fotos que el servidor ya confirmó. */
+    const settle = async (indices: number[]) => {
+      for (const i of indices) {
+        const id = cachedByIndex.get(i)?.id
+        if (!id) continue
+        await markAsUploaded(id)
+        setLocalPhotos((prev) => prev.filter((p) => p.id !== id))
+      }
+    }
+    const allCachedIndices = [...cachedByIndex.keys()]
+
+    // ── 2) Ya están a salvo: cerrar el modal; la subida sigue en segundo plano.
     setShowCaptureTray(false)
     setCaptureTray([])
     setTrayComments([])
@@ -1019,24 +1084,24 @@ export function WizardPage() {
     if (editingIdx !== null) {
       try {
         const first = photos[0] ?? ''
-        const imageChanged = first.startsWith('data:')
-        const extras = photos.slice(1).filter((p) => p.startsWith('data:'))
+        const imageChanged = isDataUrl(first)
 
         if (imageChanged) {
           const base64 = first.split(',')[1] ?? ''
-          await uploadSinglePhoto(base64, message, false)
+          await uploadSinglePhoto(base64, message, false, undefined, undefined, cachedByIndex.get(0), clientKeyByIndex.get(0))
           await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'DELETE' })
         } else {
           await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'PATCH', body: { comment: message } })
         }
-        extras.forEach(() => { /* el comentario por foto se aplica abajo */ })
-        for (let e = 0; e < extras.length; e++) {
-          await uploadSinglePhoto(extras[e].split(',')[1] ?? '', commentAt(e + 1), false)
+        // Fotos adicionales agregadas durante la edición (comentario por foto).
+        for (let i = 1; i < photos.length; i++) {
+          if (!isDataUrl(photos[i])) continue
+          await uploadSinglePhoto(photos[i].split(',')[1] ?? '', commentAt(i), false, undefined, undefined, cachedByIndex.get(i), clientKeyByIndex.get(i))
         }
         await loadOperation()
         setFeedback('✓ Foto actualizada')
       } catch (err) {
-        setFeedback(err instanceof Error ? err.message : 'Error al actualizar la foto')
+        setFeedback(err instanceof Error ? err.message : 'Error al actualizar la foto. Quedó guardada en este dispositivo.')
       } finally {
         setTraySending(false)
       }
@@ -1049,29 +1114,32 @@ export function WizardPage() {
         // Asegura que el producto exista en esta operación; si no, lo crea.
         const alreadyExists = lbProducts.some((p) => p.productCode.toLowerCase() === linkedProduct.toLowerCase())
         if (!alreadyExists) {
-          await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
-            method: 'POST',
-            body: { productCode: linkedProduct },
-          })
+          try {
+            await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
+              method: 'POST',
+              body: { productCode: linkedProduct },
+            })
+          } catch { /* ya existe (409): el batch validará el estado real */ }
         }
         setFeedback(`⏳ Subiendo ${photos.length} foto(s) al producto ${linkedProduct}…`)
         // UNA sola petición batch (atómica e idempotente) para todas las fotos.
         const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        const clientTimestamp = new Date().toISOString()
         const items = photos
           .map((p, i) => ({
             base64Image: p.split(',')[1] ?? '',
             comment: commentAt(i),
             clientTimestamp,
-            clientKey: makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`),
+            clientKey: clientKeyByIndex.get(i),
           }))
           .filter((it) => it.base64Image)
         await uploadProductPhotosBatch({ trackingCode, productCode: linkedProduct, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
+        await settle(allCachedIndices)
         setActiveLbProduct(linkedProduct)
         await loadOperation()
         setFeedback(`✓ ${photos.length} foto(s) vinculada(s) a ${linkedProduct}`)
       } catch (err) {
-        setFeedback(err instanceof Error ? err.message : 'Error al vincular fotos al producto')
+        // Sin conexión: quedaron guardadas con su producto y se reintentan solas.
+        setFeedback(err instanceof Error ? err.message : 'Error al vincular las fotos. Quedaron guardadas y se reintentarán.')
       } finally {
         setTraySending(false)
       }
@@ -1080,27 +1148,24 @@ export function WizardPage() {
 
     try {
       const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      const clientTimestamp = new Date().toISOString()
-      // Cache local + clientKey por foto (reconciliación y dedupe).
-      const cachedIds: string[] = []
-      const items = [] as import('../lib/api').BatchPhotoItem[]
-      for (let i = 0; i < photos.length; i++) {
-        const base64 = photos[i].split(',')[1] ?? ''
-        if (!base64) continue
-        const clientKey = makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`)
-        const cmt = commentAt(i)
-        const cached = await cachePhoto({ trackingCode, base64, comment: cmt, clientKey })
-        setLocalPhotos((prev) => [...prev, cached])
-        cachedIds.push(cached.id)
-        items.push({ base64Image: base64, comment: cmt, clientTimestamp, clientKey })
-      }
+      // Las fotos ya están persistidas arriba: se reutiliza la MISMA clientKey
+      // para que el servidor deduplique y no se genere un duplicado.
+      const items = photos
+        .map((p, i) => ({
+          base64Image: p.split(',')[1] ?? '',
+          comment: commentAt(i),
+          clientTimestamp,
+          clientKey: clientKeyByIndex.get(i),
+        }))
+        .filter((it) => it.base64Image)
       setFeedback(photos.length > 1 ? `⏳ Subiendo ${photos.length} fotos...` : '⏳ Subiendo foto...')
       // SIEMPRE batch (una sola petición atómica e idempotente).
       await uploadPhotosBatch({ trackingCode, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
-      for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
+      await settle(allCachedIndices)
       await loadOperation()
       setFeedback(`✓ ${photos.length} foto(s) enviada(s)`)
     } catch (err) {
+      // Sin conexión: las fotos quedan en cache local (visibles y reintentables).
       setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
     } finally {
       setTraySending(false)

@@ -49,7 +49,51 @@ function openDB(): Promise<IDBDatabase> {
   })
 }
 
-/** Guarda una foto en cache local (instantáneo). Se borra al subir a Drive. */
+/** Escribe una foto en el store (una sola transacción). */
+function putPhoto(db: IDBDatabase, photo: CachedPhoto): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    tx.objectStore(STORE_NAME).put(photo)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+/** True si el error es por cuota de almacenamiento llena. */
+function isQuotaError(err: unknown): boolean {
+  const e = err as { name?: string; message?: string } | null
+  return e?.name === 'QuotaExceededError' || /quota/i.test(e?.message ?? '')
+}
+
+/**
+ * Borra del cache las fotos YA SUBIDAS (están a salvo en el servidor) para
+ * liberar cuota. Nunca toca las pendientes: son las que todavía no llegaron al
+ * servidor y borrarlas sería perderlas.
+ */
+export async function purgeUploadedPhotos(): Promise<number> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const store = tx.objectStore(STORE_NAME)
+    const req = store.getAll()
+    let deleted = 0
+    req.onsuccess = () => {
+      for (const photo of (req.result ?? []) as CachedPhoto[]) {
+        if (photo.uploaded) { store.delete(photo.id); deleted++ }
+      }
+    }
+    tx.oncomplete = () => resolve(deleted)
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+/**
+ * Guarda una foto en cache local (instantáneo).
+ *
+ * Si el almacenamiento está lleno, libera primero las fotos ya subidas y
+ * reintenta. Si aun así falla, PROPAGA el error: el llamador debe conservar la
+ * foto en pantalla en lugar de descartarla (antes se perdía en silencio).
+ */
 export async function cachePhoto(photo: Omit<CachedPhoto, 'id' | 'timestamp' | 'uploaded' | 'dataUrl'>): Promise<CachedPhoto> {
   const db = await openDB()
   const timestamp = Date.now()
@@ -68,12 +112,14 @@ export async function cachePhoto(photo: Omit<CachedPhoto, 'id' | 'timestamp' | '
     uploaded: false,
   }
 
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).put(cached)
-    tx.oncomplete = () => resolve(cached)
-    tx.onerror = () => reject(tx.error)
-  })
+  try {
+    await putPhoto(db, cached)
+  } catch (err) {
+    if (!isQuotaError(err)) throw err
+    await purgeUploadedPhotos()
+    await putPhoto(db, cached)
+  }
+  return cached
 }
 
 /** Marca una foto como subida pero la MANTIENE en IndexedDB hasta el guardado final (Req 5). */
@@ -208,7 +254,13 @@ export async function getPendingUploads(): Promise<CachedPhoto[]> {
   })
 }
 
-/** Limpia fotos expiradas (más de 24h) */
+/**
+ * Limpia fotos expiradas.
+ *
+ * SOLO se borran las que YA se subieron (están a salvo en el servidor). Las
+ * PENDIENTES nunca se borran por antigüedad: son fotos capturadas sin conexión
+ * que todavía no llegaron al servidor y borrarlas sería perderlas.
+ */
 export async function cleanExpiredPhotos(): Promise<number> {
   const db = await openDB()
   const cutoff = Date.now() - EXPIRY_MS
@@ -218,8 +270,8 @@ export async function cleanExpiredPhotos(): Promise<number> {
     const req = store.getAll()
     let deleted = 0
     req.onsuccess = () => {
-      for (const photo of req.result ?? []) {
-        if (photo.timestamp < cutoff) {
+      for (const photo of (req.result ?? []) as CachedPhoto[]) {
+        if (photo.uploaded && photo.timestamp < cutoff) {
           store.delete(photo.id)
           deleted++
         }
@@ -252,6 +304,25 @@ function groupKey(photo: CachedPhoto): string {
 
 type ApiFn = (url: string, opts: unknown) => Promise<unknown>
 
+/**
+ * Asegura que el producto exista en la operación ANTES de subir sus fotos.
+ *
+ * Sin esto, una foto de producto capturada sin conexión nunca podía subir al
+ * reintentar: el backend responde 404 "producto no encontrado" y la foto se
+ * quedaba atrapada en el cache para siempre (pérdida efectiva).
+ *
+ * La creación es tolerante: si el producto ya existe (409) o la operación está
+ * completada, se ignora y el batch reportará el estado real.
+ */
+async function ensureProductExists(api: ApiFn, trackingCode: string, productCode: string): Promise<void> {
+  try {
+    await api(`/operations/${encodeURIComponent(trackingCode)}/linea-blanca`, {
+      method: 'POST',
+      body: { productCode },
+    })
+  } catch { /* ya existe o no se pudo crear ahora; el batch validará el estado */ }
+}
+
 /** Sube una tanda de fotos del mismo registro/producto en una sola petición
  *  batch (atómica e idempotente). Marca como subidas las que confirme el
  *  servidor y registra el fallo en las demás para su backoff. */
@@ -274,6 +345,9 @@ async function uploadGroup(api: ApiFn, photos: CachedPhoto[]): Promise<number> {
     : { trackingCode: first.trackingCode, groupId, mimeType: 'image/jpeg', photos: items }
 
   try {
+    // Las fotos de producto requieren que el producto exista en la operación;
+    // se asegura aquí para que el reintento offline pueda completarse solo.
+    if (first.productCode) await ensureProductExists(api, first.trackingCode, first.productCode)
     await api(endpoint, { method: 'POST', body })
     for (const p of photos) await markAsUploaded(p.id)
     return photos.length
