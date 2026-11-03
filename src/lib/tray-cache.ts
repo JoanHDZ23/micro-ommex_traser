@@ -4,95 +4,172 @@
  * Persistencia DURABLE de la "bandeja de revisión" de fotos (las que se toman
  * con la cámara y aún NO se han enviado) por `trackingCode`.
  *
- * Por qué existe: al tomar una foto con la cámara NATIVA del dispositivo, el
- * sistema operativo puede descargar la webview (presión de memoria) mientras la
- * cámara está abierta y RECARGAR la página al volver. Si la bandeja solo vive en
- * estado de React (memoria), esa recarga la borra y el usuario pierde la foto y
- * "se sale" del registro. Guardando la bandeja aquí al instante y restaurándola
- * al montar, el registro sobrevive a esa recarga.
+ * Por qué existe: al tomar fotos con la cámara nativa, el sistema operativo
+ * puede descargar la webview (presión de memoria) y recargar/relanzar la app.
+ * Si la bandeja solo vive en estado de React, se pierde la foto y el usuario
+ * "se sale" del registro. Guardando la bandeja aquí y restaurándola al montar,
+ * el registro sobrevive a esa recarga.
  *
- * Se usa localStorage (síncrono, sin latencia perceptible): las dataURLs ya
- * vienen comprimidas (~200-500KB) y se acotan a un máximo prudente para no
- * desbordar la cuota del dominio.
+ * DISEÑO (clave para evitar el crash con múltiples fotos):
+ *  - Las FOTOS (dataURLs base64, que son grandes) se guardan en IndexedDB, NO en
+ *    localStorage. localStorage es síncrono y tiene ~5MB de cuota: serializar
+ *    varias fotos base64 en cada cambio congelaba el hilo (JSON.stringify O(n²))
+ *    y reventaba la cuota, lo que provocaba el cierre de la app.
+ *  - En localStorage solo queda un índice LIGERO por registro (comentarios,
+ *    producto vinculado, mensaje y las claves de las fotos en IndexedDB).
  */
 
-const KEY_PREFIX = 'ommex_tray_v1:'
-/** Tope de fotos por bandeja persistida (evita llenar la cuota de localStorage). */
+const META_PREFIX = 'ommex_tray_meta_v2:'
+const DB_NAME = 'ommex-tray-cache'
+const STORE = 'tray_photos'
+const DB_VERSION = 1
+
+/** Tope de fotos por bandeja persistida. */
 const MAX_TRAY_PHOTOS = 30
+/** Borradores más antiguos que esto se consideran caducos. */
+const MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 h
 
 export interface TrayDraft {
-  /** dataURLs de las fotos de la bandeja (base64 con prefijo data:). */
-  photos: string[]
-  /** Comentario por foto (paralelo a `photos`). */
-  comments: string[]
-  /** Producto de la DATA vinculado al grupo (si lo hay). */
+  photos: string[]          // dataURLs de las fotos (restauradas desde IndexedDB)
+  comments: string[]        // comentario por foto (paralelo a photos)
   productCode: string | null
-  /** Comentario general del grupo. */
   message: string
-  /** Momento de la última escritura (para descartar borradores muy viejos). */
   savedAt: number
 }
 
-/** Borradores más antiguos que esto se consideran caducos y no se restauran. */
-const MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 h
-
-function keyFor(trackingCode: string): string {
-  return `${KEY_PREFIX}${trackingCode}`
+/** Metadatos ligeros que SÍ van a localStorage (sin las imágenes base64). */
+interface TrayMeta {
+  keys: string[]            // claves de las fotos guardadas en IndexedDB (orden)
+  comments: string[]
+  productCode: string | null
+  message: string
+  savedAt: number
 }
 
+function metaKey(trackingCode: string): string {
+  return `${META_PREFIX}${trackingCode}`
+}
+
+// ── IndexedDB (fotos de la bandeja) ─────────────────────────────────────────
+
+let _dbPromise: Promise<IDBDatabase> | null = null
+function openDB(): Promise<IDBDatabase> {
+  if (_dbPromise) return _dbPromise
+  _dbPromise = new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE)
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+  return _dbPromise
+}
+
+function idbPut(key: string, value: string): Promise<void> {
+  return openDB().then((db) => new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite')
+    tx.objectStore(STORE).put(value, key)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  }))
+}
+
+function idbGet(key: string): Promise<string | undefined> {
+  return openDB().then((db) => new Promise<string | undefined>((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly')
+    const r = tx.objectStore(STORE).get(key)
+    r.onsuccess = () => resolve(r.result as string | undefined)
+    r.onerror = () => reject(r.error)
+  }))
+}
+
+function idbDelete(keys: string[]): Promise<void> {
+  if (keys.length === 0) return Promise.resolve()
+  return openDB().then((db) => new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite')
+    const store = tx.objectStore(STORE)
+    for (const k of keys) store.delete(k)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+  }))
+}
+
+function readMeta(trackingCode: string): TrayMeta | null {
+  try {
+    const raw = localStorage.getItem(metaKey(trackingCode))
+    return raw ? (JSON.parse(raw) as TrayMeta) : null
+  } catch { return null }
+}
+
+// ── API pública ─────────────────────────────────────────────────────────────
+
 /**
- * Guarda (o reemplaza) la bandeja del registro. Best-effort: si localStorage
- * falla (cuota llena / modo privado), no lanza — la UI sigue funcionando con el
- * estado en memoria.
+ * Guarda la bandeja del registro. Las fotos van a IndexedDB; solo un índice
+ * ligero (claves + comentarios + producto + mensaje) va a localStorage.
+ * Best-effort: si algo falla, la UI sigue con el estado en memoria.
  */
-export function saveTrayDraft(trackingCode: string, draft: Omit<TrayDraft, 'savedAt'>): void {
+export async function saveTrayDraft(trackingCode: string, draft: Omit<TrayDraft, 'savedAt'>): Promise<void> {
   if (!trackingCode) return
   try {
-    // Si no hay fotos, equivale a limpiar el borrador.
-    if (!draft.photos || draft.photos.length === 0) {
-      clearTrayDraft(trackingCode)
-      return
+    const photos = (draft.photos ?? []).slice(0, MAX_TRAY_PHOTOS)
+    if (photos.length === 0) { await clearTrayDraft(trackingCode); return }
+
+    // Reusa claves estables por índice para no multiplicar entradas en IDB.
+    const keys = photos.map((_, i) => `${trackingCode}#${i}`)
+    // Escribe cada foto en IndexedDB (asíncrono, fuera del hilo de render).
+    await Promise.all(photos.map((p, i) => idbPut(keys[i], p)))
+    // Limpia claves sobrantes de una bandeja previa más larga.
+    const prev = readMeta(trackingCode)
+    if (prev && prev.keys.length > keys.length) {
+      await idbDelete(prev.keys.slice(keys.length))
     }
-    const trimmed: TrayDraft = {
-      photos: draft.photos.slice(0, MAX_TRAY_PHOTOS),
-      comments: draft.comments.slice(0, MAX_TRAY_PHOTOS),
+
+    const meta: TrayMeta = {
+      keys,
+      comments: (draft.comments ?? []).slice(0, MAX_TRAY_PHOTOS),
       productCode: draft.productCode ?? null,
       message: draft.message ?? '',
       savedAt: Date.now(),
     }
-    localStorage.setItem(keyFor(trackingCode), JSON.stringify(trimmed))
+    // El meta es pequeño (sin base64): localStorage.setItem no congela ni
+    // revienta la cuota aunque haya 30 fotos.
+    localStorage.setItem(metaKey(trackingCode), JSON.stringify(meta))
   } catch {
-    /* cuota/modo privado: la bandeja sigue en memoria, solo no sobrevive a recarga */
+    /* IDB/cuota/modo privado: la bandeja sigue en memoria */
   }
 }
 
 /** Lee la bandeja persistida del registro (o null si no hay o está caduca). */
-export function loadTrayDraft(trackingCode: string): TrayDraft | null {
+export async function loadTrayDraft(trackingCode: string): Promise<TrayDraft | null> {
   if (!trackingCode) return null
+  const meta = readMeta(trackingCode)
+  if (!meta || !Array.isArray(meta.keys) || meta.keys.length === 0) return null
+  if (typeof meta.savedAt === 'number' && Date.now() - meta.savedAt > MAX_AGE_MS) {
+    await clearTrayDraft(trackingCode)
+    return null
+  }
   try {
-    const raw = localStorage.getItem(keyFor(trackingCode))
-    if (!raw) return null
-    const draft = JSON.parse(raw) as TrayDraft
-    if (!Array.isArray(draft.photos) || draft.photos.length === 0) return null
-    // Descarta borradores viejos para no reabrir una bandeja olvidada.
-    if (typeof draft.savedAt === 'number' && Date.now() - draft.savedAt > MAX_AGE_MS) {
-      clearTrayDraft(trackingCode)
-      return null
-    }
+    const photos = await Promise.all(meta.keys.map((k) => idbGet(k)))
+    const present = photos.filter((p): p is string => typeof p === 'string' && p.length > 0)
+    if (present.length === 0) { await clearTrayDraft(trackingCode); return null }
     return {
-      photos: draft.photos,
-      comments: Array.isArray(draft.comments) ? draft.comments : draft.photos.map(() => ''),
-      productCode: draft.productCode ?? null,
-      message: typeof draft.message === 'string' ? draft.message : '',
-      savedAt: draft.savedAt ?? Date.now(),
+      photos: present,
+      comments: present.map((_, i) => meta.comments[i] ?? ''),
+      productCode: meta.productCode ?? null,
+      message: typeof meta.message === 'string' ? meta.message : '',
+      savedAt: meta.savedAt ?? Date.now(),
     }
   } catch {
     return null
   }
 }
 
-/** Elimina el borrador del registro (al enviar o cancelar la bandeja). */
-export function clearTrayDraft(trackingCode: string): void {
+/** Elimina el borrador del registro (fotos en IDB + meta en localStorage). */
+export async function clearTrayDraft(trackingCode: string): Promise<void> {
   if (!trackingCode) return
-  try { localStorage.removeItem(keyFor(trackingCode)) } catch { /* noop */ }
+  const meta = readMeta(trackingCode)
+  try { localStorage.removeItem(metaKey(trackingCode)) } catch { /* noop */ }
+  if (meta?.keys?.length) { try { await idbDelete(meta.keys) } catch { /* noop */ } }
 }

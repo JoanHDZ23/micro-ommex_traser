@@ -70,6 +70,10 @@ export async function compressImageToBase64(
 
     // Re-encode a JPEG comprimido
     const compressed = canvas.toDataURL('image/jpeg', quality)
+    // Libera el buffer del canvas de inmediato (no espera al GC): importante al
+    // procesar varias fotos seguidas en móviles de poca RAM.
+    canvas.width = 0
+    canvas.height = 0
     return compressed.split(',')[1] ?? ''
   } catch {
     // Si algo falla, usa el original para no perder la foto

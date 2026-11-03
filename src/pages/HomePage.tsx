@@ -78,6 +78,24 @@ export function HomePage() {
       .catch(() => { /* conserva el caché/fallback si falla */ })
   }, [])
 
+  // Recuperación de contexto: si el SO relanzó la PWA (que arranca en '/') y el
+  // usuario estaba registrando hace muy poco, lo devolvemos a ese registro en
+  // vez de dejarlo en el inicio con el trabajo "perdido". Solo si la marca es
+  // reciente (≤ 2 min) para no redirigir en una visita normal al inicio.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('ommex_last_wizard')
+      if (!raw) return
+      const [path, tsStr] = raw.split('|')
+      const ts = Number(tsStr)
+      if (path?.startsWith('/wizard/') && ts && Date.now() - ts <= 2 * 60 * 1000) {
+        navigate(path, { replace: true })
+      }
+    } catch { /* noop */ }
+    // Solo al montar el inicio.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     const companyId = getCompanyId()
     if (!companyId) {

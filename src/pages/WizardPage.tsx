@@ -109,8 +109,10 @@ const WIZARD_GUIDE: GuideStep[] = [
 ]
 
 /** Tope de fotos por tanda en la bandeja de revisión. Acota el uso de memoria
- *  (dataURLs base64 en estado) para no cerrar la app en móviles de poca RAM. */
-const MAX_TRAY_PHOTOS = 30
+ *  (dataURLs base64 en estado + render de <img>) para no cerrar la app en
+ *  móviles de poca RAM. 12 es un punto seguro; al llegar se pide enviar la
+ *  tanda y continuar con otra. */
+const MAX_TRAY_PHOTOS = 12
 
 export function WizardPage() {
   const { trackingCode } = useParams<{ trackingCode: string }>()
@@ -811,9 +813,9 @@ export function WizardPage() {
     // Fotos de PRODUCTO (Línea Blanca): subida directa.
     setChatMessage('')
 
-    // Comprime todas las imágenes con concurrencia limitada (2 a la vez) para
-    // evitar picos de memoria que congelaban el dispositivo.
-    const comp = await mapWithConcurrency(files, 2, (f) => compressImageToBase64(f, stampOpts))
+    // Comprime las imágenes de UNA EN UNA (concurrencia 1) para no acumular dos
+    // bitmaps full-res en memoria a la vez (pico que cerraba la app en móvil).
+    const comp = await mapWithConcurrency(files, 1, (f) => compressImageToBase64(f, stampOpts))
     const base64s = comp.filter((r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled').map((r) => r.value)
     if (comp.some((r) => r.status === 'rejected')) setFeedback('No se pudieron leer algunas imágenes')
     if (base64s.length === 0) return
@@ -961,9 +963,11 @@ export function WizardPage() {
     const dest = resolveTrayDestination(trayProductRef.current, activeProductRef.current)
     if (dest) setTrayProductCode(dest)
     setShowCaptureTray(true)
-    // Comprime las imágenes con concurrencia limitada (2 a la vez) para no
-    // saturar memoria/CPU en el móvil cuando se eligen muchas fotos.
-    const results = await mapWithConcurrency(images, 2, (file) => compressImageToBase64(file, stampOptsRef.current))
+    // Comprime las imágenes de UNA EN UNA (concurrencia 1): decodificar 2
+    // bitmaps full-res a la vez es un pico de RAM grande que, con varias fotos,
+    // cerraba la app en móviles de gama baja. Secuencial es apenas más lento
+    // pero estable.
+    const results = await mapWithConcurrency(images, 1, (file) => compressImageToBase64(file, stampOptsRef.current))
     const dataUrls: string[] = []
     let failed = 0
     for (const r of results) {
@@ -990,7 +994,7 @@ export function WizardPage() {
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
     setTrayProductCode(null)
-    if (trackingCode) clearTrayDraft(trackingCode)
+    if (trackingCode) void clearTrayDraft(trackingCode)
   }
 
   // Callback ESTABLE para el buscador de la DATA en la bandeja: al elegir un
@@ -1138,7 +1142,7 @@ export function WizardPage() {
     // Las fotos ya se persistieron en IndexedDB (cachePhoto), así que el
     // borrador durable de la bandeja ya no hace falta: se limpia para no
     // reabrirla tras una futura recarga.
-    if (trackingCode) clearTrayDraft(trackingCode)
+    if (trackingCode) void clearTrayDraft(trackingCode)
     setShowCaptureTray(false)
     setCaptureTray([])
     setTrayComments([])
@@ -1305,58 +1309,69 @@ export function WizardPage() {
   const trayRestoredRef = useRef(false)
   // Guard síncrono para que "Enviar" no se ejecute dos veces en paralelo.
   const sendTrayBusyRef = useRef(false)
+
+  // Recuerda la última ruta de registro visitada. Si el SO relanza la PWA
+  // (start_url '/'), HomePage usa esto para volver al registro en vez de dejar
+  // al usuario en el inicio perdiendo el contexto.
+  useEffect(() => {
+    if (!trackingCode) return
+    try { localStorage.setItem('ommex_last_wizard', `/wizard/${trackingCode}|${Date.now()}`) } catch { /* noop */ }
+    return () => { try { localStorage.removeItem('ommex_last_wizard') } catch { /* noop */ } }
+  }, [trackingCode])
   useEffect(() => {
     if (trayRestoredRef.current || !trackingCode) return
     trayRestoredRef.current = true
-    const draft = loadTrayDraft(trackingCode)
-    if (draft && draft.photos.length > 0) {
-      setCaptureTray(draft.photos)
-      setTrayComments(draft.comments.length === draft.photos.length ? draft.comments : draft.photos.map((_, i) => draft.comments[i] ?? ''))
-      setTrayProductCode(draft.productCode)
-      setTrayMessage(draft.message)
-      setShowCaptureTray(true)
-      setFeedback('Se recuperaron las fotos que estabas registrando.')
+    void loadTrayDraft(trackingCode).then((draft) => {
+      if (draft && draft.photos.length > 0) {
+        setCaptureTray(draft.photos)
+        setTrayComments(draft.comments.length === draft.photos.length ? draft.comments : draft.photos.map((_, i) => draft.comments[i] ?? ''))
+        setTrayProductCode(draft.productCode)
+        setTrayMessage(draft.message)
+        setShowCaptureTray(true)
+        setFeedback('Se recuperaron las fotos que estabas registrando.')
+      }
+    })
+  }, [trackingCode])
+
+  // Persiste la bandeja de forma DURABLE (fotos en IndexedDB, metadatos ligeros
+  // en localStorage) para sobrevivir a una recarga del SO. Se hace con DEBOUNCE
+  // y leyendo el estado por refs: así NO se re-serializa toda la bandeja en cada
+  // foto (lo que antes congelaba el hilo y reventaba la cuota de localStorage al
+  // tomar muchas fotos, cerrando la app). Un único efecto, sin duplicados.
+  const trayStateRef = useRef({ captureTray, trayComments, trayProductCode, trayMessage, showCaptureTray })
+  useEffect(() => {
+    trayStateRef.current = { captureTray, trayComments, trayProductCode, trayMessage, showCaptureTray }
+  }, [captureTray, trayComments, trayProductCode, trayMessage, showCaptureTray])
+
+  const persistTrayNow = useCallback(() => {
+    if (!trackingCode) return
+    const s = trayStateRef.current
+    if (s.showCaptureTray && s.captureTray.length > 0) {
+      void saveTrayDraft(trackingCode, {
+        photos: s.captureTray, comments: s.trayComments, productCode: s.trayProductCode, message: s.trayMessage,
+      })
     }
   }, [trackingCode])
 
-  // Persiste la bandeja en cada cambio (durable): si el SO recarga la página,
-  // al volver se restaura. Solo guarda mientras la bandeja está abierta con
-  // fotos; al enviar/cancelar se limpia el borrador en sus handlers.
+  // Debounce: guarda ~400ms después del último cambio, no en cada foto/tecla.
   useEffect(() => {
-    if (!trackingCode) return
-    if (showCaptureTray && captureTray.length > 0) {
-      saveTrayDraft(trackingCode, {
-        photos: captureTray,
-        comments: trayComments,
-        productCode: trayProductCode,
-        message: trayMessage,
-      })
-    }
-  }, [trackingCode, showCaptureTray, captureTray, trayComments, trayProductCode, trayMessage])
+    if (!trackingCode || !showCaptureTray || captureTray.length === 0) return
+    const t = setTimeout(persistTrayNow, 400)
+    return () => clearTimeout(t)
+  }, [trackingCode, showCaptureTray, captureTray, trayComments, trayProductCode, trayMessage, persistTrayNow])
 
-  // Seguro adicional: guardar la bandeja JUSTO antes de que el SO suspenda la
-  // página (al abrir la cámara nativa se dispara `visibilitychange`/`pagehide`).
-  // Así, aunque la webview se descargue por memoria, el último estado queda a
-  // salvo en localStorage y se restaura al volver. Usa refs para leer el estado
-  // actual sin re-suscribir el listener en cada cambio.
-  const trayPersistRef = useRef<() => void>(() => {})
+  // Seguro: guardar JUSTO antes de que el SO suspenda la página (al abrir la
+  // cámara se dispara pagehide/visibilitychange). Escritura inmediata del
+  // estado actual, sin esperar el debounce.
   useEffect(() => {
-    trayPersistRef.current = () => {
-      if (trackingCode && showCaptureTray && captureTray.length > 0) {
-        saveTrayDraft(trackingCode, { photos: captureTray, comments: trayComments, productCode: trayProductCode, message: trayMessage })
-      }
-    }
-  }, [trackingCode, showCaptureTray, captureTray, trayComments, trayProductCode, trayMessage])
-  useEffect(() => {
-    const persist = () => trayPersistRef.current()
-    const onVisibility = () => { if (document.visibilityState === 'hidden') persist() }
-    window.addEventListener('pagehide', persist)
+    const onVisibility = () => { if (document.visibilityState === 'hidden') persistTrayNow() }
+    window.addEventListener('pagehide', persistTrayNow)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      window.removeEventListener('pagehide', persist)
+      window.removeEventListener('pagehide', persistTrayNow)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [])
+  }, [persistTrayNow])
 
   /**
    * Reintento manual del envío de las fotos que quedaron pendientes/sin enviar.
