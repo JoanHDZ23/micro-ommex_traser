@@ -146,7 +146,7 @@ export function WizardPage() {
         id: 'product',
         label: 'Producto',
         icon: Package,
-        color: 'from-sky-500 to-blue-600',
+        color: 'linear-gradient(135deg, #0ea5e9, #2563eb)',
         onClick: () => { setShowPlusMenu(false); setShowAddProductModal(true) }
       })
     }
@@ -155,7 +155,7 @@ export function WizardPage() {
         id: 'database',
         label: 'Base Datos',
         icon: Database,
-        color: 'from-emerald-500 to-teal-600',
+        color: 'linear-gradient(135deg, #10b981, #0d9488)',
         onClick: () => { setShowPlusMenu(false); setShowDbModal(true) }
       })
     }
@@ -164,7 +164,7 @@ export function WizardPage() {
         id: 'gallery',
         label: 'Galería',
         icon: ImageIcon,
-        color: 'from-fuchsia-500 to-purple-600',
+        color: 'linear-gradient(135deg, #d946ef, #9333ea)',
         onClick: () => { setShowPlusMenu(false); trayGalleryRef.current?.click() }
       })
     }
@@ -173,7 +173,7 @@ export function WizardPage() {
         id: 'paste',
         label: 'Pegar',
         icon: ClipboardPaste,
-        color: 'from-cyan-500 to-sky-600',
+        color: 'linear-gradient(135deg, #06b6d4, #0284c7)',
         onClick: () => { setShowPlusMenu(false); void pasteImageFromClipboard() }
       })
     }
@@ -182,7 +182,7 @@ export function WizardPage() {
         id: 'audio',
         label: 'Audio',
         icon: Mic,
-        color: 'from-orange-500 to-rose-500',
+        color: 'linear-gradient(135deg, #f97316, #f43f5e)',
         onClick: () => { setShowPlusMenu(false); setShowAudioRecorder(true) }
       })
     }
@@ -191,7 +191,7 @@ export function WizardPage() {
         id: 'catalog',
         label: 'Catálogo',
         icon: Package,
-        color: 'from-amber-400 to-orange-500',
+        color: 'linear-gradient(135deg, #fbbf24, #f97316)',
         onClick: () => { setShowPlusMenu(false); setShowCatalogPicker(true) }
       })
     }
@@ -200,7 +200,7 @@ export function WizardPage() {
         id: 'document',
         label: 'Documento',
         icon: FileText,
-        color: 'from-indigo-500 to-blue-700',
+        color: 'linear-gradient(135deg, #6366f1, #1d4ed8)',
         onClick: () => { document.getElementById('plus-menu-doc-input')?.click() }
       })
     }
@@ -209,7 +209,7 @@ export function WizardPage() {
         id: 'activity',
         label: 'Actividad',
         icon: Activity,
-        color: 'from-violet-500 to-indigo-600',
+        color: 'linear-gradient(135deg, #8b5cf6, #4f46e5)',
         onClick: () => { setShowPlusMenu(false); setShowActivityModal(true) }
       })
     }
@@ -2968,7 +2968,10 @@ export function WizardPage() {
                   onClick={item.onClick}
                   className="flex flex-col items-center gap-2 group outline-none"
                 >
-                  <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${item.color} flex items-center justify-center text-white shadow-[0_12px_24px_-12px_rgba(15,23,42,0.45)] group-active:scale-95 transition-transform`}>
+                  <div
+                    style={{ backgroundImage: item.color }}
+                    className="w-14 h-14 rounded-2xl flex items-center justify-center text-white shadow-[0_12px_24px_-12px_rgba(15,23,42,0.45)] group-active:scale-95 transition-transform"
+                  >
                     <item.icon className="w-6 h-6" />
                   </div>
                   <span className="text-[11px] text-gray-600 font-medium text-center leading-tight">

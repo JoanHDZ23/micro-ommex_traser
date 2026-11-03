@@ -200,12 +200,16 @@ export function HomePage() {
           {(() => {
             // Estilo/ícono por tipo: los por defecto tienen su look; los
             // personalizados usan un ícono y color genéricos.
-            const style: Record<string, { icon: typeof ArrowDown; from: string; to: string; accent: string }> = {
-              PRODUCTOS_ENTRANTES: { icon: ArrowDown, from: 'from-blue-500', to: 'to-sky-600', accent: 'bg-[color:var(--color-primary-bg)] text-[color:var(--color-primary)]' },
-              PRODUCTOS_SALIENTES: { icon: ArrowUp, from: 'from-emerald-500', to: 'to-teal-600', accent: 'bg-emerald-50 text-emerald-600' },
-              ACTIVIDAD: { icon: Activity, from: 'from-indigo-500', to: 'to-violet-600', accent: 'bg-indigo-50 text-indigo-600' },
+            // El gradiente del ícono se aplica con CSS inline (no con clases
+            // `from-*`/`to-*` interpoladas): Tailwind solo incluye en el build
+            // las clases que aparecen como literales en el código, por lo que un
+            // `from-${x}` dinámico NUNCA se genera y el círculo salía sin color.
+            const style: Record<string, { icon: typeof ArrowDown; gradient: string; accent: string }> = {
+              PRODUCTOS_ENTRANTES: { icon: ArrowDown, gradient: 'linear-gradient(135deg, #3b82f6, #0284c7)', accent: 'bg-[color:var(--color-primary-bg)] text-[color:var(--color-primary)]' },
+              PRODUCTOS_SALIENTES: { icon: ArrowUp, gradient: 'linear-gradient(135deg, #10b981, #0d9488)', accent: 'bg-emerald-50 text-emerald-600' },
+              ACTIVIDAD: { icon: Activity, gradient: 'linear-gradient(135deg, #6366f1, #7c3aed)', accent: 'bg-indigo-50 text-indigo-600' },
             }
-            const fallback = { icon: ClipboardList, from: 'from-slate-500', to: 'to-gray-600', accent: 'bg-slate-100 text-slate-600' }
+            const fallback = { icon: ClipboardList, gradient: 'linear-gradient(135deg, #64748b, #4b5563)', accent: 'bg-slate-100 text-slate-600' }
             // Usa los tipos configurados por la empresa (todos editables/eliminables).
             // Mientras cargan o si no hay ninguno, muestra el fallback por defecto.
             const list = opTypes.length ? opTypes : FALLBACK_OPERATION_TYPES
@@ -218,8 +222,7 @@ export function HomePage() {
                     icon={s.icon}
                     title={t.label}
                     description={t.descripcion ?? 'Registro fotográfico'}
-                    gradientFrom={s.from}
-                    gradientTo={s.to}
+                    gradient={s.gradient}
                     accentBgClass={s.accent}
                     onClick={() => navigate(`/new?type=${encodeURIComponent(t.id)}`)}
                   />
@@ -335,16 +338,14 @@ function QuickAction({
   icon: Icon,
   title,
   description,
-  gradientFrom,
-  gradientTo,
+  gradient,
   accentBgClass,
   onClick,
 }: {
   icon: React.ComponentType<{ className?: string }>
   title: string
   description: string
-  gradientFrom: string
-  gradientTo: string
+  gradient: string
   accentBgClass: string
   onClick: () => void
 }) {
@@ -355,7 +356,10 @@ function QuickAction({
         onClick={onClick}
         className="w-full flex items-center gap-4 p-4 sm:p-5 text-left focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 focus-visible:outline-none rounded-[var(--radius-lg)] relative"
       >
-        <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-xl bg-gradient-to-br ${gradientFrom} ${gradientTo} flex items-center justify-center text-white shadow-md group-hover:shadow-lg group-hover:-translate-y-0.5 transition-all`}>
+        <div
+          style={{ backgroundImage: gradient }}
+          className="w-12 h-12 sm:w-14 sm:h-14 rounded-xl flex items-center justify-center text-white shadow-md group-hover:shadow-lg group-hover:-translate-y-0.5 transition-all"
+        >
           <Icon className="w-6 h-6 sm:w-7 sm:h-7" />
         </div>
         <div className="flex-1 min-w-0">
