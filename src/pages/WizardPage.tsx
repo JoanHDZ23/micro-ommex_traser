@@ -44,6 +44,12 @@ function photoSrc(photo: Pick<PhotoRecord, 'driveUrl' | 'fileId'>, size = 400): 
   return `https://lh3.googleusercontent.com/d/${fileId}=w${size}`
 }
 
+/** Clave estable para emparejar foto remota con su espejo local. */
+function localMirrorKey(photo: { productCode?: string; clientKey?: string; timestamp: string | number }): string {
+  const isoTs = typeof photo.timestamp === 'number' ? new Date(photo.timestamp).toISOString() : photo.timestamp
+  return `${photo.productCode ?? '__general__'}::${photo.clientKey ?? isoTs}`
+}
+
 /**
  * Procesa una lista con concurrencia limitada.
  *
@@ -433,6 +439,13 @@ export function WizardPage() {
   // Buscador en la base de datos (DATA) desde la bandeja de fotos.
   const [showTrayDbSearch, setShowTrayDbSearch] = useState(false)
   const [trayDbSearchInitial, setTrayDbSearchInitial] = useState('')
+  // Siempre usamos la cámara NATIVA del dispositivo (app de cámara del SO) en
+  // lugar del capturador embebido (getUserMedia + <video> en vivo): este último
+  // mantiene un stream de video que ralentiza el dispositivo y demora el
+  // registro. La app de cámara nativa es más rápida y trae su propio
+  // enfoque/flash. Antes se detectaba por User-Agent, pero esa detección fallaba
+  // en algunos navegadores/webviews y caía al capturador lento.
+  const preferNativeMobileCamera = true
 
   // ── Adjuntos: audio, catálogo, documento (estilo WhatsApp) ──
   const [showAudioRecorder, setShowAudioRecorder] = useState(false)
@@ -758,7 +771,6 @@ export function WizardPage() {
           })
         }
         await markAsUploaded(cached.id)
-        setLocalPhotos((prev) => prev.filter((p) => p.id !== cached.id))
         await loadOperation()
       } catch { /* will show as pending with 🕐 */ }
     })()
@@ -838,7 +850,7 @@ export function WizardPage() {
       } else {
         await uploadPhotosBatch({ trackingCode, groupId, comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
       }
-      for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
+      for (const id of cachedIds) await markAsUploaded(id)
       await loadOperation()
       setFeedback(`✓ ${base64s.length} foto(s) enviada(s)`)
     } catch (err) {
@@ -853,7 +865,14 @@ export function WizardPage() {
    *  2. La foto tomada se agrega a una bandeja y se abre la revisión.
    *  3. En la revisión puedes "Tomar otra foto", escribir un mensaje y enviar.
    */
-  const openNativeCamera = () => {
+  const openNativeCamera = (productCode?: string | null) => {
+    if (typeof productCode === 'string') {
+      const normalized = productCode.trim().toUpperCase()
+      setActiveLbProduct(normalized)
+      setTrayProductCode(normalized)
+    } else if (productCode === null) {
+      setTrayProductCode(null)
+    }
     nativeCameraRef.current?.click()
   }
 
@@ -1066,7 +1085,6 @@ export function WizardPage() {
         const id = cachedByIndex.get(i)?.id
         if (!id) continue
         await markAsUploaded(id)
-        setLocalPhotos((prev) => prev.filter((p) => p.id !== id))
       }
     }
     const allCachedIndices = [...cachedByIndex.keys()]
@@ -1199,9 +1217,18 @@ export function WizardPage() {
 
   // ── Local photo cache ──
   const [localPhotos, setLocalPhotos] = useState<CachedPhoto[]>([])
-  const pendingGeneralPhotos = localPhotos.filter((p) => !p.uploaded && !p.productCode)
+  const visibleGeneralPhotos = localPhotos.filter((p) => !p.productCode)
+  const pendingGeneralPhotos = visibleGeneralPhotos.filter((p) => !p.uploaded)
   const stalledGeneralPhotos = pendingGeneralPhotos.filter((p) => (p.uploadAttempts ?? 0) >= 6)
   const syncingGeneralPhotos = pendingGeneralPhotos.length - stalledGeneralPhotos.length
+  const unresolvedLocalPhotoKeys = useMemo(
+    () => new Set(localPhotos.map((photo) => localMirrorKey(photo))),
+    [localPhotos],
+  )
+  const isServerPhotoWaitingForLocalPreview = useCallback((photo: Pick<PhotoRecord, 'productCode' | 'clientKey' | 'timestamp' | 'driveUrl' | 'fileId' | 'mediaType'>) => {
+    if ((photo.mediaType && photo.mediaType !== 'image') || photoSrc(photo, 400)) return false
+    return unresolvedLocalPhotoKeys.has(localMirrorKey(photo))
+  }, [unresolvedLocalPhotoKeys])
 
   // Clean expired photos on mount
   useEffect(() => { void cleanExpiredPhotos() }, [])
@@ -1316,7 +1343,7 @@ export function WizardPage() {
         if (key === '__general__') {
           // SIEMPRE batch (una sola petición atómica e idempotente).
           await uploadPhotosBatch({ trackingCode, groupId, comment: groupPhotos[0].comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
-          for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
+          for (const id of cachedIds) await markAsUploaded(id)
           continue
         }
 
@@ -1336,7 +1363,7 @@ export function WizardPage() {
         }
         // UNA sola petición batch para TODAS las fotos del producto (sin carrera).
         await uploadProductPhotosBatch({ trackingCode, productCode, groupId, comment: groupPhotos[0].comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
-        for (const id of cachedIds) { await markAsUploaded(id); setLocalPhotos((prev) => prev.filter((p) => p.id !== id)) }
+        for (const id of cachedIds) await markAsUploaded(id)
         lastProduct = productCode
       }
       if (lastProduct) setActiveLbProduct(lastProduct)
@@ -1371,8 +1398,6 @@ export function WizardPage() {
           body: { trackingCode, stepIndex: 0, base64Image: base64, mimeType: 'image/jpeg', comment, clientTimestamp },
         })
         await markAsUploaded(cached.id)
-        // Remove from local state since server now has it
-        setLocalPhotos((prev) => prev.filter((p) => p.id !== cached.id))
         await loadOperation()
       } catch { /* will show as pending with 🕐 */ }
     })()
@@ -2525,10 +2550,13 @@ export function WizardPage() {
           </section>
         )}
 
-        {/* Local cached photos (pending upload) */}
-        {localPhotos.filter((p) => !p.uploaded && !p.productCode).length > 0 && (
+        {/* Fotos locales del registro aún no reemplazadas por una URL remota lista. */}
+        {visibleGeneralPhotos.length > 0 && (
           <div className="space-y-2">
-            {localPhotos.filter((p) => !p.uploaded && !p.productCode).map((photo) => (
+            {visibleGeneralPhotos.map((photo) => {
+              const stalled = !photo.uploaded && (photo.uploadAttempts ?? 0) >= 6
+              const processing = photo.uploaded
+              return (
               <div key={photo.id} className="flex justify-end">
                 <div className="max-w-[85%] bg-[var(--color-primary-bg)] border border-[var(--color-primary)]/20 rounded-lg rounded-tr-none p-2 shadow-sm relative">
                   <img src={photo.dataUrl} alt="Pendiente" className="w-full rounded-md mb-1.5 max-h-48 object-cover" />
@@ -2537,11 +2565,17 @@ export function WizardPage() {
                     <span className="text-[9px] text-gray-500">
                       {new Date(photo.timestamp).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
                     </span>
-                    <span className="text-[10px] text-gray-400">🕐</span>
+                    {processing ? (
+                      <span className="text-[10px] text-amber-500">Procesando…</span>
+                    ) : stalled ? (
+                      <span className="text-[10px] text-red-500">Sin enviar</span>
+                    ) : (
+                      <span className="text-[10px] text-gray-400">🕐</span>
+                    )}
                   </div>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         )}
 
@@ -2563,12 +2597,13 @@ export function WizardPage() {
                   {group.products.map((product) => {
               const isActive = activeLbProduct === product.productCode
               // Fotos de ESTE producto que están en el cache local y aún no suben.
-              const pendingLocal = localPhotos.filter((p) => !p.uploaded && p.productCode === product.productCode)
+              const pendingLocal = localPhotos.filter((p) => p.productCode === product.productCode)
               const photos = product.photos ?? []
+              const readyServerPhotos = photos.filter((ph) => !isServerPhotoWaitingForLocalPreview(ph))
               const maxShow = 4
-              const extraCount = photos.length > maxShow ? photos.length - maxShow + 1 : 0
-              const visiblePhotos = extraCount > 0 ? photos.slice(0, maxShow - 1) : photos.slice(0, maxShow)
-              const lastVisiblePhoto = extraCount > 0 ? photos[maxShow - 1] : null
+              const extraCount = readyServerPhotos.length > maxShow ? readyServerPhotos.length - maxShow + 1 : 0
+              const visiblePhotos = extraCount > 0 ? readyServerPhotos.slice(0, maxShow - 1) : readyServerPhotos.slice(0, maxShow)
+              const lastVisiblePhoto = extraCount > 0 ? readyServerPhotos[maxShow - 1] : null
               const desc = product.labelData?.descripcion ?? ''
               const createdTime = product.createdAt ? new Date(product.createdAt).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' }) : ''
 
@@ -2592,33 +2627,34 @@ export function WizardPage() {
                     {pendingLocal.length > 0 && (
                       <div className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: pendingLocal.length === 1 ? '1fr' : '1fr 1fr' }}>
                         {pendingLocal.map((ph) => {
-                          const stalled = (ph.uploadAttempts ?? 0) >= 6
+                          const stalled = !ph.uploaded && (ph.uploadAttempts ?? 0) >= 6
+                          const processing = ph.uploaded
                           return (
                             <div key={ph.id} className="aspect-square bg-gray-200 rounded overflow-hidden relative">
                               <img src={ph.dataUrl} className="w-full h-full object-cover" />
                               <div className={`absolute inset-0 flex items-center justify-center ${stalled ? 'bg-red-900/50' : 'bg-black/35'}`}>
                                 {stalled
                                   ? <AlertCircle className="w-5 h-5 text-white" />
-                                  : <Loader2 className="w-5 h-5 text-white animate-spin" />}
+                                  : <Loader2 className={`w-5 h-5 text-white ${processing ? '' : 'animate-spin'}`} />}
                               </div>
-                              <span className={`absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded-full text-white ${stalled ? 'bg-red-600' : 'bg-black/60'}`}>
-                                {stalled ? 'Sin enviar' : 'Subiendo…'}
+                              <span className={`absolute bottom-1 left-1 text-[9px] px-1.5 py-0.5 rounded-full text-white ${stalled ? 'bg-red-600' : processing ? 'bg-amber-500' : 'bg-black/60'}`}>
+                                {stalled ? 'Sin enviar' : processing ? 'Procesando…' : 'Subiendo…'}
                               </span>
                             </div>
                           )
                         })}
                       </div>
                     )}
-                    {pendingLocal.some((p) => (p.uploadAttempts ?? 0) >= 6) && (
+                    {pendingLocal.some((p) => !p.uploaded && (p.uploadAttempts ?? 0) >= 6) && (
                       <button type="button" onClick={() => void retryPendingPhotos()}
                         className="w-full mt-0.5 py-1.5 rounded-lg bg-red-50 text-red-600 text-[11px] font-semibold flex items-center justify-center gap-1.5 hover:bg-red-100 transition-colors">
                         <RefreshCw className="w-3.5 h-3.5" /> Reintentar envío de fotos
                       </button>
                     )}
 
-                    {photos.length > 0 && (
+                    {readyServerPhotos.length > 0 && (
                       <button type="button" onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
-                        className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: photos.length === 1 ? '1fr' : '1fr 1fr' }}>
+                        className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: readyServerPhotos.length === 1 ? '1fr' : '1fr 1fr' }}>
                         {visiblePhotos.map((ph, idx) => (
                           <div key={idx} className="aspect-square bg-gray-200 rounded overflow-hidden relative">
                             {photoSrc(ph, 400) ? (
@@ -2687,7 +2723,7 @@ export function WizardPage() {
                           <Camera className="w-3 h-3" />
                           {photos.length + pendingLocal.length === 0
                             ? 'Agregar fotos'
-                            : isActive ? 'Ocultar' : `${photos.length + pendingLocal.length} foto(s)${pendingLocal.length ? ` (${pendingLocal.length} subiendo)` : ''}`}
+                            : isActive ? 'Ocultar' : `${readyServerPhotos.length + pendingLocal.length} foto(s)${pendingLocal.length ? ` (${pendingLocal.length} pendientes)` : ''}`}
                         </button>
                         <div className="flex items-center gap-1">
                           <span className="text-[10px] text-gray-500">{createdTime}</span>
@@ -2751,9 +2787,11 @@ export function WizardPage() {
                     {isActive && (
                       <div className="px-2.5 pb-2 space-y-2 border-t border-gray-200">
                         {/* Individual photos with delete */}
-                        {photos.length > 0 && (
+                        {photos.some((ph) => !isServerPhotoWaitingForLocalPreview(ph)) && (
                           <div className="grid grid-cols-3 gap-1 pt-2">
-                            {photos.map((ph, phIdx) => (
+                            {photos.map((ph, phIdx) => {
+                              if (isServerPhotoWaitingForLocalPreview(ph)) return null
+                              return (
                               <div key={phIdx} className="relative aspect-square rounded overflow-hidden bg-gray-200">
                                 {photoSrc(ph, 200) ? (
                                   <img src={photoSrc(ph, 200)!}
@@ -2771,17 +2809,26 @@ export function WizardPage() {
                                   <X className="w-2.5 h-2.5 text-white" />
                                 </button>
                               </div>
-                            ))}
+                            )})}
                           </div>
                         )}
                         {/* Add photo buttons */}
                         <div className="flex items-center gap-2 pt-1">
                           <button type="button" disabled={uploading}
-                            onClick={() => { setActiveLbProduct(product.productCode); setLbCameraOpen(true) }}
+                            onClick={() => {
+                              setActiveLbProduct(product.productCode)
+                              if (preferNativeMobileCamera) {
+                                openNativeCamera(product.productCode)
+                              } else {
+                                setLbCameraOpen(true)
+                              }
+                            }}
                             className="flex-1 py-2 rounded-lg bg-[var(--color-primary)] text-white text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
                             <Camera className="w-3.5 h-3.5" /> Foto
                           </button>
-                          <label className="flex-1 py-2 rounded-lg border border-[#075e54] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
+                          <label
+                            onClick={() => setActiveLbProduct(product.productCode)}
+                            className="flex-1 py-2 rounded-lg border border-[#075e54] text-[var(--color-primary)] text-xs font-medium flex items-center justify-center gap-1.5 cursor-pointer">
                             📁 Galería
                             <input ref={lbFileInputRef} type="file" accept="image/*" multiple className="hidden"
                               disabled={uploading} onChange={(e) => void handleNativeCapture(e, true)} />
@@ -2843,7 +2890,14 @@ export function WizardPage() {
                   {/* Add photo buttons — disponible aunque la operación esté completada */}
                   <div className="flex items-center gap-2 pt-1">
                     <button type="button" disabled={uploading}
-                      onClick={() => { setActiveLbProduct(p.productCode); setLbCameraOpen(true) }}
+                      onClick={() => {
+                        setActiveLbProduct(p.productCode)
+                        if (preferNativeMobileCamera) {
+                          openNativeCamera(p.productCode)
+                        } else {
+                          setLbCameraOpen(true)
+                        }
+                      }}
                       className="flex-1 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-[11px] font-medium flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50">
                       <Camera className="w-3.5 h-3.5" /> Foto
                     </button>
@@ -3010,9 +3064,18 @@ export function WizardPage() {
                 <Send className="w-4 h-4 text-white" />
               </button>
             )}
-            {/* Camera button — abre la MISMA cámara in-app que usan los productos,
-                en modo multi-captura (varias fotos + vincular producto sin salir). */}
-            <button type="button" onClick={() => { setChatMessage(''); setShowCamera(true) }}
+            {/* Cámara: en móvil usa la cámara nativa del celular y vuelve a la
+                bandeja de revisión; en escritorio se conserva la cámara embebida. */}
+            <button
+              type="button"
+              onClick={() => {
+                setChatMessage('')
+                if (preferNativeMobileCamera) {
+                  openNativeCamera(null)
+                } else {
+                  setShowCamera(true)
+                }
+              }}
               className="w-9 h-9 rounded-full bg-[var(--color-primary)] flex items-center justify-center cursor-pointer flex-shrink-0"
               aria-label="Abrir cámara">
               <Camera className="w-5 h-5 text-white" />
@@ -3672,7 +3735,7 @@ export function WizardPage() {
                   </div>
                 ))}
                 {/* Tomar otra foto (cámara) */}
-                <button onClick={openNativeCamera}
+                <button onClick={() => openNativeCamera()}
                   className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 text-gray-500 hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]">
                   <Camera className="w-6 h-6" />
                   <span className="text-[10px] font-medium">Otra foto</span>
@@ -3852,7 +3915,7 @@ export function WizardPage() {
                   </button>
                 ))}
                 {/* Agregar otra foto desde el visor */}
-                <button type="button" onClick={openNativeCamera} aria-label="Tomar otra foto"
+                <button type="button" onClick={() => openNativeCamera()} aria-label="Tomar otra foto"
                   className="w-11 h-11 rounded-md border-2 border-dashed border-white/40 flex items-center justify-center flex-shrink-0 text-white/70">
                   <Camera className="w-5 h-5" />
                 </button>
@@ -3936,7 +3999,7 @@ export function WizardPage() {
       {/* Camera for general photos — misma cámara in-app, en modo multi-captura:
           permite tomar varias fotos seguidas y, sin salir, escanear/buscar un
           producto en la DATA para vincularlas. */}
-      {showCamera && (
+      {showCamera && !preferNativeMobileCamera && (
         <CameraCapture stepName="Registro fotográfico" stepIndex={0}
           stamp={stampOpts.stamp} stampParts={stampOpts.stampParts}
           multi
@@ -3976,7 +4039,7 @@ export function WizardPage() {
 
       {/* Camera for Línea Blanca — multi-captura para el producto activo.
           Permite escanear/buscar y cambiar de producto sin cortar la secuencia. */}
-      {lbCameraOpen && activeLbProduct && (
+      {lbCameraOpen && activeLbProduct && !preferNativeMobileCamera && (
         <CameraCapture stepName={`Foto de ${activeLbProduct}`} stepIndex={activeLbData?.photos.length ?? 0}
           stamp={stampOpts.stamp} stampParts={stampOpts.stampParts}
           multi
