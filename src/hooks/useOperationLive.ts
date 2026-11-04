@@ -35,6 +35,9 @@ export function useOperationLive(trackingCode: string | undefined, opts: Options
   const [operation, setOperation] = useState<Operation | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Firma ligera del último estado aplicado. Evita re-renderizar TODO el
+  // registro cuando el polling trae exactamente la misma operación.
+  const lastSignatureRef = useRef<string>('')
 
   // Ref a onData para no recrear el fetch cada render.
   const onDataRef = useRef(opts.onData)
@@ -46,22 +49,20 @@ export function useOperationLive(trackingCode: string | undefined, opts: Options
   const fetchOnce = useCallback(async () => {
     if (!trackingCode || inFlightRef.current) return
     inFlightRef.current = true
-    
-    // Intenta cargar desde la caché local de apiRequest para respuesta instantánea (Req 1)
-    if (!operation) {
-      const cached = localStorage.getItem(`ommex_get_cache:/operations/${trackingCode}`)
-      if (cached) {
-        try { 
-          const data = JSON.parse(cached)
-          setOperation(data)
-          setLoading(false)
-        } catch { /* noop */ }
-      }
-    }
 
     try {
       const op = await apiRequest<Operation>(`/operations/${trackingCode}`)
-      setOperation(op)
+      const signature = [
+        op.updatedAt,
+        op.status,
+        op.photos?.length ?? 0,
+        op.lineaBlanca?.length ?? 0,
+        op.lineaBlanca?.map((p) => `${p.productCode}:${p.status}:${p.photos?.length ?? 0}`).join('|') ?? '',
+      ].join('::')
+      if (lastSignatureRef.current !== signature) {
+        lastSignatureRef.current = signature
+        setOperation(op)
+      }
       setError(null)
       onDataRef.current?.(op)
     } catch (err) {

@@ -118,13 +118,14 @@ export function WizardPage() {
   const { trackingCode } = useParams<{ trackingCode: string }>()
   const navigate = useNavigate()
 
-  // Retroceso: si hay historial, vuelve atrás; si no, al inicio.
+  // Retroceso: respeta el historial interno del módulo. Si hay una pantalla
+  // anterior dentro de trazabilidad (Registro/Detalle/Documentos…), vuelve a
+  // ella; si el formulario es la primera entrada (p. ej. enlace directo o
+  // recarga), va al inicio para no salir del módulo.
   const goBack = () => {
-    if (window.history.length > 1) {
-      navigate(-1)
-    } else {
-      navigate('/')
-    }
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0
+    if (idx > 0) navigate(-1)
+    else navigate('/', { replace: true })
   }
 
   const [operation, setOperation] = useState<Operation | null>(null)
@@ -355,13 +356,13 @@ export function WizardPage() {
   // Opciones de estampado que respetan los ajustes del registro, para pasar a
   // compressImageToBase64 y a la cámara.
   const stampOpts = useMemo(() => ({
-    stamp: recordSettings.watermark,
+    stamp: features.watermark && recordSettings.watermark,
     stampParts: {
-      date: recordSettings.watermarkDate,
-      time: recordSettings.watermarkTime,
-      location: recordSettings.watermarkLocation,
+      date: features.watermarkDate && recordSettings.watermarkDate,
+      time: features.watermarkTime && recordSettings.watermarkTime,
+      location: features.watermarkLocation && recordSettings.watermarkLocation,
     },
-  }), [recordSettings])
+  }), [features, recordSettings])
   // Ref siempre actualizado, para usarlo dentro de callbacks memorizados.
   const stampOptsRef = useRef(stampOpts)
   useEffect(() => { stampOptsRef.current = stampOpts }, [stampOpts])
@@ -3529,25 +3530,27 @@ export function WizardPage() {
           </p>
 
           {/* Marca de agua ON/OFF */}
-          <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-gray-200">
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-gray-800">Marca de agua</p>
-              <p className="text-[11px] text-gray-500">Estampar fecha, hora y ubicación en las fotos.</p>
-            </div>
-            <input type="checkbox" checked={recordSettings.watermark}
-              onChange={(e) => updateRecordSetting({ watermark: e.target.checked })}
-              className="w-5 h-5 accent-[var(--color-primary)] flex-shrink-0" />
-          </label>
+          {features.watermark && (
+            <label className="flex items-center justify-between gap-3 p-3 rounded-xl border border-gray-200">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-800">Marca de agua</p>
+                <p className="text-[11px] text-gray-500">Estampar fecha, hora y ubicación en las fotos.</p>
+              </div>
+              <input type="checkbox" checked={recordSettings.watermark}
+                onChange={(e) => updateRecordSetting({ watermark: e.target.checked })}
+                className="w-5 h-5 accent-[var(--color-primary)] flex-shrink-0" />
+            </label>
+          )}
 
-          {/* Partes del sello (solo si la marca está activa) */}
-          {recordSettings.watermark && (
+          {/* Partes del sello (solo si la marca está activa y el root lo permite) */}
+          {features.watermark && recordSettings.watermark && (
             <div className="space-y-2 pl-1">
               <p className="text-[11px] font-semibold text-gray-500 uppercase">Qué incluir en el sello</p>
-              {([
+              {(([
                 { key: 'watermarkDate', label: 'Fecha' },
                 { key: 'watermarkTime', label: 'Hora' },
                 { key: 'watermarkLocation', label: 'Ubicación (dirección y coordenadas)' },
-              ] as const).map((row) => (
+              ] as const).filter(row => features[row.key])).map((row) => (
                 <label key={row.key} className="flex items-center justify-between gap-3 p-2.5 rounded-lg border border-gray-100">
                   <span className="text-sm text-gray-700">{row.label}</span>
                   <input type="checkbox" checked={recordSettings[row.key]}

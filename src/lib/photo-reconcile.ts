@@ -15,6 +15,9 @@
 export interface ServerPhotoLike {
   clientKey?: string
   timestamp: string
+  driveUrl?: string
+  fileId?: string
+  mediaType?: string
 }
 
 /** Mínimo necesario de una foto local (cache) para reconciliar. */
@@ -25,6 +28,17 @@ export interface LocalPhotoLike {
   timestamp: number
 }
 
+/** True cuando la foto del servidor ya tiene una fuente que el cliente puede renderizar. */
+function isServerPhotoVisuallyReady(photo: ServerPhotoLike): boolean {
+  if (photo.mediaType && photo.mediaType !== 'image') return true
+  const driveUrl = photo.driveUrl
+  if (driveUrl && driveUrl !== 'pending-verification' && /^https?:\/\//.test(driveUrl)) return true
+  const fileId = photo.fileId
+  if (!fileId || fileId === 'pending' || fileId === 'note') return false
+  if (fileId.includes('/')) return false
+  return true
+}
+
 /**
  * Devuelve el conjunto de claves (clientKey + timestamps ISO) presentes en el
  * servidor, considerando tanto las fotos generales como las de producto.
@@ -33,6 +47,7 @@ export function serverKeySets(photos: ServerPhotoLike[]): { clientKeys: Set<stri
   const clientKeys = new Set<string>()
   const timestamps = new Set<string>()
   for (const p of photos) {
+    if (!isServerPhotoVisuallyReady(p)) continue
     if (p.clientKey) clientKeys.add(p.clientKey)
     if (p.timestamp) timestamps.add(p.timestamp)
   }
@@ -50,8 +65,9 @@ export function pendingLocalPhotos<T extends LocalPhotoLike>(
 ): T[] {
   const { clientKeys, timestamps } = serverKeySets(serverPhotos)
   return local.filter((c) => {
-    if (c.uploaded) return false
-    // Confirmada por clientKey → ya está en el servidor, se descarta.
+    // Solo se oculta la miniatura local cuando la foto del servidor ya puede
+    // verse realmente. Si la red se cae en medio y el backend devuelve una
+    // foto "confirmada" pero sin URL usable, mantenemos la local visible.
     if (c.clientKey && clientKeys.has(c.clientKey)) return false
     // Respaldo para fotos sin clientKey: match por timestamp ISO.
     if (!c.clientKey && timestamps.has(new Date(c.timestamp).toISOString())) return false

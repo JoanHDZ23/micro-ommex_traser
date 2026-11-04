@@ -62,6 +62,7 @@
 }
 
 :root {
+  --app-height: 100dvh;
   --color-primary: #2563eb;        /* Azul Klock */
   --color-primary-light: #3b82f6;  /* Azul claro */
   --color-primary-dark: #1d4ed8;   /* Azul oscuro */
@@ -153,20 +154,47 @@ body {
   background-color: var(--color-bg);
   color: var(--color-text);
   min-height: 100vh; /* fallback navegadores antiguos */
-  min-height: 100dvh;
+  min-height: var(--app-height);
+  overflow-x: hidden;
 }
 
 #root {
   min-height: 100vh; /* fallback navegadores antiguos */
-  min-height: 100dvh;
+  min-height: var(--app-height);
   display: flex;
   flex-direction: column;
+  width: 100%;
+}
+
+html {
+  min-height: 100%;
+  background-color: var(--color-bg);
+}
+
+body,
+#root {
+  width: 100%;
+}
+
+/* Shell principal: usa la altura real de la ventana visual del dispositivo.
+   Esto evita cortes o espacios raros en WebViews donde 100vh/100dvh reporta un
+   valor distinto al área visible real. */
+.app-shell {
+  min-height: 100vh;
+  min-height: var(--app-height);
+  height: var(--app-height);
+}
+
+.app-main {
+  min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Fallbacks de altura para clases utilitarias (navegadores sin soporte dvh) */
 @supports not (height: 100dvh) {
   .h-\[100dvh\] { height: 100vh; }
   .min-h-\[100dvh\] { min-height: 100vh; }
+  :root { --app-height: 100vh; }
 }
 
 /* Camera overlay */

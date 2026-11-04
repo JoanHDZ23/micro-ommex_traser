@@ -126,7 +126,7 @@ export default function App() {
 
   if (missingIdentity) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
+      <div className="flex items-center justify-center p-4 bg-gray-50" style={{ minHeight: 'var(--app-height, 100dvh)' }}>
         <div className="w-full max-w-sm bg-white rounded-2xl p-6 space-y-4 shadow-xl text-center">
           <div className="text-3xl">🏢</div>
           <h3 className="text-base font-bold text-gray-800">No se pudo identificar la empresa</h3>
@@ -148,7 +148,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <ErrorBoundary>
-      <Suspense fallback={<div className="flex-1 flex items-center justify-center p-8"><LoadingState label="Cargando…" /></div>}>
+      <Suspense fallback={<div className="flex-1 flex items-center justify-center p-8" style={{ minHeight: 'var(--app-height, 100dvh)' }}><LoadingState label="Cargando…" /></div>}>
         <Routes>
           {/* Public share route — no auth needed */}
           <Route path="/share/:trackingCode" element={<SharePage />} />

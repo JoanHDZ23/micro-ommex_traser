@@ -20,6 +20,11 @@ export type TracerFeatures = {
   addProduct: boolean
   selectImage: boolean
   pasteImage: boolean
+  /** Marca de agua en fotos (peso del root). */
+  watermark: boolean
+  watermarkDate: boolean
+  watermarkTime: boolean
+  watermarkLocation: boolean
   loading: boolean
 }
 
@@ -27,14 +32,18 @@ let cached: TracerFeatures | null = null
 let cacheCompanyId = ''
 const subscribers = new Set<() => void>()
 
+// Canal de comunicación entre pestañas para refrescar features al instante (Req 5.8).
+const refreshChannel = typeof window !== 'undefined' ? new BroadcastChannel('ommex_tracer_refresh') : null
+if (refreshChannel) {
+  refreshChannel.onmessage = (event) => {
+    if (event.data === 'refresh') invalidateTracerFeaturesCache()
+  }
+}
+
 /**
  * Invalida la caché de features y notifica a los hooks activos para que
  * vuelvan a consultar el backend. Se usa cuando el panel root envía una
- * señal de refresco por postMessage.
- *
- * Nota (Req 5.8): NO se borra la caché aquí. Solo se dispara la recarga; la
- * caché se reemplaza únicamente si la recarga tiene éxito. Así, si la red
- * falla, se conserva la última copia válida en vez de caer a estado vacío.
+ * señal de refresco por postMessage o BroadcastChannel.
  */
 export function invalidateTracerFeaturesCache() {
   for (const fn of subscribers) fn()
@@ -55,6 +64,7 @@ export function useTracerFeatures(): TracerFeatures {
       locationsEnabled: false,
       // Acciones base: default-on mientras carga, para no "parpadear" ocultándolas.
       addProduct: true, selectImage: true, pasteImage: true,
+      watermark: true, watermarkDate: true, watermarkTime: true, watermarkLocation: true,
       loading: true,
     }
   })
@@ -72,6 +82,7 @@ export function useTracerFeatures(): TracerFeatures {
             whatsappDocument?: boolean; markerEditor?: boolean; registrarActividad?: boolean
             locationsEnabled?: boolean
             addProduct?: boolean; selectImage?: boolean; pasteImage?: boolean
+            watermark?: boolean; watermarkDate?: boolean; watermarkTime?: boolean; watermarkLocation?: boolean
           }>(`/settings/features?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{ emailTo: string }>(`/settings/email?companyId=${encodeURIComponent(companyId)}`),
         ])
@@ -92,6 +103,10 @@ export function useTracerFeatures(): TracerFeatures {
           addProduct: feat.addProduct ?? true,
           selectImage: feat.selectImage ?? true,
           pasteImage: feat.pasteImage ?? true,
+          watermark: feat.watermark ?? true,
+          watermarkDate: feat.watermarkDate ?? true,
+          watermarkTime: feat.watermarkTime ?? true,
+          watermarkLocation: feat.watermarkLocation ?? true,
           loading: false,
         }
         cached = next
@@ -113,7 +128,9 @@ export function useTracerFeatures(): TracerFeatures {
         whatsappTrazabilidad: false, whatsappUnified: false, whatsappAudio: false, whatsappCatalog: false,
         whatsappDocument: false, markerEditor: false, registrarActividad: false,
         locationsEnabled: false,
-        addProduct: true, selectImage: true, pasteImage: true, loading: false,
+        addProduct: true, selectImage: true, pasteImage: true,
+        watermark: true, watermarkDate: true, watermarkTime: true, watermarkLocation: true,
+        loading: false,
       })
       return () => { cancelled = true; subscribers.delete(onInvalidate) }
     }

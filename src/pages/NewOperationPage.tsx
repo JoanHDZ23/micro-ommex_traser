@@ -148,7 +148,10 @@ export function NewOperationPage() {
         method: 'POST',
         body: payload,
       })
-      navigate(`/wizard/${result.trackingCode}`, { replace: true })
+      // Sin `replace`: se conserva la entrada de "Registro" en el historial para
+      // que el botón/gesto atrás del dispositivo vuelva a esta pantalla
+      // (Formulario → Registro → Inicio) en lugar de saltar al inicio.
+      navigate(`/wizard/${result.trackingCode}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al crear operación.')
     } finally {

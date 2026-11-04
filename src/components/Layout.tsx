@@ -16,9 +16,9 @@ export function Layout() {
   }, [])
 
   return (
-    <div className="flex flex-col h-[100dvh]">
+    <div className="app-shell flex flex-col">
       <OfflineBanner />
-      <main className="flex-1 min-h-0 overflow-y-auto">
+      <main className="app-main flex-1 min-h-0 overflow-y-auto">
         <Outlet />
       </main>
     </div>
