@@ -1,6 +1,9 @@
 import { MongoClient, type Db, type Collection } from 'mongodb'
 
-const MONGODB_URI = process.env.MONGODB_URI ?? 'mongodb://localhost:27017'
+const MONGODB_URI = process.env.MONGODB_URI ?? ''
+if (!MONGODB_URI) {
+  throw new Error('MONGODB_URI no está definido. Configúralo como variable de entorno.')
+}
 const DB_NAME = process.env.MONGODB_DB_NAME ?? 'pluscargo_logging'
 
 let client: MongoClient | null = null
