@@ -21,10 +21,17 @@ function installAppHeightVar(): void {
   window.addEventListener('orientationchange', apply)
 }
 
-/** Detecta errores típicos de chunks viejos o assets del bundle invalidados. */
+/**
+ * Detecta errores de carga de CHUNKS del bundle (deploy nuevo con SW viejo).
+ * Es estricto a propósito: NO incluye "Failed to fetch dynamically imported
+ * module" genérico, porque ese mensaje también aparece cuando una librería lazy
+ * puntual (OCR, scanner) no carga por red lenta DURANTE una acción del usuario
+ * (p. ej. al tomar/subir fotos), y recargar ahí cerraba la vista a mitad del
+ * flujo. Solo recargamos ante errores inequívocos de chunk del router.
+ */
 function isStaleAssetError(err: unknown): boolean {
   const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err)
-  return /ChunkLoadError|Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(msg)
+  return /ChunkLoadError|Loading chunk [\d]+ failed|Importing a module script failed/i.test(msg)
 }
 
 /** Limpia el SW y los caches antes de recargar una sola vez. */
@@ -57,9 +64,8 @@ getCompanyId()
 installAppHeightVar()
 
 // Valida la identidad y obtiene el token de sesión. Arranca el heartbeat que
-// mantiene viva la sesión (y el backend) mientras la app esté abierta. Solo
-// cierra la sesión si la app estuvo cerrada por completo más de 1 hora. No
-// bloquea el render.
+// mantiene vivo el backend mientras la app esté abierta. La sesión no expira.
+// No bloquea el render.
 void initAuth()
 
 // Arranca el seguimiento de ubicación en segundo plano desde el inicio, para

@@ -14,9 +14,9 @@ import { getCompanyId } from '../lib/context'
  * La cámara puede entregar 4K, pero mantener strings de ese tamaño en el estado
  * de React congela el dispositivo. 1600px es suficiente para trazabilidad.
  */
-const MAX_CAPTURE_DIM = 1600
+const MAX_CAPTURE_DIM = 1280
 /** Calidad JPEG del frame capturado (0–1). */
-const CAPTURE_QUALITY = 0.85
+const CAPTURE_QUALITY = 0.78
 
 /** Foto capturada dentro de la bandeja de la cámara (modo multi-captura). */
 export interface CapturedPhoto {
@@ -382,8 +382,13 @@ export function CameraCapture({
         if (coords && !address) void getAddress(coords) // precarga para la próxima
       } catch { /* si falla la marca, se conserva la foto sin sello */ }
     }
-    // Calidad 0.85 sobre una imagen ya acotada: nítida y mucho más ligera.
-    setPreview(canvas.toDataURL('image/jpeg', CAPTURE_QUALITY))
+    // Imagen ya acotada: nítida y ligera. Libera el buffer del canvas de
+    // inmediato (no espera al GC) para no acumular memoria entre capturas, que
+    // en el iframe de poca RAM llegaba a cerrar la vista.
+    const dataUrl = canvas.toDataURL('image/jpeg', CAPTURE_QUALITY)
+    canvas.width = 0
+    canvas.height = 0
+    setPreview(dataUrl)
     setShowCommentInput(true)
 
     // Apaga la linterna si la encendimos solo para esta foto (flash, no linterna
@@ -604,7 +609,7 @@ export function CameraCapture({
         </div>
       ) : preview ? (
         <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
-          <img src={preview} alt="Preview" className="max-w-full max-h-full object-contain" />
+          <img src={preview} alt="Preview" decoding="async" className="max-w-full max-h-full object-contain" />
         </div>
       ) : (
         <>
@@ -653,7 +658,7 @@ export function CameraCapture({
           <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
             {tray.map((p, i) => (
               <div key={i} className="relative flex-shrink-0">
-                <img src={p.dataUrl} className="w-16 h-16 rounded-lg object-cover border-2 border-white/60" />
+                <img src={p.dataUrl} loading="lazy" decoding="async" className="w-16 h-16 rounded-lg object-cover border-2 border-white/60" />
                 <span className={`absolute left-0 right-0 bottom-0 px-1 py-0.5 text-[8px] font-semibold text-white text-center truncate rounded-b-md ${p.productCode ? 'bg-emerald-600/90' : 'bg-black/60'}`}>
                   {p.productCode ?? 'General'}
                 </span>
