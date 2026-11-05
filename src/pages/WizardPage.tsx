@@ -4108,31 +4108,38 @@ export function WizardPage() {
                 onChange={(e) => setTrayCommentAt(trayFullIdx!, e.target.value)}
                 placeholder="Añade un comentario…"
                 className="flex-1 bg-transparent text-white text-sm placeholder-white/50 focus:outline-none"
-                autoFocus
               />
             </div>
 
-            {/* Tira de miniaturas + botón enviar */}
-            <div className="flex items-end gap-2">
-              <div className="flex-1 flex items-center gap-1.5 overflow-x-auto py-1">
-                {captureTray.map((src, i) => (
-                  <button key={i} type="button" onClick={() => setTrayFullIdx(i)}
-                    className={`relative w-11 h-11 rounded-md overflow-hidden flex-shrink-0 ${i === trayFullIdx ? 'ring-2 ring-white' : 'opacity-70'}`}>
-                    <img src={src} className="w-full h-full object-cover" />
-                    {trayComments[i]?.trim() && (
-                      <span className="absolute bottom-0 right-0 w-3 h-3 rounded-tl bg-[var(--color-primary)] flex items-center justify-center">
-                        <MessageCircle className="w-2 h-2 text-white" />
-                      </span>
-                    )}
-                  </button>
-                ))}
-                {/* Agregar otra foto desde el visor */}
-                <button type="button" onClick={() => openNativeCamera()} aria-label="Tomar otra foto"
-                  className="w-11 h-11 rounded-md border-2 border-dashed border-white/40 flex items-center justify-center flex-shrink-0 text-white/70">
-                  <Camera className="w-5 h-5" />
+            {/* Tira de miniaturas (solo navegación entre fotos tomadas) */}
+            <div className="flex items-center gap-1.5 overflow-x-auto py-1">
+              {captureTray.map((src, i) => (
+                <button key={i} type="button" onClick={() => setTrayFullIdx(i)}
+                  className={`relative w-11 h-11 rounded-md overflow-hidden flex-shrink-0 ${i === trayFullIdx ? 'ring-2 ring-white' : 'opacity-70'}`}>
+                  <img src={src} className="w-full h-full object-cover" />
+                  {trayComments[i]?.trim() && (
+                    <span className="absolute bottom-0 right-0 w-3 h-3 rounded-tl bg-[var(--color-primary)] flex items-center justify-center">
+                      <MessageCircle className="w-2 h-2 text-white" />
+                    </span>
+                  )}
                 </button>
-              </div>
-              {/* Enviar toda la bandeja */}
+              ))}
+            </div>
+
+            {/* Acciones principales: "Tomar otra" (ráfaga de un toque) + Enviar.
+                La cámara nativa exige un gesto del usuario para reabrirse, así
+                que en vez de reabrir sola tras cada disparo mostramos un botón
+                grande y prominente: un toque = otra foto, sin buscar el icono
+                pequeño ni cerrar el visor (Opción 2a "tomar y seguir"). */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => openNativeCamera()}
+                disabled={captureTray.length >= MAX_TRAY_PHOTOS}
+                className="flex-1 h-12 rounded-full bg-white/15 text-white font-semibold text-sm flex items-center justify-center gap-2 active:scale-95 disabled:opacity-40">
+                <Camera className="w-5 h-5" />
+                {captureTray.length >= MAX_TRAY_PHOTOS ? 'Límite alcanzado' : 'Tomar otra'}
+              </button>
               <button
                 onClick={() => void sendCaptureTray()}
                 disabled={traySending || captureTray.length === 0}
