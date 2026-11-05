@@ -1043,6 +1043,49 @@ export function WizardPage() {
     })
   }, [operation?.companyId])
 
+  /**
+   * Opción 5: aplica un código ESCANEADO al producto de la bandeja SIN pasar por
+   * el modal. Primero lo asigna de inmediato (respuesta instantánea) y, si hay
+   * una tabla DATA fijada, lo resuelve en segundo plano para usar el código
+   * canónico de la tabla (por si el código de barras trae ceros/guiones de más).
+   * No bloquea: si la DATA no responde, se queda el código tal cual se escaneó.
+   */
+  const applyScannedProductToTray = useCallback((rawCode: string) => {
+    const code = rawCode.trim().toUpperCase()
+    if (!code) return
+    const assign = (value: string) => {
+      setTrayProductCode(value)
+      setTrayProductPrefilled(false)
+      setTrayPhotoProducts((prev) => {
+        if (trayFullIdxRef.current === null) return prev
+        const next = [...prev]
+        while (next.length <= trayFullIdxRef.current) next.push(null)
+        next[trayFullIdxRef.current] = value
+        return next
+      })
+    }
+    // 1) Asignación inmediata con lo escaneado (no se espera a la DATA).
+    assign(code)
+    const cid = operation?.companyId || getCompanyId()
+    rememberLastProduct(cid, code)
+    // 2) Enriquecimiento opcional contra la DATA fijada (best-effort).
+    const sheetId = recordSettingsRef.current.dbSheetId
+    if (!sheetId || !cid) return
+    const cols = getDbCols()
+    void searchInSheet({ sheetId, companyId: cid, q: code, codeColumn: cols.codeColumn, descColumn: cols.extra[0] ?? cols.descColumn, limit: 5 })
+      .then((r) => {
+        const exact = r.results.find((it) => it.code.trim().toUpperCase() === code)
+        const match = exact ?? (r.results.length === 1 ? r.results[0] : undefined)
+        if (!match) return
+        const canonical = match.code.trim()
+        if (canonical && canonical.toUpperCase() !== code) {
+          assign(canonical)
+          rememberLastProduct(cid, canonical)
+        }
+      })
+      .catch(() => { /* sin conexión: se mantiene el código escaneado */ })
+  }, [operation?.companyId, getDbCols])
+
   // Pega imagen(es) desde el portapapeles usando la Clipboard API (funciona en
   // móvil, donde el evento 'paste' no se dispara). Requiere un gesto del usuario
   // (tocar el botón) y permiso del portapapeles.
@@ -3977,15 +4020,7 @@ export function WizardPage() {
               <div className="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
-                  onClick={() => {
-                    // Con base de datos fijada, escanear abre el buscador DATA
-                    // (valida: uno/varios/ninguno). Sin DB, escáner directo.
-                    if (recordSettings.dbSheetId) {
-                      setTrayDbSearchInitial(''); setShowTrayDbSearch(true)
-                    } else {
-                      setShowTrayScanner(true)
-                    }
-                  }}
+                  onClick={() => setShowTrayScanner(true)}
                   className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors"
                 >
                   <QrCode className="w-4 h-4" />
@@ -4106,6 +4141,8 @@ export function WizardPage() {
               const current = trayPhotoProducts[trayFullIdx] ?? null
               return (
                 <div className="flex items-center gap-2">
+                  {/* Chip del producto actual: toca para buscar por texto en la
+                      DATA (o, sin DATA fijada, abre el escáner). */}
                   <button
                     type="button"
                     onClick={() => { if (recordSettings.dbSheetId) { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) } else { setShowTrayScanner(true) } }}
@@ -4114,12 +4151,16 @@ export function WizardPage() {
                     <Package className="w-3.5 h-3.5 flex-shrink-0" />
                     <span className="truncate">{current ? current : 'General (sin producto)'}</span>
                   </button>
+                  {/* Opción 5: ESCANEAR directo. Un toque abre la cámara de
+                      código de barras sin pasar por ningún modal, con o sin
+                      DATA fijada. Al leer, el código se asigna al instante y (si
+                      hay DATA) se resuelve en segundo plano. */}
                   <button
                     type="button"
-                    onClick={() => { if (recordSettings.dbSheetId) { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) } else { setShowTrayScanner(true) } }}
-                    className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full bg-amber-400/90 text-black text-xs font-semibold"
-                    aria-label="Escanear o cambiar producto">
-                    <QrCode className="w-3.5 h-3.5" /> {current ? 'Cambiar' : 'Vincular'}
+                    onClick={() => setShowTrayScanner(true)}
+                    className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full bg-amber-400/90 text-black text-xs font-semibold active:scale-95"
+                    aria-label="Escanear código de barras del producto">
+                    <QrCode className="w-3.5 h-3.5" /> Escanear
                   </button>
                   {current && (
                     <button type="button"
@@ -4191,19 +4232,10 @@ export function WizardPage() {
         <BarcodeScanner
           onResult={(code) => {
             setShowTrayScanner(false)
-            const c = code.trim().toUpperCase()
-            setTrayProductCode(c)
-            setTrayProductPrefilled(false)
-            // Opción 4: recuerda este producto para el siguiente registro.
-            rememberLastProduct(operation?.companyId || getCompanyId(), c)
-            // Opción A: aplica a la foto visible y hereda para las siguientes.
-            setTrayPhotoProducts((prev) => {
-              if (trayFullIdxRef.current === null) return prev
-              const next = [...prev]
-              while (next.length <= trayFullIdxRef.current) next.push(null)
-              next[trayFullIdxRef.current] = c
-              return next
-            })
+            // Opción 5: asigna el código al instante y, si hay DATA fijada, lo
+            // resuelve en segundo plano al código canónico. También recuerda el
+            // producto (Opción 4) y lo hereda para las siguientes fotos.
+            applyScannedProductToTray(code)
           }}
           onClose={() => setShowTrayScanner(false)}
         />
