@@ -4140,9 +4140,25 @@ export function WizardPage() {
                   su propio comentario. Toca cada foto para comentarla aparte. */}
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-gray-600">Comentario general (opcional)</label>
+                {/* Opción 8: plantillas de comentario rápido. Un toque aplica el
+                    texto guardado al comentario general. */}
+                {templates.length > 0 && (
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                    {templates.map((tpl) => (
+                      <button
+                        key={tpl.id}
+                        type="button"
+                        onClick={() => { saveTemplate(tpl.text); setTemplates(getFrequentTemplates()); setTrayMessage(tpl.text) }}
+                        className="flex-shrink-0 px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 text-[11px] whitespace-nowrap active:scale-95 max-w-[11rem] truncate">
+                        {tpl.text}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <textarea
                   value={trayMessage}
                   onChange={(e) => setTrayMessage(e.target.value)}
+                  onBlur={() => { const t = trayMessage.trim(); if (t.length > 3) { saveTemplate(t); setTemplates(getFrequentTemplates()) } }}
                   placeholder="Comentario para las fotos sin texto propio… (toca una foto para comentarla aparte)"
                   rows={2}
                   className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 resize-none" />
@@ -4274,6 +4290,23 @@ export function WizardPage() {
               {trayOcrRunning ? 'Leyendo etiqueta…' : 'Leer etiqueta (OCR)'}
             </button>
 
+            {/* Opción 8: plantillas de comentario rápido. Chips de los textos
+                más usados: un toque aplica la plantilla al comentario de ESTA
+                foto. Se alimentan solos con lo que escribes (ver onBlur). */}
+            {templates.length > 0 && (
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                {templates.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => { saveTemplate(tpl.text); setTemplates(getFrequentTemplates()); setTrayCommentAt(trayFullIdx!, tpl.text) }}
+                    className="flex-shrink-0 px-3 py-1 rounded-full bg-white/10 text-white/80 text-xs whitespace-nowrap active:scale-95 max-w-[11rem] truncate">
+                    {tpl.text}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* Barra de comentario */}
             <div className="flex items-center gap-2 bg-white/10 rounded-full px-3 py-2">
               <MessageCircle className="w-4 h-4 text-white/60 flex-shrink-0" />
@@ -4281,6 +4314,12 @@ export function WizardPage() {
                 type="text"
                 value={trayComments[trayFullIdx] ?? ''}
                 onChange={(e) => setTrayCommentAt(trayFullIdx!, e.target.value)}
+                onBlur={() => {
+                  // Guarda el comentario como plantilla reutilizable (igual que
+                  // la barra de chat), para que la próxima vez esté a un toque.
+                  const t = (trayComments[trayFullIdx!] ?? '').trim()
+                  if (t.length > 3) { saveTemplate(t); setTemplates(getFrequentTemplates()) }
+                }}
                 placeholder="Añade un comentario…"
                 className="flex-1 bg-transparent text-white text-sm placeholder-white/50 focus:outline-none"
               />
