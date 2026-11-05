@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, Search, Send, SlidersHorizontal, Trash2, Wifi, WifiOff, X } from 'lucide-react'
-import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, warmSheetCache, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
+import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, warmSheetCache, getReceivedProducts, markProductReceived, unmarkProductReceived, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { DbProductSearch } from '../components/DbProductSearch'
@@ -1481,8 +1481,59 @@ export function WizardPage() {
   const isCompleted = operation?.status === 'COMPLETADO'
   // Reabierto desde completado: status = EN_PROCESO pero conserva completedAt.
   const wasCompleted = !isCompleted && Boolean(operation?.completedAt)
+
+  // Ref siempre al día de `operation`, para leerlo dentro de callbacks/intervalos
+  // (p. ej. el sync oportunista o el refresh de recibidos) sin meter `operation`
+  // en sus deps y recrearlos en cada polling.
+  const operationRef = useRef(operation)
+  useEffect(() => { operationRef.current = operation }, [operation])
+
   const lbProducts = operation?.lineaBlanca ?? []
   const activeLbData = lbProducts.find((p) => p.productCode === activeLbProduct)
+
+  // ── Productos RECIBIDOS (compartido por empresa, Opción: marcar recibido) ──
+  // Mapa productCode → info de quién/cuándo lo marcó. Se carga del servidor y se
+  // refresca con el polling para que TODOS los empleados lo vean en vivo.
+  const [receivedMap, setReceivedMap] = useState<Map<string, { receivedBy: string; receivedAt: string }>>(new Map())
+  const receivedMapRef = useRef(receivedMap)
+  useEffect(() => { receivedMapRef.current = receivedMap }, [receivedMap])
+  const refreshReceived = useCallback(async () => {
+    const cid = operationRef.current?.companyId || getCompanyId()
+    if (!cid) return
+    try {
+      const list = await getReceivedProducts(cid)
+      const m = new Map<string, { receivedBy: string; receivedAt: string }>()
+      for (const r of list) m.set(r.productCode, { receivedBy: r.receivedBy, receivedAt: r.receivedAt })
+      setReceivedMap(m)
+    } catch { /* sin conexión: se mantiene el último estado conocido */ }
+  }, [])
+  // Carga inicial + refresco cuando cambia la operación (el polling actualiza
+  // `operation`, lo que dispara este efecto para refrescar los recibidos).
+  useEffect(() => { void refreshReceived() }, [refreshReceived, operation])
+
+  // Marca/desmarca un producto como recibido (toggle). Persiste en el servidor
+  // (compartido por empresa) y actualiza el estado local al instante.
+  const [receivedBusy, setReceivedBusy] = useState<Set<string>>(new Set())
+  const toggleReceived = useCallback(async (productCode: string) => {
+    const cid = operationRef.current?.companyId || getCompanyId()
+    if (!cid || !trackingCode) return
+    // Bloquea el botón para este producto (evita doble-clic).
+    setReceivedBusy((prev) => new Set(prev).add(productCode))
+    const isReceived = receivedMapRef.current.has(productCode)
+    try {
+      if (isReceived) {
+        await unmarkProductReceived(cid, productCode)
+        setReceivedMap((prev) => { const n = new Map(prev); n.delete(productCode); return n })
+      } else {
+        const r = await markProductReceived(cid, productCode, trackingCode)
+        setReceivedMap((prev) => new Map(prev).set(productCode, { receivedBy: r.receivedBy, receivedAt: r.receivedAt }))
+      }
+    } catch {
+      setFeedback('No se pudo actualizar el estado de recibido. Revisa la conexión.')
+    } finally {
+      setReceivedBusy((prev) => { const n = new Set(prev); n.delete(productCode); return n })
+    }
+  }, [trackingCode])
 
   // Refresco en tiempo real estilo WhatsApp (Req 2): polling con pausa por
   // visibilidad. El hook mantiene `operation` al día sin tocar el estado de UI
@@ -1496,12 +1547,6 @@ export function WizardPage() {
     setLoading(live.operation ? false : live.loading)
     setError(live.operation ? null : live.error)
   }, [live.operation, live.loading, live.error])
-
-  // Ref siempre al día de `operation`, para leerlo dentro de callbacks/intervalos
-  // (p. ej. el sync oportunista) sin meter `operation` en sus deps y recrearlos
-  // en cada polling.
-  const operationRef = useRef(operation)
-  useEffect(() => { operationRef.current = operation }, [operation])
 
   // Mantiene el nombre `loadOperation` para los flujos existentes: fuerza un
   // refresco inmediato reutilizando el polling del hook (misma fuente de datos).
@@ -3195,6 +3240,21 @@ export function WizardPage() {
                           </span>
                         )}
                       </button>
+                      {/* Recibido (compartido por empresa): marca visible para todos */}
+                      {(() => {
+                        const info = receivedMap.get(product.productCode)
+                        const busy = receivedBusy.has(product.productCode)
+                        return (
+                          <button
+                            onClick={() => void toggleReceived(product.productCode)}
+                            disabled={busy}
+                            title={info ? `Recibido por ${info.receivedBy} el ${new Date(info.receivedAt).toLocaleString('es-CO')}` : 'Marcar como recibido (visible para toda la empresa)'}
+                            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium disabled:opacity-50 ${info ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'}`}>
+                            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                            {info ? 'Recibido' : 'Recibido'}
+                          </button>
+                        )
+                      })()}
                     </div>
 
                     {/* Expanded: photo list + add photo */}
@@ -3354,6 +3414,21 @@ export function WizardPage() {
                         <X className="w-3 h-3" /> Desvincular
                       </button>
                     )}
+                    {/* Recibido (compartido por empresa): marca visible para todos */}
+                    {(() => {
+                      const info = receivedMap.get(p.productCode)
+                      const busy = receivedBusy.has(p.productCode)
+                      return (
+                        <button
+                          onClick={() => void toggleReceived(p.productCode)}
+                          disabled={busy}
+                          title={info ? `Recibido por ${info.receivedBy} el ${new Date(info.receivedAt).toLocaleString('es-CO')}` : 'Marcar como recibido (visible para toda la empresa)'}
+                          className={`px-2 py-1 rounded text-[10px] font-medium flex items-center gap-1 disabled:opacity-50 ${info ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'}`}>
+                          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                          {info ? 'Recibido' : 'Marcar recibido'}
+                        </button>
+                      )
+                    })()}
                   </div>
                 </div>
               )

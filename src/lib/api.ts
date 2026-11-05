@@ -522,6 +522,51 @@ export interface SheetSearchResult {
   sheetName?: string
 }
 
+// ── Productos marcados como RECIBIDOS (compartido por empresa) ─────────────
+
+export interface ReceivedProduct {
+  productCode: string
+  receivedBy: string
+  receivedAt: string
+  trackingCode?: string
+}
+
+/**
+ * Lista los productos marcados como recibidos por toda la empresa. El
+ * frontend la consulta (y refresca con el polling) para mostrar la marca a
+ * TODOS los empleados, no solo a quien la puso.
+ */
+export async function getReceivedProducts(companyId: string): Promise<ReceivedProduct[]> {
+  const r = await apiRequest<{ received: ReceivedProduct[] }>(
+    `/received?companyId=${encodeURIComponent(companyId)}`,
+  )
+  return r.received ?? []
+}
+
+/** Marca un producto como recibido para toda la empresa (idempotente). */
+export async function markProductReceived(
+  companyId: string,
+  productCode: string,
+  trackingCode?: string,
+): Promise<ReceivedProduct> {
+  const r = await apiRequest<{ received: ReceivedProduct }>(`/received`, {
+    method: 'POST',
+    body: { companyId, productCode, trackingCode },
+  })
+  return r.received
+}
+
+/** Desmarca un producto (quita la marca de recibido) para toda la empresa. */
+export async function unmarkProductReceived(
+  companyId: string,
+  productCode: string,
+): Promise<void> {
+  await apiRequest(
+    `/received/${encodeURIComponent(productCode)}?companyId=${encodeURIComponent(companyId)}`,
+    { method: 'DELETE' },
+  )
+}
+
 /**
  * Descarga y guarda una copia local (snapshot) de una tabla de la DATA para
  * poder consultarla SIN conexión (búsqueda/escaneo en campo con la cámara).
