@@ -81,6 +81,34 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
+/**
+ * Convierte un dataURL (data:image/...;base64,XXXX) en un objectURL `blob:`.
+ *
+ * Por qué (Opción 11): renderizar muchos `<img src>` con dataURLs base64 obliga
+ * al navegador a mantener el string base64 completo EN MEMORIA por cada <img>
+ * (decodificado + la cadena), lo que dispara el uso de RAM con varias fotos en
+ * móviles de gama baja. Un objectURL es una referencia ligera a un Blob, mucho
+ * más barata de renderizar. El dataURL base64 se conserva como fuente de verdad
+ * (persistencia/subida/OCR/editor); el objectURL es SOLO para pintar la imagen.
+ *
+ * Devuelve null si el `src` no es un dataURL (p. ej. una URL http del servidor,
+ * que se usa tal cual al editar una foto ya subida).
+ */
+function dataUrlToObjectUrl(src: string): string | null {
+  if (!src.startsWith('data:')) return null
+  try {
+    const [head, b64] = src.split(',')
+    if (!b64) return null
+    const mime = head.match(/data:([^;]+)/)?.[1] ?? 'image/jpeg'
+    const bin = atob(b64)
+    const bytes = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+    return URL.createObjectURL(new Blob([bytes], { type: mime }))
+  } catch {
+    return null
+  }
+}
+
 const WIZARD_GUIDE: GuideStep[] = [
   {
     emoji: '💬',
@@ -971,6 +999,43 @@ export function WizardPage() {
   useEffect(() => { captureTrayLenRef.current = captureTray.length }, [captureTray.length])
   useEffect(() => { captureTrayRef.current = captureTray }, [captureTray])
   useEffect(() => { trayFullIdxRef.current = trayFullIdx }, [trayFullIdx])
+
+  // ── Opción 11: objectURLs para RENDER (no para datos) ──────────────────────
+  // Mapa dataURL(base64) → objectURL(blob:) usado SOLO en los <img> de la
+  // bandeja. captureTray sigue siendo la fuente de verdad en base64; esto solo
+  // aligera el pintado. Un ref guarda las URLs creadas para revocarlas (evita
+  // fugas de memoria) cuando una foto sale de la bandeja o al desmontar.
+  const [trayObjectUrls, setTrayObjectUrls] = useState<Record<string, string>>({})
+  const trayObjectUrlsRef = useRef<Record<string, string>>({})
+  useEffect(() => { trayObjectUrlsRef.current = trayObjectUrls }, [trayObjectUrls])
+  useEffect(() => {
+    const prev = trayObjectUrlsRef.current
+    const next: Record<string, string> = {}
+    // Reusa el objectURL existente de cada dataURL presente; crea los que falten.
+    for (const src of captureTray) {
+      if (!src.startsWith('data:')) continue // URL de servidor: se usa directa
+      if (next[src]) continue // dataURL duplicado en la tanda: un solo blob
+      const existing = prev[src]
+      if (existing) { next[src] = existing; continue }
+      const obj = dataUrlToObjectUrl(src)
+      if (obj) next[src] = obj
+    }
+    // Revoca los objectURLs de dataURLs que ya no están en la bandeja.
+    for (const [src, url] of Object.entries(prev)) {
+      if (!next[src]) URL.revokeObjectURL(url)
+    }
+    setTrayObjectUrls(next)
+    // Nota: no incluimos `trayObjectUrls` en deps (se lee por ref) para no
+    // entrar en bucle; el efecto corre cuando cambia la bandeja.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captureTray])
+  // Al desmontar el componente, revoca TODOS los objectURLs pendientes.
+  useEffect(() => () => {
+    for (const url of Object.values(trayObjectUrlsRef.current)) URL.revokeObjectURL(url)
+  }, [])
+  // Devuelve el objectURL de render para un src de la bandeja (o el propio src
+  // si es una URL de servidor o aún no se generó el blob).
+  const traySrc = (src: string): string => (src.startsWith('data:') ? (trayObjectUrls[src] ?? src) : src)
 
   // Cada imagen se comprime y se le graba la marca de agua (fecha/hora/ubicación),
   // igual que las fotos tomadas con la cámara. Si hay un producto activo o la
@@ -4027,7 +4092,7 @@ export function WizardPage() {
                         agregarle un comentario opcional (estilo WhatsApp). */}
                     <button type="button" onClick={() => setTrayFullIdx(i)} aria-label="Abrir foto y agregar comentario"
                       className="absolute inset-0 w-full h-full">
-                      <img src={src} className="w-full h-full object-cover" />
+                      <img src={traySrc(src)} className="w-full h-full object-cover" />
                     </button>
                     {/* Producto al que está vinculada esta foto (Opción A). */}
                     <span className={`absolute top-0 inset-x-0 px-1 py-0.5 text-[8px] font-semibold text-white text-center truncate ${trayPhotoProducts[i] ? 'bg-emerald-600/90' : 'bg-black/50'}`}>
@@ -4232,7 +4297,7 @@ export function WizardPage() {
 
           {/* Imagen */}
           <div className="flex-1 min-h-0 flex items-center justify-center px-2">
-            <img src={captureTray[trayFullIdx]} alt={`Foto ${trayFullIdx + 1}`} className="max-w-full max-h-full object-contain" />
+            <img src={traySrc(captureTray[trayFullIdx])} alt={`Foto ${trayFullIdx + 1}`} className="max-w-full max-h-full object-contain" />
           </div>
 
           {/* Pie: producto activo + comentario + miniaturas + enviar */}
@@ -4330,7 +4395,7 @@ export function WizardPage() {
               {captureTray.map((src, i) => (
                 <button key={i} type="button" onClick={() => setTrayFullIdx(i)}
                   className={`relative w-11 h-11 rounded-md overflow-hidden flex-shrink-0 ${i === trayFullIdx ? 'ring-2 ring-white' : 'opacity-70'}`}>
-                  <img src={src} className="w-full h-full object-cover" />
+                  <img src={traySrc(src)} className="w-full h-full object-cover" />
                   {trayComments[i]?.trim() && (
                     <span className="absolute bottom-0 right-0 w-3 h-3 rounded-tl bg-[var(--color-primary)] flex items-center justify-center">
                       <MessageCircle className="w-2 h-2 text-white" />
