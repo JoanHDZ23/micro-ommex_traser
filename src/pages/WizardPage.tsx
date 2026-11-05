@@ -245,6 +245,10 @@ export function WizardPage() {
   const [showCaptureTray, setShowCaptureTray] = useState(false)
   const [trayMessage, setTrayMessage] = useState('')
   const [traySending, setTraySending] = useState(false)
+  // Progreso REAL de subida de la tanda (Opción 10): fotos ya confirmadas por
+  // el servidor sobre el total. null = no se está subiendo. Alimenta la barra
+  // de progreso del botón "Enviar" en vez del texto genérico "Subiendo…".
+  const [trayUploadProgress, setTrayUploadProgress] = useState<{ done: number; total: number } | null>(null)
   // Índice de la foto de la bandeja que se está editando con el marcador.
   const [trayEditIdx, setTrayEditIdx] = useState<number | null>(null)
 
@@ -1329,6 +1333,7 @@ export function WizardPage() {
       } catch (err) {
         setFeedback(err instanceof Error ? err.message : 'Error al actualizar la foto. Quedó guardada en este dispositivo.')
       } finally {
+        setTrayUploadProgress(null)
         setTraySending(false)
         sendTrayBusyRef.current = false
       }
@@ -1359,6 +1364,8 @@ export function WizardPage() {
 
     const totalPhotos = groups.reduce((s, g) => s + g.idxs.length, 0)
     setFeedback(totalPhotos > 1 ? `⏳ Subiendo ${totalPhotos} fotos...` : '⏳ Subiendo foto...')
+    // Opción 10: inicia el progreso real (0 de N). Se actualiza por grupo.
+    setTrayUploadProgress({ done: 0, total: totalPhotos })
 
     let okCount = 0
     let failed = false
@@ -1382,6 +1389,8 @@ export function WizardPage() {
         }
         await settle(g.idxs)
         okCount += g.idxs.length
+        // Opción 10: avanza la barra con las fotos ya confirmadas por el servidor.
+        setTrayUploadProgress((prev) => (prev ? { ...prev, done: Math.min(prev.total, prev.done + g.idxs.length) } : prev))
       } catch {
         // Este grupo falló (sin conexión): sus fotos quedan en cache y se
         // reintentan solas con su producto. Seguimos con los demás grupos.
@@ -1399,6 +1408,7 @@ export function WizardPage() {
     } else {
       setFeedback(`✓ ${okCount} foto(s) enviada(s)`)
     }
+    setTrayUploadProgress(null)
     setTraySending(false)
     sendTrayBusyRef.current = false
   }
@@ -4140,6 +4150,22 @@ export function WizardPage() {
               </div>
             </div>
 
+            {/* Opción 10: progreso real de subida (fotos confirmadas / total). */}
+            {trayUploadProgress && trayUploadProgress.total > 0 && (
+              <div className="flex-shrink-0 px-4 pt-2 space-y-1">
+                <div className="flex items-center justify-between text-[11px] text-gray-500">
+                  <span>Subiendo fotos…</span>
+                  <span>{trayUploadProgress.done} / {trayUploadProgress.total}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div
+                    className="h-full bg-[var(--color-primary)] transition-all duration-300"
+                    style={{ width: `${Math.round((trayUploadProgress.done / trayUploadProgress.total) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex-shrink-0 flex items-center gap-2 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-gray-200 bg-white">
               <button onClick={cancelCaptureTray} disabled={traySending}
                 className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 disabled:opacity-50">
@@ -4297,6 +4323,22 @@ export function WizardPage() {
                 {traySending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
               </button>
             </div>
+
+            {/* Opción 10: progreso real de subida (fotos confirmadas / total). */}
+            {trayUploadProgress && trayUploadProgress.total > 0 && (
+              <div className="space-y-1 pt-0.5">
+                <div className="flex items-center justify-between text-[11px] text-white/70">
+                  <span>Subiendo fotos…</span>
+                  <span>{trayUploadProgress.done} / {trayUploadProgress.total}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-white/15 overflow-hidden">
+                  <div
+                    className="h-full bg-[var(--color-primary)] transition-all duration-300"
+                    style={{ width: `${Math.round((trayUploadProgress.done / trayUploadProgress.total) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
