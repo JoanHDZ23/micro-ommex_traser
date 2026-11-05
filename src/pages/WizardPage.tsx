@@ -4026,8 +4026,35 @@ export function WizardPage() {
             <img src={captureTray[trayFullIdx]} alt={`Foto ${trayFullIdx + 1}`} className="max-w-full max-h-full object-contain" />
           </div>
 
-          {/* Pie: comentario + miniaturas + enviar */}
+          {/* Pie: producto activo + comentario + miniaturas + enviar */}
           <div className="flex-shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 space-y-2.5">
+            {/* Barra de PRODUCTO ACTIVO: permite vincular/cambiar el producto de
+                las fotos SIN salir del visor ni dejar de tomar. Toca el chip o
+                "Escanear" para cambiar de producto en medio de la ráfaga. */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { if (recordSettings.dbSheetId) { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) } else { setShowTrayScanner(true) } }}
+                className={`flex-1 min-w-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${trayProductCode ? 'bg-emerald-500/90 text-white' : 'bg-white/10 text-white/80'}`}
+              >
+                <Package className="w-3.5 h-3.5 flex-shrink-0" />
+                <span className="truncate">{trayProductCode ? trayProductCode : 'General (sin producto)'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => { if (recordSettings.dbSheetId) { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) } else { setShowTrayScanner(true) } }}
+                className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full bg-amber-400/90 text-black text-xs font-semibold"
+                aria-label="Escanear o cambiar producto">
+                <QrCode className="w-3.5 h-3.5" /> {trayProductCode ? 'Cambiar' : 'Vincular'}
+              </button>
+              {trayProductCode && (
+                <button type="button" onClick={() => setTrayProductCode(null)} aria-label="Quitar producto"
+                  className="flex-shrink-0 w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white/80">
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
             {/* Barra de comentario */}
             <div className="flex items-center gap-2 bg-white/10 rounded-full px-3 py-2">
               <MessageCircle className="w-4 h-4 text-white/60 flex-shrink-0" />
@@ -4085,9 +4112,11 @@ export function WizardPage() {
         />
       )}
 
-      {/* Buscar en la base de datos (DATA) desde la bandeja: uno/varios/ninguno */}
+      {/* Buscar en la base de datos (DATA) desde la bandeja: uno/varios/ninguno.
+          z-[99] para quedar POR ENCIMA del visor a pantalla completa (z-98),
+          así se puede cambiar de producto sin cerrar el visor. */}
       {showTrayDbSearch && recordSettings.dbSheetId && (
-        <div className="fixed inset-0 z-[97] bg-black/50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[99] bg-black/50 flex items-center justify-center p-4">
           <div className="w-full max-w-sm bg-white rounded-2xl p-5 space-y-4 shadow-xl">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2">
