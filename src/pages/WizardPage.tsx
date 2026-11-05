@@ -957,11 +957,15 @@ export function WizardPage() {
   const activeProductRef = useRef<string | null>(null)
   // Longitud actual de la bandeja, leída dentro de callbacks estables (deps []).
   const captureTrayLenRef = useRef(0)
+  // Fotos actuales de la bandeja (dataURLs), leídas dentro de callbacks
+  // estables (p. ej. el OCR de la foto visible) sin recrearlos en cada render.
+  const captureTrayRef = useRef<string[]>([])
   // Índice de la foto visible en el visor (para aplicarle el producto elegido).
   const trayFullIdxRef = useRef<number | null>(null)
   useEffect(() => { trayProductRef.current = trayProductCode }, [trayProductCode])
   useEffect(() => { activeProductRef.current = activeLbProduct }, [activeLbProduct])
   useEffect(() => { captureTrayLenRef.current = captureTray.length }, [captureTray.length])
+  useEffect(() => { captureTrayRef.current = captureTray }, [captureTray])
   useEffect(() => { trayFullIdxRef.current = trayFullIdx }, [trayFullIdx])
 
   // Cada imagen se comprime y se le graba la marca de agua (fecha/hora/ubicación),
@@ -1085,6 +1089,64 @@ export function WizardPage() {
       })
       .catch(() => { /* sin conexión: se mantiene el código escaneado */ })
   }, [operation?.companyId, getDbCols])
+
+  // Flag de OCR en curso sobre la foto de la bandeja (deshabilita el botón).
+  const [trayOcrRunning, setTrayOcrRunning] = useState(false)
+
+  /**
+   * Opción 6: lee la etiqueta de la FOTO VISIBLE en el visor con OCR y
+   * autocompleta campos. Con `parseLabelText` separa PO/SKU/SSCC/DESC y, si
+   * encuentra un código de producto (código de etiqueta > SKU > PO), lo vincula
+   * a la foto. El resto de campos detectados se vuelca como comentario legible
+   * para no perder información. Trabaja sobre la dataURL ya tomada (sin volver a
+   * abrir la cámara); la binarización interna del OCR tolera la marca de agua.
+   */
+  const runTrayLabelOcr = useCallback(async () => {
+    const idx = trayFullIdxRef.current
+    if (idx === null) return
+    const src = captureTrayRef.current[idx]
+    if (!src) return
+    setTrayOcrRunning(true)
+    setFeedback('🔍 Leyendo la etiqueta de la foto…')
+    try {
+      const { extractTextFromLabel, parseLabelText } = await import('../lib/ocr-scanner')
+      const raw = await extractTextFromLabel(src)
+      const fields = parseLabelText(raw)
+      // Código candidato para vincular: el más específico disponible.
+      const candidate = fields.codigoEtiqueta || fields.sku || fields.poNumber || null
+      if (candidate) applyScannedProductToTray(candidate)
+      // Resumen legible de lo detectado → comentario de la foto (sin pisar lo
+      // que el usuario ya hubiera escrito: se concatena).
+      const parts: string[] = []
+      if (fields.poNumber) parts.push(`PO: ${fields.poNumber}`)
+      if (fields.sku) parts.push(`SKU: ${fields.sku}`)
+      if (fields.sscc) parts.push(`SSCC: ${fields.sscc}`)
+      if (fields.np) parts.push(`NP: ${fields.np}`)
+      if (fields.qty) parts.push(`QTY: ${fields.qty}`)
+      if (fields.transportadora) parts.push(`Transp: ${fields.transportadora}`)
+      if (fields.destinatario) parts.push(`Dest: ${fields.destinatario}`)
+      if (fields.descripcion) parts.push(fields.descripcion)
+      const summary = parts.join(' · ')
+      if (summary) {
+        setTrayComments((prev) => {
+          const next = [...prev]
+          while (next.length <= idx) next.push('')
+          const existing = (next[idx] ?? '').trim()
+          next[idx] = existing ? `${existing} · ${summary}` : summary
+          return next
+        })
+      }
+      if (candidate || summary) {
+        setFeedback(candidate ? `✓ Etiqueta leída. Producto: ${candidate}` : '✓ Datos de la etiqueta agregados al comentario')
+      } else {
+        setFeedback('No se detectaron datos. Prueba con más luz y enfoque en la etiqueta.')
+      }
+    } catch {
+      setFeedback('No se pudo leer la etiqueta.')
+    } finally {
+      setTrayOcrRunning(false)
+    }
+  }, [applyScannedProductToTray])
 
   // Pega imagen(es) desde el portapapeles usando la Clipboard API (funciona en
   // móvil, donde el evento 'paste' no se dispara). Requiere un gesto del usuario
@@ -4173,6 +4235,18 @@ export function WizardPage() {
                 </div>
               )
             })()}
+
+            {/* Opción 6: leer la etiqueta de ESTA foto con OCR y autocompletar.
+                Vincula el producto detectado y vuelca PO/SKU/SSCC/DESC en el
+                comentario. Trabaja sobre la foto ya tomada (no reabre cámara). */}
+            <button
+              type="button"
+              onClick={() => void runTrayLabelOcr()}
+              disabled={trayOcrRunning}
+              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-full bg-sky-500/90 text-white text-xs font-semibold active:scale-95 disabled:opacity-50">
+              {trayOcrRunning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+              {trayOcrRunning ? 'Leyendo etiqueta…' : 'Leer etiqueta (OCR)'}
+            </button>
 
             {/* Barra de comentario */}
             <div className="flex items-center gap-2 bg-white/10 rounded-full px-3 py-2">
