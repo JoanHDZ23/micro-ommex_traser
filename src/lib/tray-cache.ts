@@ -32,7 +32,8 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 h
 export interface TrayDraft {
   photos: string[]          // dataURLs de las fotos (restauradas desde IndexedDB)
   comments: string[]        // comentario por foto (paralelo a photos)
-  productCode: string | null
+  photoProducts: (string | null)[] // producto por foto (null = general)
+  productCode: string | null       // producto "activo" al guardar (compat)
   message: string
   savedAt: number
 }
@@ -41,6 +42,7 @@ export interface TrayDraft {
 interface TrayMeta {
   keys: string[]            // claves de las fotos guardadas en IndexedDB (orden)
   comments: string[]
+  photoProducts?: (string | null)[]
   productCode: string | null
   message: string
   savedAt: number
@@ -129,6 +131,7 @@ export async function saveTrayDraft(trackingCode: string, draft: Omit<TrayDraft,
     const meta: TrayMeta = {
       keys,
       comments: (draft.comments ?? []).slice(0, MAX_TRAY_PHOTOS),
+      photoProducts: (draft.photoProducts ?? []).slice(0, MAX_TRAY_PHOTOS),
       productCode: draft.productCode ?? null,
       message: draft.message ?? '',
       savedAt: Date.now(),
@@ -157,6 +160,7 @@ export async function loadTrayDraft(trackingCode: string): Promise<TrayDraft | n
     return {
       photos: present,
       comments: present.map((_, i) => meta.comments[i] ?? ''),
+      photoProducts: present.map((_, i) => meta.photoProducts?.[i] ?? null),
       productCode: meta.productCode ?? null,
       message: typeof meta.message === 'string' ? meta.message : '',
       savedAt: meta.savedAt ?? Date.now(),

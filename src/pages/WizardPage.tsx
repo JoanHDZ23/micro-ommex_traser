@@ -234,6 +234,10 @@ export function WizardPage() {
   // Comentario OPCIONAL por cada foto de la bandeja (paralelo a captureTray).
   // Estilo WhatsApp: cada foto puede llevar su propio texto.
   const [trayComments, setTrayComments] = useState<string[]>([])
+  // Producto vinculado POR foto (paralelo a captureTray). null = general.
+  // Permite mezclar varios productos en una misma tanda: cada foto recuerda el
+  // producto que estaba activo al tomarla y al enviar se agrupan por producto.
+  const [trayPhotoProducts, setTrayPhotoProducts] = useState<(string | null)[]>([])
   // Índice de la foto que se está viendo a pantalla completa (visor estilo
   // WhatsApp con barra "Añade un comentario…"). null = visor cerrado.
   const [trayFullIdx, setTrayFullIdx] = useState<number | null>(null)
@@ -904,12 +908,16 @@ export function WizardPage() {
       // Comprime/redimensiona para subida rápida y para mostrar la miniatura.
       const base64 = await compressImageToBase64(file, stampOpts)
       const dataUrl = `data:image/jpeg;base64,${base64}`
+      // Producto activo AL MOMENTO de tomar la foto (ref para leer el valor
+      // actual sin depender del render). Así cada foto recuerda su producto.
+      const photoProduct = trayProductRef.current
       let nextIdx = 0
       setCaptureTray((prev) => {
         nextIdx = prev.length
         return [...prev, dataUrl]
       })
       setTrayComments((prev) => [...prev, ''])
+      setTrayPhotoProducts((prev) => [...prev, photoProduct])
       setShowCaptureTray(true)
       setTrayFullIdx(nextIdx)
     } catch {
@@ -920,6 +928,7 @@ export function WizardPage() {
   const removeTrayPhoto = (idx: number) => {
     setCaptureTray((prev) => prev.filter((_, i) => i !== idx))
     setTrayComments((prev) => prev.filter((_, i) => i !== idx))
+    setTrayPhotoProducts((prev) => prev.filter((_, i) => i !== idx))
   }
 
   /** Actualiza el comentario opcional de la foto `idx` de la bandeja. */
@@ -939,9 +948,12 @@ export function WizardPage() {
   const activeProductRef = useRef<string | null>(null)
   // Longitud actual de la bandeja, leída dentro de callbacks estables (deps []).
   const captureTrayLenRef = useRef(0)
+  // Índice de la foto visible en el visor (para aplicarle el producto elegido).
+  const trayFullIdxRef = useRef<number | null>(null)
   useEffect(() => { trayProductRef.current = trayProductCode }, [trayProductCode])
   useEffect(() => { activeProductRef.current = activeLbProduct }, [activeLbProduct])
   useEffect(() => { captureTrayLenRef.current = captureTray.length }, [captureTray.length])
+  useEffect(() => { trayFullIdxRef.current = trayFullIdx }, [trayFullIdx])
 
   // Cada imagen se comprime y se le graba la marca de agua (fecha/hora/ubicación),
   // igual que las fotos tomadas con la cámara. Si hay un producto activo o la
@@ -963,6 +975,7 @@ export function WizardPage() {
     // Resuelve el destino (producto vinculado > producto activo > generales).
     const dest = resolveTrayDestination(trayProductRef.current, activeProductRef.current)
     if (dest) setTrayProductCode(dest)
+    const photoProduct = dest ?? trayProductRef.current
     setShowCaptureTray(true)
     // Comprime las imágenes de UNA EN UNA (concurrencia 1): decodificar 2
     // bitmaps full-res a la vez es un pico de RAM grande que, con varias fotos,
@@ -982,6 +995,7 @@ export function WizardPage() {
         return [...prev, ...dataUrls]
       })
       setTrayComments((prev) => [...prev, ...dataUrls.map(() => '')])
+      setTrayPhotoProducts((prev) => [...prev, ...dataUrls.map(() => photoProduct)])
       if (dataUrls.length === 1) setTrayFullIdx(nextIdx)
     }
     if (failed) setFeedback(`No se pudieron procesar ${failed} imagen(es)`)
@@ -1003,7 +1017,17 @@ export function WizardPage() {
   // DbProductSearch no recree su búsqueda en cada render del wizard (polling).
   const handleTrayDbSelect = useCallback((item: SheetSearchItem) => {
     setShowTrayDbSearch(false)
-    setTrayProductCode(item.code.trim())
+    const code = item.code.trim()
+    setTrayProductCode(code)
+    // Opción A: aplica el producto a la foto que se está viendo en el visor
+    // (si hay una abierta); las siguientes que tomes heredarán este producto.
+    setTrayPhotoProducts((prev) => {
+      if (trayFullIdxRef.current === null) return prev
+      const next = [...prev]
+      while (next.length <= trayFullIdxRef.current) next.push(null)
+      next[trayFullIdxRef.current] = code
+      return next
+    })
   }, [])
 
   // Pega imagen(es) desde el portapapeles usando la Clipboard API (funciona en
@@ -1089,16 +1113,20 @@ export function WizardPage() {
     const message = trayMessage.trim()
     const photos = [...captureTray]
     const comments = [...trayComments]
+    // Producto POR foto (Opción A): cada foto conserva el producto que estaba
+    // activo al tomarla; null = general. Al enviar se agrupan por producto.
+    const photoProducts = captureTray.map((_, i) => trayPhotoProducts[i] ?? null)
     // Comentario efectivo de la foto `i`: el comentario propio de la foto si lo
     // tiene; si no, el mensaje global solo para la primera (compatibilidad).
     const commentAt = (i: number) => (comments[i]?.trim() ? comments[i].trim() : (i === 0 ? message : ''))
     const editingIdx = trayEditingPhotoIdx
-    const linkedProduct = trayProductCode
 
     // ── 1) PERSISTENCIA PRIMERO ──
     // Guarda TODAS las fotos nuevas en el dispositivo ANTES de limpiar la
     // bandeja. Si no hay conexión (o la app se cierra durante el envío), las
     // fotos ya quedaron a salvo y se reintentan solas en lugar de perderse.
+    // Cada foto se cachea con SU producto (para que el reintento offline suba a
+    // dónde corresponde).
     const clientTimestamp = new Date().toISOString()
     const isDataUrl = (s: string) => s.startsWith('data:')
     const cachedByIndex = new Map<number, CachedPhoto>()
@@ -1114,7 +1142,7 @@ export function WizardPage() {
           base64,
           comment: commentAt(i),
           clientKey,
-          productCode: linkedProduct ?? undefined,
+          productCode: photoProducts[i] ?? undefined,
         })
         cachedByIndex.set(i, cached)
         clientKeyByIndex.set(i, clientKey)
@@ -1137,16 +1165,14 @@ export function WizardPage() {
         await markAsUploaded(id)
       }
     }
-    const allCachedIndices = [...cachedByIndex.keys()]
 
     // ── 2) Ya están a salvo: cerrar el modal; la subida sigue en segundo plano.
-    // Las fotos ya se persistieron en IndexedDB (cachePhoto), así que el
-    // borrador durable de la bandeja ya no hace falta: se limpia para no
-    // reabrirla tras una futura recarga.
     if (trackingCode) void clearTrayDraft(trackingCode)
+    const lastProduct = photoProducts.filter(Boolean).slice(-1)[0] ?? null
     setShowCaptureTray(false)
     setCaptureTray([])
     setTrayComments([])
+    setTrayPhotoProducts([])
     setTrayFullIdx(null)
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
@@ -1181,70 +1207,72 @@ export function WizardPage() {
       return
     }
 
-    // ── Fotos vinculadas a un producto del catálogo DATA ──
-    if (linkedProduct) {
-      try {
-        // Asegura que el producto exista en esta operación; si no, lo crea.
-        const alreadyExists = lbProducts.some((p) => p.productCode.toLowerCase() === linkedProduct.toLowerCase())
-        if (!alreadyExists) {
-          try {
-            await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
-              method: 'POST',
-              body: { productCode: linkedProduct },
-            })
-          } catch { /* ya existe (409): el batch validará el estado real */ }
-        }
-        setFeedback(`⏳ Subiendo ${photos.length} foto(s) al producto ${linkedProduct}…`)
-        // UNA sola petición batch (atómica e idempotente) para todas las fotos.
-        const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        const items = photos
-          .map((p, i) => ({
-            base64Image: p.split(',')[1] ?? '',
-            comment: commentAt(i),
-            clientTimestamp,
-            clientKey: clientKeyByIndex.get(i),
-          }))
-          .filter((it) => it.base64Image)
-        await uploadProductPhotosBatch({ trackingCode, productCode: linkedProduct, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
-        await settle(allCachedIndices)
-        setActiveLbProduct(linkedProduct)
-        await loadOperation()
-        setFeedback(`✓ ${photos.length} foto(s) vinculada(s) a ${linkedProduct}`)
-      } catch (err) {
-        // Sin conexión: quedaron guardadas con su producto y se reintentan solas.
-        setFeedback(err instanceof Error ? err.message : 'Error al vincular las fotos. Quedaron guardadas y se reintentarán.')
-      } finally {
-        setTraySending(false)
-        sendTrayBusyRef.current = false
-      }
-      return
+    // ── 3) AGRUPAR POR PRODUCTO y subir cada grupo a su destino (Opción A) ──
+    // Las fotos "generales" (producto null) van a /photos/upload-batch; las de
+    // un producto, a su /linea-blanca/:code/photo-batch (creándolo si no existe).
+    // Se conserva el orden y se reutilizan las clientKey ya cacheadas (dedupe).
+    type Grp = { product: string | null; idxs: number[] }
+    const groups: Grp[] = []
+    for (let i = 0; i < photos.length; i++) {
+      if (!isDataUrl(photos[i])) continue
+      const prod = photoProducts[i]
+      const g = groups.find((x) => x.product === prod)
+      if (g) g.idxs.push(i)
+      else groups.push({ product: prod, idxs: [i] })
     }
 
-    try {
+    const ensureProduct = async (code: string) => {
+      const exists = lbProducts.some((p) => p.productCode.toLowerCase() === code.toLowerCase())
+      if (exists) return
+      try {
+        await apiRequest(`/operations/${trackingCode}/linea-blanca`, { method: 'POST', body: { productCode: code } })
+      } catch { /* ya existe (409): el batch validará el estado */ }
+    }
+
+    const totalPhotos = groups.reduce((s, g) => s + g.idxs.length, 0)
+    setFeedback(totalPhotos > 1 ? `⏳ Subiendo ${totalPhotos} fotos...` : '⏳ Subiendo foto...')
+
+    let okCount = 0
+    let failed = false
+    for (const g of groups) {
       const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      // Las fotos ya están persistidas arriba: se reutiliza la MISMA clientKey
-      // para que el servidor deduplique y no se genere un duplicado.
-      const items = photos
-        .map((p, i) => ({
-          base64Image: p.split(',')[1] ?? '',
+      const items = g.idxs
+        .map((i) => ({
+          base64Image: photos[i].split(',')[1] ?? '',
           comment: commentAt(i),
           clientTimestamp,
           clientKey: clientKeyByIndex.get(i),
         }))
         .filter((it) => it.base64Image)
-      setFeedback(photos.length > 1 ? `⏳ Subiendo ${photos.length} fotos...` : '⏳ Subiendo foto...')
-      // SIEMPRE batch (una sola petición atómica e idempotente).
-      await uploadPhotosBatch({ trackingCode, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
-      await settle(allCachedIndices)
-      await loadOperation()
-      setFeedback(`✓ ${photos.length} foto(s) enviada(s)`)
-    } catch (err) {
-      // Sin conexión: las fotos quedan en cache local (visibles y reintentables).
-      setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
-    } finally {
-      setTraySending(false)
-      sendTrayBusyRef.current = false
+      if (items.length === 0) continue
+      try {
+        if (g.product) {
+          await ensureProduct(g.product)
+          await uploadProductPhotosBatch({ trackingCode, productCode: g.product, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
+        } else {
+          await uploadPhotosBatch({ trackingCode, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
+        }
+        await settle(g.idxs)
+        okCount += g.idxs.length
+      } catch {
+        // Este grupo falló (sin conexión): sus fotos quedan en cache y se
+        // reintentan solas con su producto. Seguimos con los demás grupos.
+        failed = true
+      }
     }
+
+    if (lastProduct) setActiveLbProduct(lastProduct)
+    await loadOperation()
+    const prodCount = groups.filter((g) => g.product).length
+    if (failed) {
+      setFeedback('Algunas fotos quedaron guardadas y se reintentarán al reconectar.')
+    } else if (prodCount > 0) {
+      setFeedback(`✓ ${okCount} foto(s) enviada(s)${prodCount > 1 ? ` a ${prodCount} productos` : ''}.`)
+    } else {
+      setFeedback(`✓ ${okCount} foto(s) enviada(s)`)
+    }
+    setTraySending(false)
+    sendTrayBusyRef.current = false
   }
 
   const isCompleted = operation?.status === 'COMPLETADO'
@@ -1326,6 +1354,7 @@ export function WizardPage() {
       if (draft && draft.photos.length > 0) {
         setCaptureTray(draft.photos)
         setTrayComments(draft.comments.length === draft.photos.length ? draft.comments : draft.photos.map((_, i) => draft.comments[i] ?? ''))
+        setTrayPhotoProducts(draft.photos.map((_, i) => draft.photoProducts[i] ?? null))
         setTrayProductCode(draft.productCode)
         setTrayMessage(draft.message)
         setShowCaptureTray(true)
@@ -1339,17 +1368,17 @@ export function WizardPage() {
   // y leyendo el estado por refs: así NO se re-serializa toda la bandeja en cada
   // foto (lo que antes congelaba el hilo y reventaba la cuota de localStorage al
   // tomar muchas fotos, cerrando la app). Un único efecto, sin duplicados.
-  const trayStateRef = useRef({ captureTray, trayComments, trayProductCode, trayMessage, showCaptureTray })
+  const trayStateRef = useRef({ captureTray, trayComments, trayPhotoProducts, trayProductCode, trayMessage, showCaptureTray })
   useEffect(() => {
-    trayStateRef.current = { captureTray, trayComments, trayProductCode, trayMessage, showCaptureTray }
-  }, [captureTray, trayComments, trayProductCode, trayMessage, showCaptureTray])
+    trayStateRef.current = { captureTray, trayComments, trayPhotoProducts, trayProductCode, trayMessage, showCaptureTray }
+  }, [captureTray, trayComments, trayPhotoProducts, trayProductCode, trayMessage, showCaptureTray])
 
   const persistTrayNow = useCallback(() => {
     if (!trackingCode) return
     const s = trayStateRef.current
     if (s.showCaptureTray && s.captureTray.length > 0) {
       void saveTrayDraft(trackingCode, {
-        photos: s.captureTray, comments: s.trayComments, productCode: s.trayProductCode, message: s.trayMessage,
+        photos: s.captureTray, comments: s.trayComments, photoProducts: s.trayPhotoProducts, productCode: s.trayProductCode, message: s.trayMessage,
       })
     }
   }, [trackingCode])
@@ -1359,7 +1388,7 @@ export function WizardPage() {
     if (!trackingCode || !showCaptureTray || captureTray.length === 0) return
     const t = setTimeout(persistTrayNow, 400)
     return () => clearTimeout(t)
-  }, [trackingCode, showCaptureTray, captureTray, trayComments, trayProductCode, trayMessage, persistTrayNow])
+  }, [trackingCode, showCaptureTray, captureTray, trayComments, trayPhotoProducts, trayProductCode, trayMessage, persistTrayNow])
 
   // Seguro: guardar JUSTO antes de que el SO suspenda la página (al abrir la
   // cámara se dispara pagehide/visibilitychange). Escritura inmediata del
@@ -3854,6 +3883,10 @@ export function WizardPage() {
                       className="absolute inset-0 w-full h-full">
                       <img src={src} className="w-full h-full object-cover" />
                     </button>
+                    {/* Producto al que está vinculada esta foto (Opción A). */}
+                    <span className={`absolute top-0 inset-x-0 px-1 py-0.5 text-[8px] font-semibold text-white text-center truncate ${trayPhotoProducts[i] ? 'bg-emerald-600/90' : 'bg-black/50'}`}>
+                      {trayPhotoProducts[i] ? `📦 ${trayPhotoProducts[i]}` : 'General'}
+                    </span>
                     {features.markerEditor && (
                       <button onClick={() => setTrayEditIdx(i)} aria-label="Editar foto"
                         className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
@@ -3986,11 +4019,14 @@ export function WizardPage() {
                 {traySending
                   ? <LoadingState inline size="sm" label={trayEditingPhotoIdx !== null ? 'Guardando…' : 'Enviando…'} />
                   : (trayEditingPhotoIdx !== null ? <CheckCircle2 className="w-4 h-4" /> : <Send className="w-4 h-4" />)}
-                {trayEditingPhotoIdx !== null
-                  ? 'Guardar'
-                  : trayProductCode
-                    ? `Guardar en ${trayProductCode} (${captureTray.length})`
-                    : `Enviar ${captureTray.length > 0 ? `(${captureTray.length})` : ''}`}
+                {(() => {
+                  if (trayEditingPhotoIdx !== null) return 'Guardar'
+                  const prods = Array.from(new Set(trayPhotoProducts.slice(0, captureTray.length).filter(Boolean))) as string[]
+                  const n = captureTray.length
+                  if (prods.length === 1) return `Guardar en ${prods[0]} (${n})`
+                  if (prods.length > 1) return `Enviar (${n}) · ${prods.length} productos`
+                  return `Enviar ${n > 0 ? `(${n})` : ''}`
+                })()}
               </button>
             </div>
           </div>
@@ -4028,32 +4064,40 @@ export function WizardPage() {
 
           {/* Pie: producto activo + comentario + miniaturas + enviar */}
           <div className="flex-shrink-0 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 space-y-2.5">
-            {/* Barra de PRODUCTO ACTIVO: permite vincular/cambiar el producto de
-                las fotos SIN salir del visor ni dejar de tomar. Toca el chip o
-                "Escanear" para cambiar de producto en medio de la ráfaga. */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => { if (recordSettings.dbSheetId) { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) } else { setShowTrayScanner(true) } }}
-                className={`flex-1 min-w-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${trayProductCode ? 'bg-emerald-500/90 text-white' : 'bg-white/10 text-white/80'}`}
-              >
-                <Package className="w-3.5 h-3.5 flex-shrink-0" />
-                <span className="truncate">{trayProductCode ? trayProductCode : 'General (sin producto)'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => { if (recordSettings.dbSheetId) { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) } else { setShowTrayScanner(true) } }}
-                className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full bg-amber-400/90 text-black text-xs font-semibold"
-                aria-label="Escanear o cambiar producto">
-                <QrCode className="w-3.5 h-3.5" /> {trayProductCode ? 'Cambiar' : 'Vincular'}
-              </button>
-              {trayProductCode && (
-                <button type="button" onClick={() => setTrayProductCode(null)} aria-label="Quitar producto"
-                  className="flex-shrink-0 w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white/80">
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
+            {/* Barra de PRODUCTO de ESTA foto: permite vincular/cambiar el
+                producto de la foto visible SIN salir del visor. Cada foto
+                guarda su propio producto, así puedes mezclar varios productos
+                en una misma tanda (se agrupan por producto al enviar). */}
+            {(() => {
+              const current = trayPhotoProducts[trayFullIdx] ?? null
+              return (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { if (recordSettings.dbSheetId) { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) } else { setShowTrayScanner(true) } }}
+                    className={`flex-1 min-w-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${current ? 'bg-emerald-500/90 text-white' : 'bg-white/10 text-white/80'}`}
+                  >
+                    <Package className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="truncate">{current ? current : 'General (sin producto)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { if (recordSettings.dbSheetId) { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) } else { setShowTrayScanner(true) } }}
+                    className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full bg-amber-400/90 text-black text-xs font-semibold"
+                    aria-label="Escanear o cambiar producto">
+                    <QrCode className="w-3.5 h-3.5" /> {current ? 'Cambiar' : 'Vincular'}
+                  </button>
+                  {current && (
+                    <button type="button"
+                      onClick={() => setTrayPhotoProducts((prev) => { const n = [...prev]; while (n.length <= trayFullIdx) n.push(null); n[trayFullIdx] = null; return n })}
+                      aria-label="Quitar producto"
+                      className="flex-shrink-0 w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-white/80">
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* Barra de comentario */}
             <div className="flex items-center gap-2 bg-white/10 rounded-full px-3 py-2">
@@ -4106,7 +4150,16 @@ export function WizardPage() {
         <BarcodeScanner
           onResult={(code) => {
             setShowTrayScanner(false)
-            setTrayProductCode(code.trim().toUpperCase())
+            const c = code.trim().toUpperCase()
+            setTrayProductCode(c)
+            // Opción A: aplica a la foto visible y hereda para las siguientes.
+            setTrayPhotoProducts((prev) => {
+              if (trayFullIdxRef.current === null) return prev
+              const next = [...prev]
+              while (next.length <= trayFullIdxRef.current) next.push(null)
+              next[trayFullIdxRef.current] = c
+              return next
+            })
           }}
           onClose={() => setShowTrayScanner(false)}
         />
