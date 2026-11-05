@@ -26,6 +26,7 @@ import { useOperationLive } from '../hooks/useOperationLive'
 import { collectAllServerPhotos, pendingLocalPhotos } from '../lib/photo-reconcile'
 import { canReadClipboard, onlyImageFiles, resolveTrayDestination } from '../lib/tray-destination'
 import { saveTrayDraft, loadTrayDraft, clearTrayDraft } from '../lib/tray-cache'
+import { rememberLastProduct, getLastProduct } from '../lib/last-product'
 
 /** URL directa de R2: driveUrl http(s) que no es de Google. */
 function directUrl(photo: Pick<PhotoRecord, 'driveUrl'>): string | null {
@@ -450,6 +451,10 @@ export function WizardPage() {
   const [showWaSync, setShowWaSync] = useState(false)
   // Producto de catálogo asociado a la bandeja de fotos (para vincular grupo al producto).
   const [trayProductCode, setTrayProductCode] = useState<string | null>(null)
+  // true cuando el producto activo viene PRECARGADO del último registro (Opción
+  // 4), para avisar al usuario que las fotos se vincularán a él salvo que lo
+  // cambie. Se limpia en cuanto el usuario lo confirma, cambia o quita.
+  const [trayProductPrefilled, setTrayProductPrefilled] = useState(false)
   const [showTrayCatalog, setShowTrayCatalog] = useState(false)
   // Escáner de código de barras en la bandeja de fotos.
   const [showTrayScanner, setShowTrayScanner] = useState(false)
@@ -887,8 +892,12 @@ export function WizardPage() {
       const normalized = productCode.trim().toUpperCase()
       setActiveLbProduct(normalized)
       setTrayProductCode(normalized)
+      setTrayProductPrefilled(false)
+      // Opción 4: recuerda este producto para el siguiente registro.
+      rememberLastProduct(operation?.companyId || getCompanyId(), normalized)
     } else if (productCode === null) {
       setTrayProductCode(null)
+      setTrayProductPrefilled(false)
     }
     nativeCameraRef.current?.click()
   }
@@ -1009,6 +1018,7 @@ export function WizardPage() {
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
     setTrayProductCode(null)
+    setTrayProductPrefilled(false)
     if (trackingCode) void clearTrayDraft(trackingCode)
   }
 
@@ -1019,6 +1029,9 @@ export function WizardPage() {
     setShowTrayDbSearch(false)
     const code = item.code.trim()
     setTrayProductCode(code)
+    setTrayProductPrefilled(false)
+    // Opción 4: recuerda este producto para precargarlo en el siguiente registro.
+    rememberLastProduct(operation?.companyId || getCompanyId(), code)
     // Opción A: aplica el producto a la foto que se está viendo en el visor
     // (si hay una abierta); las siguientes que tomes heredarán este producto.
     setTrayPhotoProducts((prev) => {
@@ -1028,7 +1041,7 @@ export function WizardPage() {
       next[trayFullIdxRef.current] = code
       return next
     })
-  }, [])
+  }, [operation?.companyId])
 
   // Pega imagen(es) desde el portapapeles usando la Clipboard API (funciona en
   // móvil, donde el evento 'paste' no se dispara). Requiere un gesto del usuario
@@ -1176,7 +1189,17 @@ export function WizardPage() {
     setTrayFullIdx(null)
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
-    setTrayProductCode(null)
+    // Opción 4: conserva el último producto usado en la tanda enviada como
+    // "activo" para la siguiente tanda del mismo registro (y lo recuerda para
+    // el próximo registro). Así no hay que re-vincularlo tras cada envío.
+    if (lastProduct) {
+      rememberLastProduct(operation?.companyId || getCompanyId(), lastProduct)
+      setTrayProductCode(lastProduct)
+      setTrayProductPrefilled(true)
+    } else {
+      setTrayProductCode(null)
+      setTrayProductPrefilled(false)
+    }
 
     // ── Modo EDICIÓN de una foto existente ──
     if (editingIdx !== null) {
@@ -1356,10 +1379,18 @@ export function WizardPage() {
         setTrayComments(draft.comments.length === draft.photos.length ? draft.comments : draft.photos.map((_, i) => draft.comments[i] ?? ''))
         setTrayPhotoProducts(draft.photos.map((_, i) => draft.photoProducts[i] ?? null))
         setTrayProductCode(draft.productCode)
+        setTrayProductPrefilled(false)
         setTrayMessage(draft.message)
         setShowCaptureTray(true)
         setFeedback('Se recuperaron las fotos que estabas registrando.')
+        return
       }
+      // Opción 4: sin borrador que restaurar → precarga el último producto que
+      // se usó en esta empresa como "activo", para que las fotos que tomes se
+      // vinculen solas sin volver a escanear/buscar. Se mantiene editable: la
+      // barra de producto del visor permite cambiarlo o quitarlo.
+      const last = getLastProduct(getCompanyId())
+      if (last) { setTrayProductCode(last); setTrayProductPrefilled(true) }
     })
   }, [trackingCode])
 
@@ -3987,9 +4018,12 @@ export function WizardPage() {
                 <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
                   <div className="flex items-center gap-2 text-emerald-700">
                     <Package className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span>Vinculado a: <strong>{trayProductCode}</strong></span>
+                    <span>
+                      {trayProductPrefilled ? 'Sugerido (último): ' : 'Vinculado a: '}
+                      <strong>{trayProductCode}</strong>
+                    </span>
                   </div>
-                  <button onClick={() => setTrayProductCode(null)} className="text-emerald-600 hover:text-emerald-800">
+                  <button onClick={() => { setTrayProductCode(null); setTrayProductPrefilled(false) }} className="text-emerald-600 hover:text-emerald-800">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -4159,6 +4193,9 @@ export function WizardPage() {
             setShowTrayScanner(false)
             const c = code.trim().toUpperCase()
             setTrayProductCode(c)
+            setTrayProductPrefilled(false)
+            // Opción 4: recuerda este producto para el siguiente registro.
+            rememberLastProduct(operation?.companyId || getCompanyId(), c)
             // Opción A: aplica a la foto visible y hereda para las siguientes.
             setTrayPhotoProducts((prev) => {
               if (trayFullIdxRef.current === null) return prev
@@ -4205,6 +4242,8 @@ export function WizardPage() {
         onSelect={(productCode) => {
           setShowTrayCatalog(false)
           setTrayProductCode(productCode)
+          setTrayProductPrefilled(false)
+          rememberLastProduct(operation?.companyId || getCompanyId(), productCode)
         }}
         existingCodes={[]}
       />
