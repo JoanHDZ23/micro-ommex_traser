@@ -34,8 +34,21 @@ function isStaleAssetError(err: unknown): boolean {
   return /ChunkLoadError|Loading chunk [\d]+ failed|Importing a module script failed/i.test(msg)
 }
 
+// ── Detección de entorno iframe ─────────────────────────────────────────────
+// Cuando trazabilidad corre dentro del iframe del panel de turnos, ciertos
+// comportamientos de la PWA (Service Worker, recarga automática) no solo no
+// ayudan sino que rompen la carga: los SW están bloqueados en iframes en la
+// mayoría de navegadores móviles, y un reload() desde un iframe puede dejar
+// la sesión atrapada. Si window.top !== window, la app está embebida.
+const isEmbeddedInIframe = (() => {
+  try { return window.top !== window } catch { return true }
+})()
+
 /** Limpia el SW y los caches antes de recargar una sola vez. */
 async function clearCachesAndReload(): Promise<void> {
+  // No recargar si estamos dentro de un iframe (el reload puede romper la
+  // sesión del host o quedar en bucle sin poder salir del iframe).
+  if (isEmbeddedInIframe) return
   try {
     if ('serviceWorker' in navigator) {
       const regs = await navigator.serviceWorker.getRegistrations()
@@ -75,9 +88,11 @@ startLocationWatch()
 // ── Service Worker ─────────────────────────────────────────────────────────
 // vite-plugin-pwa genera /sw.js en el build. Solo lo registramos en producción
 // o cuando VITE_SW_DEV=true (para pruebas locales).
+// NO se registra si la app está dentro de un iframe (los SW están bloqueados en
+// iframes en móviles y causan la pantalla rota).
 // La sincronización offline (fotos + mutaciones encoladas) la gestiona
 // OfflineBanner.tsx para evitar llamadas duplicadas.
-if ('serviceWorker' in navigator && (import.meta.env.PROD || import.meta.env.VITE_SW_DEV === 'true')) {
+if (!isEmbeddedInIframe && 'serviceWorker' in navigator && (import.meta.env.PROD || import.meta.env.VITE_SW_DEV === 'true')) {
   import('virtual:pwa-register').then(({ registerSW }) => {
     registerSW({
       onNeedRefresh() {
