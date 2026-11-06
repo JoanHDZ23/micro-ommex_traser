@@ -1419,11 +1419,48 @@ export function WizardPage() {
       else groups.push({ product: prod, idxs: [i] })
     }
 
-    const ensureProduct = async (code: string) => {
-      const exists = lbProducts.some((p) => p.productCode.toLowerCase() === code.toLowerCase())
-      if (exists) return
+    /**
+     * Busca el producto en la DATA y arma su descripción con las columnas
+     * seleccionadas (misma lógica que al agregarlo desde la base de datos).
+     * Es lo que luego aparece bajo el código en el mensaje de WhatsApp
+     * (descripción · Cliente · Placa…). Si no hay DATA o falla, devuelve ''.
+     */
+    const resolveDbDescription = async (code: string): Promise<string> => {
+      const cid = operation?.companyId || getCompanyId()
+      const sheetId = recordSettingsRef.current.dbSheetId || getPrimarySheetId(cid)
+      if (!sheetId || !cid) return ''
       try {
-        await apiRequest(`/operations/${trackingCode}/linea-blanca`, { method: 'POST', body: { productCode: code } })
+        const cols = getDbCols()
+        const r = await searchInSheet({
+          sheetId, companyId: cid, q: code,
+          codeColumn: cols.codeColumn, descColumn: cols.extra[0] ?? cols.descColumn, limit: 5,
+        })
+        const exact = r.results.find((it) => it.code.trim().toLowerCase() === code.toLowerCase())
+        const item = exact ?? (r.results.length === 1 ? r.results[0] : undefined)
+        return item ? composeDbDescription(item, r.headers ?? []) : ''
+      } catch {
+        return ''
+      }
+    }
+
+    const ensureProduct = async (code: string) => {
+      const existing = lbProducts.find((p) => p.productCode.toLowerCase() === code.toLowerCase())
+      // Ya tiene descripción: nada que completar.
+      if (existing?.labelData?.descripcion) return
+      const descripcion = await resolveDbDescription(code)
+      try {
+        if (!existing) {
+          await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
+            method: 'POST',
+            body: { productCode: code, ...(descripcion ? { labelData: { descripcion } } : {}) },
+          })
+        } else if (descripcion) {
+          // El PATCH reemplaza todo labelData: se mezcla con lo que ya tenía (SKU, etc.).
+          await apiRequest(`/operations/${trackingCode}/linea-blanca/${encodeURIComponent(existing.productCode)}/label`, {
+            method: 'PATCH',
+            body: { labelData: { ...(existing.labelData ?? {}), descripcion } },
+          })
+        }
       } catch { /* ya existe (409): el batch validará el estado */ }
     }
 
