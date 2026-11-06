@@ -13,10 +13,6 @@
         {
           "key": "Content-Security-Policy",
           "value": "frame-ancestors 'self' https://asignacion-register.vercel.app https://*.vercel.app"
-        },
-        {
-          "key": "X-Frame-Options",
-          "value": "ALLOWALL"
         }
       ]
     },

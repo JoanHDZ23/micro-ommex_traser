@@ -1572,43 +1572,9 @@ export function WizardPage() {
   // Clean expired photos on mount
   useEffect(() => { void cleanExpiredPhotos() }, [])
 
-  // ── Opción 9 (acotada): sync oportunista en segundo plano ──────────────────
-  // Mientras el registro está abierto, intenta subir las fotos que quedaron
-  // PENDIENTES de envíos anteriores (p. ej. tomadas sin señal). Así se van
-  // subiendo mientras sigues tomando/registrando, en vez de esperar al botón
-  // "Reintentar". NO toca las fotos de la tanda en curso (que aún no están
-  // cacheadas), por lo que no interfiere con la Opción A (producto por foto).
-  // Respeta el backoff/tope internos de photo-cache y no solapa ejecuciones.
-  const bgSyncBusyRef = useRef(false)
-  useEffect(() => {
-    if (!trackingCode) return
-    const tick = async () => {
-      if (bgSyncBusyRef.current) return
-      if (typeof navigator !== 'undefined' && navigator.onLine === false) return
-      // Evita competir con el envío manual de la bandeja.
-      if (sendTrayBusyRef.current) return
-      bgSyncBusyRef.current = true
-      try {
-        const n = await uploadPendingInBackground(
-          (url, opts) => apiRequest(url as string, opts as { method: string; body?: unknown }),
-        )
-        if (n > 0) {
-          const cached = await getCachedPhotos(trackingCode)
-          if (operationRef.current) setLocalPhotos(pendingLocalPhotos(cached, collectAllServerPhotos(operationRef.current)))
-          void loadOperation()
-        }
-      } catch { /* sin conexión o fallo transitorio: se reintenta al próximo tick */ }
-      finally { bgSyncBusyRef.current = false }
-    }
-    const id = setInterval(() => void tick(), 20_000)
-    // Un primer intento al abrir (tras un respiro para no competir con la carga).
-    const first = setTimeout(() => void tick(), 4_000)
-    // Y cuando vuelve la conexión, intenta de inmediato.
-    const onOnline = () => void tick()
-    window.addEventListener('online', onOnline)
-    return () => { clearInterval(id); clearTimeout(first); window.removeEventListener('online', onOnline) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackingCode])
+  // Nota: la subida en segundo plano de fotos pendientes ya la hace
+  // OfflineBanner (montado en Layout: al abrir, cada 30 s y al reconectar). Aquí
+  // NO se duplica: un segundo sync cargaba las mismas fotos en memoria a la vez.
 
   // Reconciliación local↔servidor por `clientKey` (Req 2.7, 2.8; Property 3):
   // deja visibles SOLO las fotos locales que aún no llegaron al servidor,

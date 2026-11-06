@@ -202,14 +202,63 @@ export async function getCachedPhotoUrl(id: string): Promise<string | null> {
   })
 }
 
+/** Datos LIVIANOS de una foto pendiente (sin base64/dataUrl). */
+export type PendingMeta = Pick<CachedPhoto, 'id' | 'trackingCode' | 'productCode' | 'uploadAttempts' | 'lastAttemptAt' | 'timestamp'>
+
+/**
+ * Lista las fotos pendientes SIN acumular sus imágenes en memoria.
+ *
+ * `getAll()` cargaba de golpe TODAS las fotos del almacén (con base64 y además
+ * `dataUrl`, el doble) solo para contarlas, y se llamaba varias veces al abrir
+ * la app y cada 30 s. Con muchas fotos eso agotaba la memoria de la pestaña
+ * (pantalla "carita triste"). Con un cursor se lee una foto a la vez y solo se
+ * conserva su metadato; el resto se libera enseguida.
+ */
+export async function getPendingMeta(): Promise<PendingMeta[]> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const out: PendingMeta[] = []
+    const tx = db.transaction(STORE_NAME, 'readonly')
+    const req = tx.objectStore(STORE_NAME).openCursor()
+    req.onsuccess = () => {
+      const cursor = req.result
+      if (!cursor) return
+      const p = cursor.value as CachedPhoto
+      if (!p.uploaded) {
+        out.push({
+          id: p.id,
+          trackingCode: p.trackingCode,
+          productCode: p.productCode,
+          uploadAttempts: p.uploadAttempts,
+          lastAttemptAt: p.lastAttemptAt,
+          timestamp: p.timestamp,
+        })
+      }
+      cursor.continue()
+    }
+    tx.oncomplete = () => resolve(out)
+    tx.onerror = () => reject(tx.error)
+  })
+}
+
+/** Lee UNA foto completa por id (para subirla). */
+async function getPhotoById(id: string): Promise<CachedPhoto | undefined> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(id)
+    req.onsuccess = () => resolve(req.result as CachedPhoto | undefined)
+    req.onerror = () => reject(req.error)
+  })
+}
+
 /** Nº de fotos pendientes de subir (no subidas) en todo el almacén. */
 export async function countPendingUploads(): Promise<number> {
-  return (await getPendingUploads()).length
+  return (await getPendingMeta()).length
 }
 
 /** True si alguna foto pendiente ya agotó sus reintentos automáticos. */
 export async function hasFailedUploads(): Promise<boolean> {
-  const pending = await getPendingUploads()
+  const pending = await getPendingMeta()
   return pending.some((p) => (p.uploadAttempts ?? 0) >= MAX_UPLOAD_ATTEMPTS)
 }
 
@@ -290,7 +339,7 @@ function backoffMs(attempts: number): number {
 }
 
 /** True si la foto está lista para (re)intentar según su backoff y tope. */
-function isReadyToUpload(photo: CachedPhoto, now: number): boolean {
+function isReadyToUpload(photo: Pick<CachedPhoto, 'uploadAttempts' | 'lastAttemptAt'>, now: number): boolean {
   const attempts = photo.uploadAttempts ?? 0
   if (attempts >= MAX_UPLOAD_ATTEMPTS) return false
   const last = photo.lastAttemptAt ?? 0
@@ -298,7 +347,7 @@ function isReadyToUpload(photo: CachedPhoto, now: number): boolean {
 }
 
 /** Clave de agrupación para subir fotos juntas en un único batch atómico. */
-function groupKey(photo: CachedPhoto): string {
+function groupKey(photo: Pick<CachedPhoto, 'trackingCode' | 'productCode'>): string {
   return `${photo.trackingCode}::${photo.productCode ?? '__general__'}`
 }
 
@@ -371,23 +420,44 @@ async function uploadGroup(api: ApiFn, photos: CachedPhoto[]): Promise<number> {
  *  - Respeta un backoff creciente por foto y un tope de reintentos, evitando
  *    que una subida que siempre falla consuma red/batería en cada ciclo.
  */
-export async function uploadPendingInBackground(apiRequest: ApiFn): Promise<number> {
+/** Máximo de fotos cargadas en memoria y enviadas en una misma petición. */
+const UPLOAD_CHUNK_SIZE = 6
+
+/** Subida en curso: evita que dos disparadores (banner, reintento manual,
+ *  evento 'online') suban y carguen las mismas fotos a la vez. */
+let inFlightUpload: Promise<number> | null = null
+
+export function uploadPendingInBackground(apiRequest: ApiFn): Promise<number> {
+  if (inFlightUpload) return inFlightUpload
+  inFlightUpload = runPendingUpload(apiRequest).finally(() => { inFlightUpload = null })
+  return inFlightUpload
+}
+
+async function runPendingUpload(apiRequest: ApiFn): Promise<number> {
   const now = Date.now()
-  const pending = (await getPendingUploads()).filter((p) => isReadyToUpload(p, now))
+  // Solo metadatos: no se cargan las imágenes hasta que toque subirlas.
+  const pending = (await getPendingMeta()).filter((p) => isReadyToUpload(p, now))
   if (pending.length === 0) return 0
 
   // Agrupa por registro+producto para subir cada tanda en una sola petición.
-  const groups = new Map<string, CachedPhoto[]>()
-  for (const photo of pending) {
-    const key = groupKey(photo)
+  const groups = new Map<string, PendingMeta[]>()
+  for (const meta of pending) {
+    const key = groupKey(meta)
     const arr = groups.get(key)
-    if (arr) arr.push(photo)
-    else groups.set(key, [photo])
+    if (arr) arr.push(meta)
+    else groups.set(key, [meta])
   }
 
   let uploaded = 0
-  for (const photos of groups.values()) {
-    uploaded += await uploadGroup(apiRequest, photos)
+  for (const metas of groups.values()) {
+    // Lotes pequeños: solo UPLOAD_CHUNK_SIZE fotos completas en memoria a la vez.
+    for (let i = 0; i < metas.length; i += UPLOAD_CHUNK_SIZE) {
+      const chunk = metas.slice(i, i + UPLOAD_CHUNK_SIZE)
+      const photos = (await Promise.all(chunk.map((m) => getPhotoById(m.id))))
+        .filter((p): p is CachedPhoto => Boolean(p) && !p!.uploaded)
+      if (photos.length === 0) continue
+      uploaded += await uploadGroup(apiRequest, photos)
+    }
   }
   return uploaded
 }
