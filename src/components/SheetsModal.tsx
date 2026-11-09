@@ -10,6 +10,7 @@ import { getPrimarySheetId, getSheetColumns, setPrimarySheet, setSheetColumns } 
 import { apiRequest, fileToBase64, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
+import { ActionMenu, type ActionMenuItem } from './ActionMenu'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
 import { adjustReceived, getReceived, receivedKey, refreshReceived, useReceivedMap } from '../lib/received-store'
 import { buildStyledXlsx, downloadBlob } from '../lib/xlsx-styled'
@@ -1724,13 +1725,45 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
               )}
 
               <div className="space-y-2.5">
-                {filteredSheets.map((s) => (
+                {filteredSheets.map((s) => {
+                  const isPrimary = primarySheetId === s.id
+                  const menuItems: ActionMenuItem[] = [
+                    { key: 'view', label: 'Ver / Editar', icon: <Eye className="w-4 h-4 text-[var(--color-primary)]" />, onSelect: () => void handleView(s) },
+                    { key: 'cols', label: 'Columnas', icon: <SlidersHorizontal className="w-4 h-4 text-[var(--color-primary)]" />, onSelect: () => void openColumnConfig(s) },
+                    {
+                      key: 'primary',
+                      label: isPrimary ? 'Quitar como principal' : 'Hacer principal',
+                      icon: <Star className={`w-4 h-4 ${isPrimary ? 'fill-amber-500 text-amber-500' : 'text-amber-500'}`} />,
+                      onSelect: () => togglePrimarySheet(s),
+                    },
+                    ...(s.sheetUrl
+                      ? [{ key: 'sheets', label: 'Abrir en Google Sheets', icon: <ExternalLink className="w-4 h-4 text-emerald-600" />, href: s.sheetUrl }]
+                      : []),
+                    {
+                      key: 'download',
+                      label: downloadingId === s.id ? 'Descargando…' : 'Descargar Excel',
+                      icon: downloadingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4 text-[var(--color-primary)]" />,
+                      onSelect: () => void handleDownload(s),
+                      disabled: downloadingId === s.id,
+                    },
+                    {
+                      key: 'delete',
+                      label: deletingId === s.id ? 'Eliminando…' : 'Eliminar tabla',
+                      icon: deletingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />,
+                      onSelect: () => void handleDelete(s),
+                      danger: true,
+                      disabled: deletingId === s.id,
+                      separatorBefore: true,
+                    },
+                  ]
+                  return (
                   <Card key={s.id} padding="none" className="group overflow-hidden transition-all hover:shadow-md hover:border-emerald-300/60">
+                    <div className="flex items-center gap-1 pr-2">
                     {/* Fila principal: clic en el cuerpo abre el visor */}
                     <button
                       type="button"
                       onClick={() => void handleView(s)}
-                      className="w-full flex items-center gap-3.5 p-3.5 text-left"
+                      className="flex-1 min-w-0 flex items-center gap-3.5 p-3.5 text-left"
                     >
                       <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center text-white shadow-sm flex-shrink-0">
                         <FileSpreadsheet className="w-5 h-5" />
@@ -1763,46 +1796,16 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                       </div>
                     </button>
 
-                    {/* Barra de acciones con etiquetas (clara en móvil) */}
-                    <div className="flex items-stretch border-t border-[var(--color-border)] divide-x divide-[var(--color-border)]">
-                      <button onClick={() => void handleView(s)}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors"
-                        title="Ver y editar en la app">
-                        <Eye className="w-4 h-4" /> Ver / Editar
-                      </button>
-                      <button onClick={() => void openColumnConfig(s)}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors"
-                        title="Configurar qué columnas se traen de esta tabla">
-                        <SlidersHorizontal className="w-4 h-4" /> Columnas
-                      </button>
-                      <button onClick={() => togglePrimarySheet(s)}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium transition-colors ${
-                          primarySheetId === s.id ? 'text-amber-600 hover:bg-amber-50' : 'text-[var(--color-text-3)] hover:bg-[var(--color-bg)]'
-                        }`}
-                        title="Marcar como la DATA principal (donde se busca por defecto)">
-                        <Star className={`w-4 h-4 ${primarySheetId === s.id ? 'fill-amber-500 text-amber-500' : ''}`} />
-                        {primarySheetId === s.id ? 'Principal' : 'Hacer principal'}
-                      </button>
-                      {s.sheetUrl && (
-                        <a href={s.sheetUrl} target="_blank" rel="noopener noreferrer"
-                          className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-emerald-600 hover:bg-emerald-50 transition-colors"
-                          title="Abrir en Google Sheets">
-                          <ExternalLink className="w-4 h-4" /> Sheets
-                        </a>
-                      )}
-                      <button onClick={() => void handleDownload(s)} disabled={downloadingId === s.id}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors disabled:opacity-50"
-                        title="Descargar la tabla actualizada (Excel)">
-                        {downloadingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Descargar
-                      </button>
-                      <button onClick={() => void handleDelete(s)} disabled={deletingId === s.id}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-                        title="Eliminar tabla">
-                        {deletingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />} Eliminar
-                      </button>
+                    {/* Menú de opciones (⋮): reemplaza la fila de botones que se veía apretada en móvil */}
+                    <ActionMenu
+                      label={`Opciones de ${s.sheetName}`}
+                      busy={downloadingId === s.id || deletingId === s.id}
+                      items={menuItems}
+                    />
                     </div>
                   </Card>
-                ))}
+                  )
+                })}
               </div>
             </section>
           </div>
