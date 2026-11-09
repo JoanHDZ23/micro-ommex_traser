@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2,
+  X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2, Download,
   Search, CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
   Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
   Star, LayoutGrid, List, Package, SlidersHorizontal,
@@ -1163,6 +1163,52 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     }
   }
 
+  // ── Descargar la tabla ACTUALIZADA como Excel (.xlsx) ──
+  // Tabla local → sus filas del navegador. Tabla del servidor → se pide en vivo
+  // a Google Sheets (source=sheet); si no responde, el backend devuelve la
+  // última copia guardada.
+  const [downloadingId, setDownloadingId] = useState<string | null>(null)
+  const handleDownload = async (sheet: CompanySheet) => {
+    if (!companyId) return
+    setDownloadingId(sheet.id); setError(null)
+    try {
+      let headers: string[] = []
+      let rows: string[][] = []
+      let truncated = false
+      let fromStoredCopy = false
+      const local = getLocalTable(companyId, sheet.id)
+      if (local) {
+        headers = local.headers ?? []
+        rows = local.rows ?? []
+      } else {
+        const data = await apiRequest<SheetData & { source?: string; rowsTruncated?: boolean }>(
+          `/sheets/${encodeURIComponent(sheet.id)}?companyId=${encodeURIComponent(companyId)}&source=sheet`,
+        )
+        headers = data.headers ?? []
+        rows = data.rows ?? []
+        truncated = data.rowsTruncated === true
+        fromStoredCopy = Boolean(sheet.sheetUrl) && data.source !== 'sheet'
+      }
+      // SheetJS se carga solo al descargar (no pesa en el arranque).
+      const XLSX = await import('xlsx')
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, 'DATA')
+      const safeName = (sheet.sheetName || 'data').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'data'
+      const stamp = new Date().toISOString().slice(0, 10)
+      XLSX.writeFile(wb, `${safeName}_${stamp}.xlsx`)
+      if (truncated) {
+        setError(`Se descargaron las primeras ${rows.length} filas: la tabla supera el máximo que guarda la app.`)
+      } else if (fromStoredCopy) {
+        setError('Google Sheets no respondió: se descargó la última copia guardada en la app.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo descargar la tabla.')
+    } finally {
+      setDownloadingId(null)
+    }
+  }
+
   const handleDelete = async (sheet: CompanySheet) => {
     if (!confirm(`¿Eliminar la tabla "${sheet.sheetName}"?`)) return
     setDeletingId(sheet.id)
@@ -1635,6 +1681,11 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                           <ExternalLink className="w-4 h-4" /> Sheets
                         </a>
                       )}
+                      <button onClick={() => void handleDownload(s)} disabled={downloadingId === s.id}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-bg)] transition-colors disabled:opacity-50"
+                        title="Descargar la tabla actualizada (Excel)">
+                        {downloadingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Descargar
+                      </button>
                       <button onClick={() => void handleDelete(s)} disabled={deletingId === s.id}
                         className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[12px] font-medium text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
                         title="Eliminar tabla">
