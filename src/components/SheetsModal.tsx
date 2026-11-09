@@ -11,6 +11,7 @@ import { apiRequest, fileToBase64, type CompanySheet, type Operation, type Parse
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
+import { adjustReceived, getReceived, receivedKey, refreshReceived, useReceivedMap } from '../lib/received-store'
 import {
   parseFileLocally, parsePdfLocally, isPdf, saveLocalTable, listLocalTables,
   getLocalTable, updateLocalTableRows, deleteLocalTable,
@@ -57,6 +58,15 @@ interface DataTableProps {
   rows: string[][]
   /** Clave estable para persistir las filas marcadas (color) en localStorage. */
   markKey?: string
+  /**
+   * Si se definen empresa, tabla y columna de código, las marcas se guardan en
+   * el SERVIDOR por CÓDIGO de producto (compartidas por la empresa y estables
+   * aunque la tabla se actualice o cambie de orden). Sin ellos (p. ej. vista
+   * previa de un archivo aún no importado) se usan marcas locales por fila.
+   */
+  companyId?: string
+  sheetId?: string
+  codeColumn?: number
   /** Texto de filtro inicial (código escrito/escaneado) para arrancar filtrado. */
   initialFilter?: string
   /** Si se definen, habilita las acciones por fila / selección múltiple (modo registros). */
@@ -104,7 +114,7 @@ function loadMarkedQty(key?: string): Record<number, number> {
   return {}
 }
 
-function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTableProps) {
+function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, sheetId, codeColumn }: DataTableProps) {
   const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas (filtro global)
   const [filterText, setFilterText] = useState(initialFilter ?? '')
   // Filtros por columna (estilo Excel): { [colIndex]: texto }. Se aplican con AND.
@@ -161,9 +171,87 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
     setQty(globalIdx, (markedQty[globalIdx] ?? 1) + delta)
   }
 
-  // Totales: items marcados y suma de cantidades encontradas.
-  const totalFoundItems = marked.size
-  const totalFoundQty = Array.from(marked).reduce((s, i) => s + (markedQty[i] ?? 1), 0)
+  // ── Marcas en el SERVIDOR por código (modo normal de una tabla importada) ──
+  const serverMarks = Boolean(companyId && sheetId && typeof codeColumn === 'number' && codeColumn >= 0)
+  const receivedMap = useReceivedMap(serverMarks ? companyId! : '')
+  const [markError, setMarkError] = useState<string | null>(null)
+  const codeOfRow = (row: string[]) => (serverMarks ? String(row[codeColumn!] ?? '').trim() : '')
+
+  // Migración única: las marcas antiguas (locales, por número de fila) se pasan
+  // al servidor por código y se borran del dispositivo. Solo se suben los
+  // códigos que aún no estaban marcados, para no duplicar cantidades.
+  const migratedRef = useRef(false)
+  useEffect(() => {
+    if (!serverMarks || !markKey || migratedRef.current || rows.length === 0) return
+    migratedRef.current = true
+    const oldMarked = loadMarked(markKey)
+    if (oldMarked.size === 0) return
+    const oldQty = loadMarkedQty(markKey)
+    void refreshReceived(companyId!).then(async () => {
+      for (const idx of oldMarked) {
+        const code = String(rows[idx]?.[codeColumn!] ?? '').trim()
+        if (!code || getReceived(code)) continue
+        try { await adjustReceived(companyId!, code, Math.max(1, oldQty[idx] ?? 1), { sheetId }) } catch { /* se reintenta en otra apertura */ return }
+      }
+      try {
+        localStorage.removeItem(`ommex_marked_${markKey}`)
+        localStorage.removeItem(`ommex_markedqty_${markKey}`)
+      } catch { /* ignore */ }
+    })
+  }, [serverMarks, markKey, rows, companyId, codeColumn, sheetId])
+
+  const isRowMarked = (row: string[], gIdx: number): boolean => {
+    if (!serverMarks) return marked.has(gIdx)
+    const code = codeOfRow(row)
+    return Boolean(code && receivedMap.has(receivedKey(code)))
+  }
+  const rowQty = (row: string[], gIdx: number): number => {
+    if (!serverMarks) return markedQty[gIdx] ?? 1
+    return receivedMap.get(receivedKey(codeOfRow(row)))?.quantity ?? 0
+  }
+  const changeServer = (code: string, delta: number) => {
+    if (!code || !delta) return
+    setMarkError(null)
+    void adjustReceived(companyId!, code, delta, { sheetId })
+      .catch(() => setMarkError('No se pudo guardar la marca. Revisa la conexión.'))
+  }
+  const toggleMarkRow = (row: string[], gIdx: number) => {
+    if (!serverMarks) { toggleMark(gIdx); return }
+    const code = codeOfRow(row)
+    if (!code) { setMarkError('Esta fila no tiene código: no se puede marcar.'); return }
+    const current = rowQty(row, gIdx)
+    changeServer(code, current > 0 ? -current : 1)
+  }
+  const bumpQtyRow = (row: string[], gIdx: number, delta: number) => {
+    if (!serverMarks) { bumpQty(gIdx, delta); return }
+    // Mínimo 1 con −/+: para quitar la marca se usa el botón de marcar.
+    if (delta < 0 && rowQty(row, gIdx) <= 1) return
+    changeServer(codeOfRow(row), delta)
+  }
+  const setQtyRow = (row: string[], gIdx: number, qty: number) => {
+    if (!serverMarks) { setQty(gIdx, qty); return }
+    const q = Math.max(1, Math.floor(qty || 1))
+    changeServer(codeOfRow(row), q - rowQty(row, gIdx))
+  }
+
+  // Totales: items marcados y suma de cantidades encontradas (en ESTA tabla).
+  const { totalFoundItems, totalFoundQty } = useMemo(() => {
+    if (!serverMarks) {
+      return {
+        totalFoundItems: marked.size,
+        totalFoundQty: Array.from(marked).reduce((s, i) => s + (markedQty[i] ?? 1), 0),
+      }
+    }
+    const seen = new Set<string>()
+    let qty = 0
+    for (const row of rows) {
+      const k = receivedKey(String(row[codeColumn!] ?? ''))
+      if (!k || seen.has(k)) continue
+      const info = receivedMap.get(k)
+      if (info) { seen.add(k); qty += info.quantity }
+    }
+    return { totalFoundItems: seen.size, totalFoundQty: qty }
+  }, [serverMarks, marked, markedQty, rows, codeColumn, receivedMap])
 
   // Lista de filtros de columna activos (con texto no vacío).
   const activeColumnFilters = useMemo(
@@ -215,6 +303,10 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
 
   return (
     <div className="space-y-2">
+
+      {markError && (
+        <p role="alert" className="text-xs text-red-600 px-1">{markError}</p>
+      )}
 
       {/* Escáner: al detectar un código, lo coloca en el filtro de texto */}
       {scanning && (
@@ -400,7 +492,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
               {visible.map((row, ri) => {
                 const gIdx = indexOfRow(row)
                 const isSel = selected.has(gIdx)
-                const isMarked = marked.has(gIdx)
+                const isMarked = isRowMarked(row, gIdx)
                 // Título de la ficha: columna de código (si hay actions) o la primera columna.
                 const titleCol = actions ? actions.codeCol : 0
                 const title = (row[titleCol] ?? '').trim() || `Fila ${gIdx + 1}`
@@ -444,7 +536,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
                       </div>
                       {/* Marcar como listo + contador de cantidad encontrada */}
                       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                        <button onClick={() => toggleMark(gIdx)}
+                        <button onClick={() => toggleMarkRow(row, gIdx)}
                           title={isMarked ? 'Quitar marca' : 'Marcar como encontrado'}
                           className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
                             isMarked ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
@@ -454,7 +546,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
                         </button>
                         {isMarked && (
                           <div className="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-1 py-0.5">
-                            <button onClick={() => bumpQty(gIdx, -1)}
+                            <button onClick={() => bumpQtyRow(row, gIdx, -1)}
                               aria-label="Menos cantidad"
                               className="w-5 h-5 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-sm font-bold leading-none">
                               −
@@ -462,11 +554,11 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
                             <input
                               type="number"
                               min={1}
-                              value={markedQty[gIdx] ?? 1}
-                              onChange={(e) => setQty(gIdx, Number(e.target.value))}
+                              value={rowQty(row, gIdx)}
+                              onChange={(e) => setQtyRow(row, gIdx, Number(e.target.value))}
                               className="w-8 text-center bg-transparent text-xs font-bold text-emerald-800 focus:outline-none"
                             />
-                            <button onClick={() => bumpQty(gIdx, 1)}
+                            <button onClick={() => bumpQtyRow(row, gIdx, 1)}
                               aria-label="Más cantidad"
                               className="w-5 h-5 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-sm font-bold leading-none">
                               +
@@ -562,7 +654,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
               {visible.map((row, ri) => {
                 const gIdx = indexOfRow(row)
                 const isSel = selected.has(gIdx)
-                const isMarked = marked.has(gIdx)
+                const isMarked = isRowMarked(row, gIdx)
                 // La fila marcada se pinta de verde (producto cogido); la seleccionada, de azul tenue.
                 const rowClass = isMarked
                   ? 'bg-emerald-50/70'
@@ -580,7 +672,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
                     {/* Botón de marcar + cantidad encontrada */}
                     <td className="px-2 py-2.5 text-center border-r border-[var(--color-border)]">
                       <div className="flex flex-col items-center gap-1">
-                        <button onClick={() => toggleMark(gIdx)}
+                        <button onClick={() => toggleMarkRow(row, gIdx)}
                           title={isMarked ? 'Quitar marca' : 'Marcar como encontrado'}
                           className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
                             isMarked
@@ -591,10 +683,10 @@ function DataTable({ headers, rows, actions, markKey, initialFilter }: DataTable
                         </button>
                         {isMarked && (
                           <div className="flex items-center gap-0.5">
-                            <button onClick={() => bumpQty(gIdx, -1)} aria-label="Menos"
+                            <button onClick={() => bumpQtyRow(row, gIdx, -1)} aria-label="Menos"
                               className="w-4 h-4 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-xs font-bold leading-none">−</button>
-                            <span className="w-5 text-center text-[11px] font-bold text-emerald-800">{markedQty[gIdx] ?? 1}</span>
-                            <button onClick={() => bumpQty(gIdx, 1)} aria-label="Más"
+                            <span className="w-5 text-center text-[11px] font-bold text-emerald-800">{rowQty(row, gIdx)}</span>
+                            <button onClick={() => bumpQtyRow(row, gIdx, 1)} aria-label="Más"
                               className="w-4 h-4 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-xs font-bold leading-none">+</button>
                           </div>
                         )}
@@ -1444,6 +1536,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   headers={viewing.headers}
                   rows={viewing.rows}
                   markKey={`${companyId}_${viewing.id}`}
+                  companyId={companyId}
+                  sheetId={viewing.id}
+                  codeColumn={getSheetColumns(companyId, viewing.id).codeColumn}
                   initialFilter={initialFilter}
                   actions={{
                     codeCol, descCol, extraCols,

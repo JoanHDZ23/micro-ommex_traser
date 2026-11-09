@@ -529,6 +529,26 @@ export interface ReceivedProduct {
   receivedBy: string
   receivedAt: string
   trackingCode?: string
+  /** Unidades marcadas (compartidas por la empresa). 0 = desmarcado. */
+  quantity: number
+  sheetId?: string
+}
+
+/**
+ * Suma/resta unidades marcadas de un producto (atómico en el servidor: varios
+ * empleados pueden marcar a la vez). Si la cantidad llega a 0, se desmarca.
+ */
+export async function adjustProductReceived(
+  companyId: string,
+  productCode: string,
+  delta: number,
+  extra: { trackingCode?: string; sheetId?: string } = {},
+): Promise<ReceivedProduct> {
+  const r = await apiRequest<{ received: ReceivedProduct }>(`/received`, {
+    method: 'POST',
+    body: { companyId, productCode, delta, ...extra },
+  })
+  return r.received
 }
 
 /**

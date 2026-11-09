@@ -54,6 +54,10 @@ export function SettingsPage() {
   const [cleanupDays, setCleanupDays] = useState(20)
   const [savingCleanup, setSavingCleanup] = useState(false)
   const [feedbackCleanup, setFeedbackCleanup] = useState<string | null>(null)
+  // Resultado de la última limpieza (para comprobar que corre) y ejecución manual.
+  type CleanupRun = { at: string; days: number; operationsDeleted: number; filesDeleted: number; keptShared: number; error?: string }
+  const [cleanupLastRun, setCleanupLastRun] = useState<CleanupRun | null>(null)
+  const [runningCleanup, setRunningCleanup] = useState(false)
 
   // Feature: Documentos a Sheets
   const [sheetsEnabled, setSheetsEnabled] = useState(false)
@@ -185,7 +189,7 @@ export function SettingsPage() {
     const load = async () => {
       try {
         const [cleanupData, featuresData, emailData] = await Promise.all([
-          apiRequest<{ cleanupEnabled: boolean; cleanupDays: number }>(`/settings/cleanup?companyId=${encodeURIComponent(companyId)}`),
+          apiRequest<{ cleanupEnabled: boolean; cleanupDays: number; cleanupLastRun?: CleanupRun | null }>(`/settings/cleanup?companyId=${encodeURIComponent(companyId)}`),
           apiRequest<{
             sheetsEnabled: boolean; activityLog: boolean; registrarActividad?: boolean; sendEmail: boolean
             whatsappUnified?: boolean; whatsappAudio?: boolean; whatsappCatalog?: boolean; whatsappDocument?: boolean; markerEditor?: boolean
@@ -196,6 +200,7 @@ export function SettingsPage() {
         ])
         setCleanupEnabled(cleanupData.cleanupEnabled ?? false)
         setCleanupDays(cleanupData.cleanupDays ?? 20)
+        setCleanupLastRun(cleanupData.cleanupLastRun ?? null)
         setAllowed(featuresData.allowed ?? {})
         setSheetsEnabled(featuresData.sheetsEnabled ?? false)
         setActivityLog(featuresData.activityLog ?? false)
@@ -215,6 +220,20 @@ export function SettingsPage() {
     }
     void load()
   }, [companyId])
+
+  // Ejecuta la limpieza YA con la configuración guardada y muestra el resultado.
+  const handleRunCleanup = async () => {
+    if (!companyId) return
+    if (!confirm(`Se eliminarán ahora los registros con más de ${cleanupDays} días y sus fotos. Esta acción no se puede deshacer. ¿Continuar?`)) return
+    setRunningCleanup(true); setFeedbackCleanup(null)
+    try {
+      const r = await apiRequest<{ result: CleanupRun }>('/settings/cleanup/run', { method: 'POST', body: { companyId } })
+      setCleanupLastRun(r.result)
+      setFeedbackCleanup(`✓ Limpieza ejecutada: ${r.result.operationsDeleted} registro(s) y ${r.result.filesDeleted} archivo(s) eliminados.`)
+    } catch (err) {
+      setFeedbackCleanup(err instanceof Error ? err.message : 'No se pudo ejecutar la limpieza.')
+    } finally { setRunningCleanup(false) }
+  }
 
   const handleSaveCleanup = async () => {
     if (!companyId) { setFeedbackCleanup('No se encontró el ID de empresa.'); return }
@@ -508,7 +527,7 @@ export function SettingsPage() {
       <div className="space-y-2">
         <SettingsGroup
           title="Almacenamiento"
-          footer="Cuando está activa, los registros más antiguos del tiempo configurado se eliminan del almacenamiento (R2 y GitHub) y del historial. Puedes recuperarlos dentro de 30 días."
+          footer="Cuando está activa, los registros más antiguos del tiempo configurado se eliminan del historial junto con sus fotos (R2 y GitHub). La eliminación es definitiva. Las fotos que comparte un producto vinculado a un registro vigente se conservan."
         >
           <SettingsToggleRow
             icon={Trash2}
@@ -535,8 +554,20 @@ export function SettingsPage() {
                 ))}
               </div>
               <p className="mt-2 text-[10px] text-[var(--color-text-3)]">
-                Los registros que superen <strong>{cleanupDays} días</strong> se eliminarán del almacenamiento. El sistema revisa diariamente.
+                Los registros que superen <strong>{cleanupDays} días</strong> se eliminarán junto con sus fotos. El sistema revisa cada hora mientras el servidor está activo, y también al guardar.
               </p>
+              {/* Constancia de la última ejecución */}
+              <p className="mt-1.5 text-[10px] text-[var(--color-text-2)]">
+                {cleanupLastRun
+                  ? cleanupLastRun.error
+                    ? `Última limpieza (${new Date(cleanupLastRun.at).toLocaleString('es-CO')}): falló — ${cleanupLastRun.error}`
+                    : `Última limpieza: ${new Date(cleanupLastRun.at).toLocaleString('es-CO')} · ${cleanupLastRun.operationsDeleted} registro(s) y ${cleanupLastRun.filesDeleted} archivo(s) eliminados${cleanupLastRun.keptShared ? ` · ${cleanupLastRun.keptShared} foto(s) conservadas (vinculadas)` : ''}.`
+                  : 'Aún no se ha ejecutado ninguna limpieza.'}
+              </p>
+              <button type="button" onClick={() => void handleRunCleanup()} disabled={runningCleanup}
+                className="mt-2 px-3 py-1.5 rounded-lg text-xs font-medium border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50">
+                {runningCleanup ? 'Ejecutando…' : 'Ejecutar limpieza ahora'}
+              </button>
             </SettingsCustomRow>
           )}
         </SettingsGroup>

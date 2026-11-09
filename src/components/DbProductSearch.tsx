@@ -15,7 +15,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Database, Loader2, Package, QrCode, Search, WifiOff } from 'lucide-react'
 import { NetworkError, searchInSheet, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
+import { adjustReceived, receivedKey, useReceivedMap } from '../lib/received-store'
 import { BarcodeScanner } from './BarcodeScanner'
+import { ReceivedQty } from './ReceivedQty'
 
 export interface DbProductSearchProps {
   /** Id de la tabla DATA fijada en el registro. */
@@ -112,6 +114,18 @@ export function DbProductSearch({
     return () => clearTimeout(t)
   }, [value, runSearch])
 
+  // Marcados con cantidad (compartidos por la empresa): las filas marcadas de
+  // esta DATA se mantienen marcadas al buscarlas, con su cantidad.
+  const companyIdForReceived = getCompanyId()
+  const receivedMap = useReceivedMap(companyIdForReceived)
+  const [receivedError, setReceivedError] = useState<string | null>(null)
+  const changeReceived = (code: string, delta: number) => {
+    if (!code.trim()) return
+    setReceivedError(null)
+    void adjustReceived(companyIdForReceived, code, delta, { sheetId })
+      .catch(() => setReceivedError('No se pudo actualizar la cantidad. Revisa la conexión.'))
+  }
+
   const handleChange = (raw: string) => {
     const clean = codeType === 'numeric' ? raw.replace(/[^0-9]/g, '') : raw
     setValue(clean)
@@ -187,18 +201,25 @@ export function DbProductSearch({
           </div>
         ) : total === 1 ? (
           /* Único: se autoselecciona; se muestra confirmación tappable */
-          <button
-            type="button"
-            onClick={() => onSelect(results[0], headers)}
-            className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-left hover:bg-emerald-100 transition-colors"
-          >
-            <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-emerald-800 truncate">{results[0].code}</p>
-              {results[0].descripcion && <p className="text-[11px] text-emerald-700 truncate">{results[0].descripcion}</p>}
-            </div>
-            <span className="text-[10px] font-semibold text-emerald-700 flex-shrink-0">Usar</span>
-          </button>
+          <div className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200">
+            <button
+              type="button"
+              onClick={() => onSelect(results[0], headers)}
+              className="min-w-0 flex-1 flex items-center gap-2.5 text-left"
+            >
+              <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-emerald-800 truncate">{results[0].code}</p>
+                {results[0].descripcion && <p className="text-[11px] text-emerald-700 truncate">{results[0].descripcion}</p>}
+              </div>
+              <span className="text-[10px] font-semibold text-emerald-700 flex-shrink-0">Usar</span>
+            </button>
+            {results[0].code && (
+              <ReceivedQty compact
+                info={receivedMap.get(receivedKey(results[0].code))}
+                onChange={(d) => changeReceived(results[0].code, d)} />
+            )}
+          </div>
         ) : (
           /* Varios: lista para validar y seleccionar el correcto */
           <div className="space-y-1.5">
@@ -207,25 +228,37 @@ export function DbProductSearch({
               {total} coincidencias{total > results.length ? ` (mostrando ${results.length})` : ''} · elige el correcto
             </div>
             <div className="max-h-56 overflow-y-auto space-y-1 rounded-lg border border-gray-100 p-1">
-              {results.map((item) => (
-                <button
-                  key={item.rowIndex}
-                  type="button"
-                  onClick={() => onSelect(item, headers)}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left hover:bg-emerald-50 transition-colors"
-                >
-                  <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-gray-800 truncate">{item.code || '(sin código)'}</p>
-                    {item.descripcion && <p className="text-[11px] text-gray-500 truncate">{item.descripcion}</p>}
+              {results.map((item) => {
+                const info = item.code ? receivedMap.get(receivedKey(item.code)) : undefined
+                return (
+                  <div key={item.rowIndex}
+                    className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors ${info ? 'bg-emerald-50/70' : 'hover:bg-emerald-50'}`}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(item, headers)}
+                      className="min-w-0 flex-1 flex items-center gap-2.5 text-left"
+                    >
+                      <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-gray-800 truncate">{item.code || '(sin código)'}</p>
+                        {item.descripcion && <p className="text-[11px] text-gray-500 truncate">{item.descripcion}</p>}
+                      </div>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium flex-shrink-0">Usar</span>
+                    </button>
+                    {item.code && (
+                      <ReceivedQty compact info={info} onChange={(d) => changeReceived(item.code, d)} />
+                    )}
                   </div>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium flex-shrink-0">Usar</span>
-                </button>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}
       </div>
+
+      {receivedError && (
+        <p className="text-[11px] text-red-600">{receivedError}</p>
+      )}
 
       {scannerOpen && (
         <BarcodeScanner onResult={onScan} onClose={() => setScannerOpen(false)} />

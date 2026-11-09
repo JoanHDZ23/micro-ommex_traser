@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, Search, Send, SlidersHorizontal, Trash2, Wifi, WifiOff, X } from 'lucide-react'
-import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, warmSheetCache, getReceivedProducts, markProductReceived, unmarkProductReceived, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
+import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, warmSheetCache, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { DbProductSearch } from '../components/DbProductSearch'
@@ -27,6 +27,8 @@ import { collectAllServerPhotos, pendingLocalPhotos } from '../lib/photo-reconci
 import { canReadClipboard, onlyImageFiles, resolveTrayDestination } from '../lib/tray-destination'
 import { saveTrayDraft, loadTrayDraft, clearTrayDraft } from '../lib/tray-cache'
 import { rememberLastProduct, getLastProduct } from '../lib/last-product'
+import { adjustReceived, receivedKey, refreshReceived, useReceivedMap } from '../lib/received-store'
+import { ReceivedQty } from '../components/ReceivedQty'
 
 /** URL directa de R2: driveUrl http(s) que no es de Google. */
 function directUrl(photo: Pick<PhotoRecord, 'driveUrl'>): string | null {
@@ -1528,47 +1530,26 @@ export function WizardPage() {
   const lbProducts = operation?.lineaBlanca ?? []
   const activeLbData = lbProducts.find((p) => p.productCode === activeLbProduct)
 
-  // ── Productos RECIBIDOS (compartido por empresa, Opción: marcar recibido) ──
-  // Mapa productCode → info de quién/cuándo lo marcó. Se carga del servidor y se
-  // refresca con el polling para que TODOS los empleados lo vean en vivo.
-  const [receivedMap, setReceivedMap] = useState<Map<string, { receivedBy: string; receivedAt: string }>>(new Map())
-  const receivedMapRef = useRef(receivedMap)
-  useEffect(() => { receivedMapRef.current = receivedMap }, [receivedMap])
-  const refreshReceived = useCallback(async () => {
+  // ── Productos RECIBIDOS con CANTIDAD (compartido por empresa) ──
+  // Almacén común (received-store): las mismas cantidades se ven aquí, en el
+  // buscador de la DATA y en el visor de tablas. Se refresca con el polling
+  // para que TODOS los empleados vean lo que marcan los demás.
+  const receivedCompanyId = operation?.companyId || getCompanyId()
+  const receivedMap = useReceivedMap(receivedCompanyId)
+  useEffect(() => { if (receivedCompanyId) void refreshReceived(receivedCompanyId) }, [receivedCompanyId, operation])
+
+  // Suma/resta unidades marcadas. El servidor suma de forma atómica, así dos
+  // empleados marcando a la vez no pierden unidades.
+  const changeReceived = useCallback(async (productCode: string, delta: number) => {
     const cid = operationRef.current?.companyId || getCompanyId()
     if (!cid) return
     try {
-      const list = await getReceivedProducts(cid)
-      const m = new Map<string, { receivedBy: string; receivedAt: string }>()
-      for (const r of list) m.set(r.productCode, { receivedBy: r.receivedBy, receivedAt: r.receivedAt })
-      setReceivedMap(m)
-    } catch { /* sin conexión: se mantiene el último estado conocido */ }
-  }, [])
-  // Carga inicial + refresco cuando cambia la operación (el polling actualiza
-  // `operation`, lo que dispara este efecto para refrescar los recibidos).
-  useEffect(() => { void refreshReceived() }, [refreshReceived, operation])
-
-  // Marca/desmarca un producto como recibido (toggle). Persiste en el servidor
-  // (compartido por empresa) y actualiza el estado local al instante.
-  const [receivedBusy, setReceivedBusy] = useState<Set<string>>(new Set())
-  const toggleReceived = useCallback(async (productCode: string) => {
-    const cid = operationRef.current?.companyId || getCompanyId()
-    if (!cid || !trackingCode) return
-    // Bloquea el botón para este producto (evita doble-clic).
-    setReceivedBusy((prev) => new Set(prev).add(productCode))
-    const isReceived = receivedMapRef.current.has(productCode)
-    try {
-      if (isReceived) {
-        await unmarkProductReceived(cid, productCode)
-        setReceivedMap((prev) => { const n = new Map(prev); n.delete(productCode); return n })
-      } else {
-        const r = await markProductReceived(cid, productCode, trackingCode)
-        setReceivedMap((prev) => new Map(prev).set(productCode, { receivedBy: r.receivedBy, receivedAt: r.receivedAt }))
-      }
+      await adjustReceived(cid, productCode, delta, {
+        trackingCode,
+        sheetId: recordSettingsRef.current.dbSheetId || getPrimarySheetId(cid) || undefined,
+      })
     } catch {
-      setFeedback('No se pudo actualizar el estado de recibido. Revisa la conexión.')
-    } finally {
-      setReceivedBusy((prev) => { const n = new Set(prev); n.delete(productCode); return n })
+      setFeedback('No se pudo actualizar la cantidad recibida. Revisa la conexión.')
     }
   }, [trackingCode])
 
@@ -3243,21 +3224,11 @@ export function WizardPage() {
                           </span>
                         )}
                       </button>
-                      {/* Recibido (compartido por empresa): marca visible para todos */}
-                      {(() => {
-                        const info = receivedMap.get(product.productCode)
-                        const busy = receivedBusy.has(product.productCode)
-                        return (
-                          <button
-                            onClick={() => void toggleReceived(product.productCode)}
-                            disabled={busy}
-                            title={info ? `Recibido por ${info.receivedBy} el ${new Date(info.receivedAt).toLocaleString('es-CO')}` : 'Marcar como recibido (visible para toda la empresa)'}
-                            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium disabled:opacity-50 ${info ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'}`}>
-                            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                            {info ? 'Recibido' : 'Recibido'}
-                          </button>
-                        )
-                      })()}
+                      {/* Recibido con cantidad (compartido por empresa) */}
+                      <ReceivedQty
+                        info={receivedMap.get(receivedKey(product.productCode))}
+                        onChange={(delta) => void changeReceived(product.productCode, delta)}
+                      />
                     </div>
 
                     {/* Expanded: photo list + add photo */}
@@ -3417,21 +3388,11 @@ export function WizardPage() {
                         <X className="w-3 h-3" /> Desvincular
                       </button>
                     )}
-                    {/* Recibido (compartido por empresa): marca visible para todos */}
-                    {(() => {
-                      const info = receivedMap.get(p.productCode)
-                      const busy = receivedBusy.has(p.productCode)
-                      return (
-                        <button
-                          onClick={() => void toggleReceived(p.productCode)}
-                          disabled={busy}
-                          title={info ? `Recibido por ${info.receivedBy} el ${new Date(info.receivedAt).toLocaleString('es-CO')}` : 'Marcar como recibido (visible para toda la empresa)'}
-                          className={`px-2 py-1 rounded text-[10px] font-medium flex items-center gap-1 disabled:opacity-50 ${info ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'}`}>
-                          {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-                          {info ? 'Recibido' : 'Marcar recibido'}
-                        </button>
-                      )
-                    })()}
+                    {/* Recibido con cantidad (compartido por empresa) */}
+                    <ReceivedQty
+                      info={receivedMap.get(receivedKey(p.productCode))}
+                      onChange={(delta) => void changeReceived(p.productCode, delta)}
+                    />
                   </div>
                 </div>
               )
