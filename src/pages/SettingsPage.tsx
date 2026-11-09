@@ -5,6 +5,7 @@ import {
   Mail, Mic, FileText, Link2, ClipboardPaste, Image as ImageIcon, ListChecks,
 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
+import { renewSession } from '../lib/auth'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { WhatsAppSync } from '../components/WhatsAppSync'
@@ -226,8 +227,21 @@ export function SettingsPage() {
     if (!companyId) return
     if (!confirm(`Se eliminarán ahora los registros con más de ${cleanupDays} días y sus fotos. Esta acción no se puede deshacer. ¿Continuar?`)) return
     setRunningCleanup(true); setFeedbackCleanup(null)
+    const run = () => apiRequest<{ result: CleanupRun }>('/settings/cleanup/run', { method: 'POST', body: { companyId } })
     try {
-      const r = await apiRequest<{ result: CleanupRun }>('/settings/cleanup/run', { method: 'POST', body: { companyId } })
+      let r: { result: CleanupRun }
+      try {
+        r = await run()
+      } catch (err) {
+        // Sesión de otra empresa (token viejo de la pestaña): se renueva con la
+        // identidad actual y se reintenta una vez.
+        if (err instanceof Error && /otra empresa/i.test(err.message)) {
+          await renewSession()
+          r = await run()
+        } else {
+          throw err
+        }
+      }
       setCleanupLastRun(r.result)
       setFeedbackCleanup(`✓ Limpieza ejecutada: ${r.result.operationsDeleted} registro(s) y ${r.result.filesDeleted} archivo(s) eliminados.`)
     } catch (err) {

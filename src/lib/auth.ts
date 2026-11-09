@@ -25,13 +25,51 @@ let _creating: Promise<string | null> | null = null
 let _heartbeatTimer: ReturnType<typeof setInterval> | null = null
 let _activityBound = false
 
-function readStoredToken(): string | null {
-  if (_token) return _token
+/**
+ * Lee la identidad con la que se emitió un token (el payload viaja en claro,
+ * firmado). Solo se usa para saber si el token sigue correspondiendo al usuario
+ * actual; la validación real la hace el servidor con la firma.
+ */
+function tokenIdentity(token: string): { companyId: string; user: string; role: string } | null {
   try {
-    const t = sessionStorage.getItem(SS_TOKEN)
-    if (t) _token = t
-  } catch { /* modo privado */ }
-  return _token
+    const body = token.split('.')[0] ?? ''
+    const b64 = body.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((body.length + 3) % 4)
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+    const p = JSON.parse(new TextDecoder().decode(bytes)) as { companyId?: string; user?: string; role?: string }
+    return { companyId: String(p.companyId ?? ''), user: String(p.user ?? ''), role: String(p.role ?? '') }
+  } catch {
+    return null
+  }
+}
+
+function readStoredToken(): string | null {
+  let t = _token
+  if (!t) {
+    try { t = sessionStorage.getItem(SS_TOKEN) } catch { /* modo privado */ }
+  }
+  if (!t) return null
+  // El token se conserva en la pestaña: si el portal abrió trazabilidad con
+  // OTRA empresa (o usuario/rol) que la del token guardado, ese token ya no es
+  // válido para esta identidad. Se descarta para que se cree uno nuevo; si no,
+  // el servidor trataba al usuario como de la empresa anterior (p. ej. "No
+  // puedes ejecutar la limpieza de otra empresa").
+  // Se compara recortado: el servidor guarda la identidad con trim().
+  const cid = getCompanyId().trim()
+  if (cid) {
+    const id = tokenIdentity(t)
+    if (
+      !id
+      || id.companyId !== cid
+      || id.user !== getOperatorName().trim()
+      || id.role !== getUserRole().trim()
+    ) {
+      _token = null
+      try { sessionStorage.removeItem(SS_TOKEN) } catch { /* noop */ }
+      return null
+    }
+  }
+  _token = t
+  return t
 }
 
 function storeToken(token: string | null): void {
