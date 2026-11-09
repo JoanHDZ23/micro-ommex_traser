@@ -63,14 +63,30 @@ export function pendingLocalPhotos<T extends LocalPhotoLike>(
   local: T[],
   serverPhotos: ServerPhotoLike[],
 ): T[] {
+  // Fotos del servidor que YA se pueden ver…
   const { clientKeys, timestamps } = serverKeySets(serverPhotos)
+  // …y TODAS las que el servidor conoce (aunque aún no tengan URL usable).
+  const knownKeys = new Set<string>()
+  const knownTimestamps = new Set<string>()
+  for (const p of serverPhotos) {
+    if (p.clientKey) knownKeys.add(p.clientKey)
+    if (p.timestamp) knownTimestamps.add(p.timestamp)
+  }
+
   return local.filter((c) => {
+    const iso = new Date(c.timestamp).toISOString()
     // Solo se oculta la miniatura local cuando la foto del servidor ya puede
     // verse realmente. Si la red se cae en medio y el backend devuelve una
     // foto "confirmada" pero sin URL usable, mantenemos la local visible.
     if (c.clientKey && clientKeys.has(c.clientKey)) return false
     // Respaldo para fotos sin clientKey: match por timestamp ISO.
-    if (!c.clientKey && timestamps.has(new Date(c.timestamp).toISOString())) return false
+    if (!c.clientKey && timestamps.has(iso)) return false
+    // Ya subida: solo sigue visible mientras el servidor la tiene pero aún no
+    // se puede ver. Si el servidor ya NO la tiene (p. ej. se eliminó), no debe
+    // reaparecer desde la copia local.
+    if (c.uploaded) {
+      return c.clientKey ? knownKeys.has(c.clientKey) : knownTimestamps.has(iso)
+    }
     return true
   })
 }

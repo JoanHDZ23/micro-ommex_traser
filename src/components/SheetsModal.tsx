@@ -12,6 +12,7 @@ import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
 import { adjustReceived, getReceived, receivedKey, refreshReceived, useReceivedMap } from '../lib/received-store'
+import { buildStyledXlsx, downloadBlob } from '../lib/xlsx-styled'
 import {
   parseFileLocally, parsePdfLocally, isPdf, saveLocalTable, listLocalTables,
   getLocalTable, updateLocalTableRows, deleteLocalTable,
@@ -1281,14 +1282,27 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
         truncated = data.rowsTruncated === true
         fromStoredCopy = Boolean(sheet.sheetUrl) && data.source !== 'sheet'
       }
-      // SheetJS se carga solo al descargar (no pesa en el arranque).
-      const XLSX = await import('xlsx')
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
-      const wb = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(wb, ws, 'DATA')
+      // Filas MARCADAS (compartidas por la empresa, por código de producto):
+      // se pintan en VERDE y se añade la columna "Cantidad marcada".
+      await refreshReceived(companyId)
+      const codeCol = getSheetColumns(companyId, sheet.id).codeColumn
+      const width = Math.max(headers.length, rows.reduce((w, r) => Math.max(w, r.length), 0))
+      const markedRows = new Set<number>()
+      const qtyByRow: number[] = rows.map((row, i) => {
+        const code = codeCol >= 0 ? String(row[codeCol] ?? '').trim() : ''
+        const q = code ? (getReceived(code)?.quantity ?? 0) : 0
+        if (q > 0) markedRows.add(i)
+        return q
+      })
+      const outHeaders = [...Array.from({ length: width }, (_, c) => headers[c] ?? `Columna ${c + 1}`), 'Cantidad marcada']
+      const outRows = rows.map((row, i) => [
+        ...Array.from({ length: width }, (_, c) => row[c] ?? ''),
+        qtyByRow[i] > 0 ? String(qtyByRow[i]) : '',
+      ])
+      const blob = buildStyledXlsx({ headers: outHeaders, rows: outRows, markedRows, boldMarkedColumn: width })
       const safeName = (sheet.sheetName || 'data').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'data'
       const stamp = new Date().toISOString().slice(0, 10)
-      XLSX.writeFile(wb, `${safeName}_${stamp}.xlsx`)
+      downloadBlob(blob, `${safeName}_${stamp}.xlsx`)
       if (truncated) {
         setError(`Se descargaron las primeras ${rows.length} filas: la tabla supera el máximo que guarda la app.`)
       } else if (fromStoredCopy) {
