@@ -17,6 +17,8 @@ import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { compressImageToBase64 } from '../lib/image-compress'
 import { BarcodeScanner } from '../components/BarcodeScanner'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
+import { runSendInBackground, sendMany } from '../lib/background-send'
+import { sendOperationEmailInBackground, sendOperationWhatsAppInBackground } from '../lib/operation-share'
 import type { PhotoRecord } from '../lib/api'
 import { useTracerFeatures } from '../lib/tracer-features'
 import { getCompanyId } from '../lib/context'
@@ -165,7 +167,6 @@ export function WizardPage() {
   const [error, setError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [feedback, setFeedback] = useState<string | null>(null)
-  const [sentModalMessage, setSentModalMessage] = useState<string | null>(null)
   const [showCamera, setShowCamera] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
 
@@ -513,7 +514,6 @@ export function WizardPage() {
   // después de guardar un registro que ya estaba completado.
   const [showSendSelector, setShowSendSelector] = useState(false)
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
-  const [sendingSelected, setSendingSelected] = useState(false)
 
   // Editor de imagen (marcador): intercepta una foto general antes de guardarla.
   const [imgEditor, setImgEditor] = useState<{ src: string; comment: string } | null>(null)
@@ -577,7 +577,6 @@ export function WizardPage() {
   // producto) se envía a CADA chat. Clave de selección: `${partId}|${to}`.
   const [matrixModal, setMatrixModal] = useState<{ open: boolean; dests: WaDest[] }>({ open: false, dests: [] })
   const [matrixSel, setMatrixSel] = useState<Set<string>>(new Set())
-  const [matrixSending, setMatrixSending] = useState(false)
 
   type SharePart = { id: string; label: string; kind: 'header' | 'generalPhotos' | 'product'; productCode?: string }
   const shareParts = useMemo<SharePart[]>(() => {
@@ -619,33 +618,37 @@ export function WizardPage() {
   }
 
   // Envía, por cada chat, solo las partes marcadas para ese chat.
-  const sendShareMatrix = async () => {
+  // Corre en segundo plano: se cierra el modal al instante y una notificación
+  // flotante avisa el resultado (se puede seguir usando la app).
+  const sendShareMatrix = () => {
     if (!trackingCode || matrixSel.size === 0) return
-    setMatrixSending(true)
+    const tc = trackingCode
     const generalIdx = (operation?.photos ?? []).map((p, i) => ({ p, i }))
       .filter(({ p }) => p.driveUrl && p.driveUrl !== 'pending-verification' && /^https?:\/\//.test(p.driveUrl) && (!p.mediaType || p.mediaType === 'image'))
       .map(({ i }) => i)
-    let ok = 0, fail = 0
+    const fields = [...headerFields]
+    // Se fija la lista de envíos AHORA (no depende de la pantalla después).
+    const jobs: Array<{ to: string; part: SharePart }> = []
     for (const dest of matrixModal.dests) {
       for (const part of shareParts) {
-        if (!matrixSel.has(mkey(part.id, dest.to))) continue
-        try {
-          if (part.kind === 'header') {
-            await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to: dest.to, headerFields: [...headerFields], headerOnly: true } })
-          } else if (part.kind === 'generalPhotos') {
-            if (generalIdx.length) await apiRequest('/whatsapp-web/send-photo-group', { method: 'POST', body: { trackingCode, photoIndices: generalIdx, to: dest.to } })
-          } else if (part.kind === 'product' && part.productCode) {
-            await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode, productCode: part.productCode, to: dest.to } })
-          }
-          ok++
-        } catch { fail++ }
+        if (matrixSel.has(mkey(part.id, dest.to))) jobs.push({ to: dest.to, part })
       }
     }
-    setMatrixSending(false)
     setMatrixModal({ open: false, dests: [] })
-    const msg = fail === 0 ? `✓ Enviado (${ok} envío/s).` : `✓ ${ok} enviado(s), ${fail} fallido(s).`
-    setFeedback(msg)
-    if (ok > 0) setSentModalMessage(msg)
+    runSendInBackground({
+      channel: 'whatsapp',
+      label: `Registro ${tc}`,
+      key: `wa:matrix:${tc}:${[...matrixSel].sort().join(',')}`,
+      run: () => sendMany(jobs, async ({ to, part }) => {
+        if (part.kind === 'header') {
+          await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode: tc, to, headerFields: fields, headerOnly: true } })
+        } else if (part.kind === 'generalPhotos') {
+          if (generalIdx.length) await apiRequest('/whatsapp-web/send-photo-group', { method: 'POST', body: { trackingCode: tc, photoIndices: generalIdx, to } })
+        } else if (part.kind === 'product' && part.productCode) {
+          await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode: tc, productCode: part.productCode, to } })
+        }
+      }, (ok) => `${ok} envío(s)`),
+    })
   }
 
   const confirmDestinations = () => {
@@ -2226,24 +2229,18 @@ export function WizardPage() {
     const tos = await pickDestinations()
     if (tos === null) return // canceló
     const targets = (tos && tos.length) ? tos : [undefined] // undefined → default del backend
-    setSendingSelected(true)
-    let ok = 0
-    let fail = 0
-    for (const to of targets) {
-      for (const code of codes) {
-        try {
-          await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode, productCode: code, ...(to ? { to } : {}) } })
-          ok++
-        } catch {
-          fail++
-        }
-      }
-    }
-    setSendingSelected(false)
+    const tc = trackingCode
+    const jobs = targets.flatMap((to) => codes.map((code) => ({ to, code })))
     setShowSendSelector(false)
-    const msg = fail === 0 ? `✓ Enviados ${ok} envío(s) por WhatsApp.` : `✓ ${ok} enviado(s), ${fail} fallido(s).`
-    setFeedback(msg)
-    if (ok > 0) setSentModalMessage(msg)
+    // Segundo plano: la notificación flotante avisa el resultado.
+    runSendInBackground({
+      channel: 'whatsapp',
+      label: `${codes.length} producto(s) de ${tc}`,
+      key: `wa:selected:${tc}:${codes.join(',')}:${targets.join(',')}`,
+      run: () => sendMany(jobs, async ({ to, code }) => {
+        await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode: tc, productCode: code, ...(to ? { to } : {}) } })
+      }, (ok) => `${ok} envío(s)`),
+    })
   }
 
   const toggleSelectedItem = (code: string) => {
@@ -2298,50 +2295,13 @@ export function WizardPage() {
     if (!trackingCode) return
     const tos = await pickDestinations()
     if (tos === null) return // el usuario canceló el selector
-    setFeedback('⏳ Enviando registro a WhatsApp…')
-    try {
-      if (!tos || tos.length === 0) {
-        const r = await apiRequest<{ message: string; partial?: boolean; failedParts?: number; sent?: number }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, headerFields: [...headerFields] } })
-        const msg = `✓ ${r.message}`
-        setFeedback(msg)
-        setSentModalMessage(msg)
-      } else {
-        let ok = 0
-        let partial = 0
-        for (const to of tos) {
-          try {
-            const r = await apiRequest<{ partial?: boolean; sent?: number; failedParts?: number }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to, headerFields: [...headerFields] } })
-            ok++
-            if (r.partial) partial++
-          } catch { /* sigue */ }
-        }
-        const msg = ok === 0
-          ? `No se pudo enviar el registro a ninguno de los ${tos.length} chat(s).`
-          : partial > 0
-            ? `✓ Registro enviado a ${ok} chat(s), con contenido parcial en ${partial}.`
-            : ok === tos.length
-              ? `✓ Registro enviado a ${ok} chat(s).`
-              : `✓ Enviado a ${ok} de ${tos.length} chat(s).`
-        setFeedback(msg)
-        if (ok > 0) setSentModalMessage(msg)
-      }
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
-    }
+    sendOperationWhatsAppInBackground(trackingCode, tos ?? [], [...headerFields])
   }
 
-  // Envía el registro completo por correo electrónico.
-  const handleShareEmail = async () => {
+  // Envía el registro completo por correo electrónico (segundo plano).
+  const handleShareEmail = () => {
     if (!trackingCode) return
-    setFeedback('⏳ Enviando registro por correo…')
-    try {
-      const r = await apiRequest<{ message: string }>(`/operations/${trackingCode}/send-email`, {
-        method: 'POST',
-      })
-      setFeedback(`✓ ${r.message}`)
-    } catch (err) {
-      setFeedback(err instanceof Error ? err.message : 'No se pudo enviar por correo.')
-    }
+    sendOperationEmailInBackground(trackingCode)
   }
 
   // ── Delete photo ──
@@ -2609,8 +2569,6 @@ export function WizardPage() {
                 photoIndices: Array.from(selectedPhotos).sort((a, b) => a - b),
                 productCodes: Array.from(selectedProducts),
               }}
-              onResult={setFeedback}
-              onSuccess={setSentModalMessage}
               onSent={exitSelectMode}
               title="Enviar seleccionados por WhatsApp"
               className="flex items-center gap-1 px-3 py-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white text-xs font-semibold"
@@ -2710,7 +2668,7 @@ export function WizardPage() {
               <button onClick={() => void handleShareOperation()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-[#128c7e] text-white text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
                 <Send className="w-3.5 h-3.5" /> WhatsApp
               </button>
-              <button onClick={() => void handleShareEmail()} disabled={uploading} className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
+              <button onClick={handleShareEmail} disabled={uploading} className="flex-1 py-2 rounded-lg bg-indigo-600 text-white text-xs font-medium flex items-center justify-center gap-1.5 disabled:opacity-50">
                 <Mail className="w-3.5 h-3.5" /> Correo
               </button>
             </div>
@@ -3817,33 +3775,8 @@ export function WizardPage() {
         <WhatsAppSync syncOnly />
       </Modal>
 
-      <Modal
-        open={Boolean(sentModalMessage)}
-        onClose={() => setSentModalMessage(null)}
-        z={99}
-        size="sm"
-        title="Enviado"
-        icon={<MessageCircle className="w-4 h-4 text-[#128c7e]" />}
-        footer={
-          <button
-            type="button"
-            onClick={() => setSentModalMessage(null)}
-            className="w-full py-2.5 rounded-xl bg-[#128c7e] text-white text-sm font-semibold"
-          >
-            Cerrar
-          </button>
-        }
-      >
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
-          <div className="flex items-start gap-3">
-            <CheckCircle2 className="w-5 h-5 mt-0.5 flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="font-semibold">El contenido fue enviado por WhatsApp.</p>
-              <p className="mt-1 text-xs text-emerald-700">{sentModalMessage}</p>
-            </div>
-          </div>
-        </div>
-      </Modal>
+      {/* El resultado de los envíos (WhatsApp/correo) se muestra en la
+          notificación flotante global (SendToasts), sin bloquear la pantalla. */}
 
       {/* Ajustes de ESTE registro (marca de agua y partes del sello) */}
       <Modal
@@ -3983,9 +3916,9 @@ export function WizardPage() {
             </div>
             <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200">
               <button onClick={() => setMatrixModal({ open: false, dests: [] })} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600">Cancelar</button>
-              <button onClick={() => void sendShareMatrix()} disabled={matrixSel.size === 0 || matrixSending}
+              <button onClick={sendShareMatrix} disabled={matrixSel.size === 0}
                 className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
-                <Send className="w-4 h-4" /> {matrixSending ? 'Enviando…' : `Enviar (${matrixSel.size})`}
+                <Send className="w-4 h-4" /> {`Enviar (${matrixSel.size})`}
               </button>
             </div>
           </div>
@@ -4134,14 +4067,10 @@ export function WizardPage() {
               </button>
               <button
                 onClick={() => void handleSendSelected()}
-                disabled={sendingSelected || selectedItems.size === 0}
+                disabled={selectedItems.size === 0}
                 className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2"
               >
-                {sendingSelected ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Enviando…</>
-                ) : (
-                  <><Send className="w-4 h-4" /> Enviar ({selectedItems.size})</>
-                )}
+                <Send className="w-4 h-4" /> Enviar ({selectedItems.size})
               </button>
             </div>
           </div>

@@ -4,6 +4,7 @@ import { Layout } from './components/Layout'
 import { HomePage } from './pages/HomePage'
 import { LoadingState } from './components/ui'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { SendToasts } from './components/SendToasts'
 import { invalidateTracerFeaturesCache } from './lib/tracer-features'
 import { apiRequest } from './lib/api'
 import { getCompanyId, hasIdentity } from './lib/context'
@@ -168,6 +169,8 @@ export default function App() {
         </Routes>
       </Suspense>
       </ErrorBoundary>
+      {/* Avisos flotantes de envíos en segundo plano (WhatsApp / correo) */}
+      <SendToasts />
     </BrowserRouter>
   )
 }

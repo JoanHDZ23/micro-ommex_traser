@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
-import { Send, Loader2, CheckCircle2, MessageCircle } from 'lucide-react'
+import { Send, Loader2, CheckCircle2 } from 'lucide-react'
 import { apiRequest } from '../lib/api'
+import { notifyToast, runSendInBackground, sendMany } from '../lib/background-send'
 import { getCompanyId } from '../lib/context'
 import { Modal } from './ui'
 
@@ -35,9 +36,12 @@ interface Props {
   className?: string
   title?: string
   disabled?: boolean
-  /** Notifica el resultado (p. ej. para mostrar feedback global). */
+  /**
+   * @deprecated El progreso y el resultado ahora se muestran en la notificación
+   * flotante (envío en segundo plano). Se ignora; se conserva por compatibilidad.
+   */
   onResult?: (msg: string) => void
-  /** Se llama cuando el envío termina con al menos un éxito. */
+  /** Se llama en cuanto el envío queda en marcha (segundo plano), p. ej. para salir del modo selección. */
   onSent?: () => void
   /** Se llama con el mensaje final cuando hubo al menos un envío exitoso. */
   onSuccess?: (msg: string) => void
@@ -46,19 +50,16 @@ interface Props {
 }
 
 export function WhatsAppSendButton({
-  target, children, className, title, disabled, onResult, onSent, onSuccess, onError,
+  target, children, className, title, disabled, onSent, onSuccess, onError,
 }: Props) {
-  const [sending, setSending] = useState(false)
-  const [localMsg, setLocalMsg] = useState<string | null>(null)
-  const [successModal, setSuccessModal] = useState<string | null>(null)
+  // Solo mientras se cargan los chats (el envío en sí corre en segundo plano).
+  const [picking, setPicking] = useState(false)
   // Selector de destino(s).
   const [modal, setModal] = useState<{ open: boolean; options: WaDest[]; resolve: ((tos: string[] | null) => void) | null }>(
     { open: false, options: [], resolve: null },
   )
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [manual, setManual] = useState('')
-
-  const notify = (msg: string) => { setLocalMsg(msg); onResult?.(msg) }
 
   /** Carga destinos y resuelve a qué chat(s) enviar (abre el modal siempre). */
   const pickDestinations = async (): Promise<string[] | null | undefined> => {
@@ -106,8 +107,7 @@ export function WhatsAppSendButton({
   }
 
   /** Ejecuta un envío a un chat concreto (o default del backend si to=null). */
-  const sendOne = async (to: string | null): Promise<void> => {
-    const t = target
+  const sendOne = async (to: string | null, t: SendTarget): Promise<void> => {
     const toBody = to ? { to } : {}
     if (t.kind === 'product') {
       await sendOnce('/whatsapp-web/send-product', { trackingCode: t.trackingCode, productCode: t.productCode, ...toBody })
@@ -129,44 +129,56 @@ export function WhatsAppSendButton({
     }
   }
 
-  const handleClick = async () => {
-    if (sending) return
-    let tos: string[] | null | undefined
-    try { tos = await pickDestinations() } catch {
-      notify('No se pudo cargar los destinos de WhatsApp.'); return
+  /** Texto corto de lo que se envía, para la notificación flotante. */
+  const describeTarget = (t: SendTarget): string => {
+    if (t.kind === 'product') return `Producto ${t.productCode}`
+    if (t.kind === 'album') return `Álbum de ${t.photoIndices.length} foto(s)`
+    if (t.kind === 'photos') return `${t.photoIndices.length} mensaje(s)`
+    if (t.kind === 'mixed') {
+      const parts: string[] = []
+      if (t.photoIndices.length) parts.push(`${t.photoIndices.length} mensaje(s)`)
+      if (t.productCodes.length) parts.push(`${t.productCodes.length} producto(s)`)
+      return parts.join(' y ') || 'Selección'
     }
+    return 'Mensaje'
+  }
+  const targetKey = (t: SendTarget): string => {
+    if (t.kind === 'product') return `product:${t.productCode}`
+    if (t.kind === 'photo') return `photo:${t.photoIndex}`
+    if (t.kind === 'mixed') return `mixed:${t.photoIndices.join(',')}|${t.productCodes.join(',')}`
+    return `${t.kind}:${t.photoIndices.join(',')}`
+  }
+
+  const handleClick = async () => {
+    if (picking) return
+    let tos: string[] | null | undefined
+    setPicking(true)
+    try { tos = await pickDestinations() } catch {
+      notifyToast('error', 'No se pudieron cargar los chats de WhatsApp', undefined, 'whatsapp'); return
+    } finally { setPicking(false) }
     if (tos === null) return // canceló
     if (tos !== undefined && tos.length === 0) {
-      notify('No hay destino de WhatsApp configurado. Ve a Configuración.'); return
+      notifyToast('error', 'No hay destino de WhatsApp', 'Configura un chat en Configuración o escribe un número.', 'whatsapp'); return
     }
     const targets = tos && tos.length ? tos : [null]
-    setSending(true)
-    notify('⏳ Enviando…')
-    let ok = 0
-    let failed = 0
-    let lastErr = ''
-    for (const to of targets) {
-      try { await sendOne(to); ok++ } catch (e) { failed++; lastErr = e instanceof Error ? e.message : 'Error al enviar' }
-    }
-    setSending(false)
-    if (ok > 0 && failed === 0) {
-      const msg = `✓ Enviado a ${ok} chat(s).`
-      notify(msg)
-      setSuccessModal(msg)
-      onSuccess?.(msg)
-      onSent?.()
-    } else if (ok > 0 && failed > 0) {
-      // Éxito parcial: informa claramente qué pasó sin ocultar el fallo.
-      const msg = `✓ Enviado a ${ok} · ✗ ${failed} falló(s). ${lastErr}`
-      notify(msg)
-      setSuccessModal(msg)
-      onSuccess?.(msg)
-      onSent?.()
-    } else {
-      const msg = lastErr || 'No se pudo enviar.'
-      notify(msg)
-      onError?.(msg)
-    }
+    // Se captura el destino AHORA: si la pantalla cambia, el envío no se altera.
+    const t = target
+    const label = describeTarget(t)
+    // El envío corre en segundo plano: la app sigue usable y una notificación
+    // flotante avisa el resultado. La selección se libera de inmediato.
+    runSendInBackground({
+      channel: 'whatsapp',
+      label,
+      key: `wa:${t.trackingCode}:${targetKey(t)}:${targets.join(',')}`,
+      run: () => sendMany(targets, (to) => sendOne(to, t), (ok) => `${ok} chat(s)`),
+      // El resultado se muestra en la notificación flotante; los callbacks
+      // quedan para quien necesite reaccionar (no se repite el mensaje).
+      onDone: (o) => {
+        if (o.status === 'error') onError?.(o.message)
+        else onSuccess?.(o.message)
+      },
+    })
+    onSent?.()
   }
 
   const manualDigits = manual.replace(/[^\d]/g, '')
@@ -177,18 +189,13 @@ export function WhatsAppSendButton({
       <button
         type="button"
         onClick={() => void handleClick()}
-        disabled={disabled || sending}
+        disabled={disabled || picking}
         title={title ?? 'Enviar por WhatsApp'}
         className={className ?? 'flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#128c7e] text-white text-[11px] font-semibold hover:bg-[#0f7a6d] disabled:opacity-50'}
       >
-        {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+        {picking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
         {children ?? 'Enviar'}
       </button>
-
-      {/* Mensaje local opcional (si no se maneja por onResult) */}
-      {localMsg && !onResult && (
-        <span className={`text-[10px] ml-1 ${localMsg.startsWith('✓') ? 'text-emerald-600' : 'text-red-600'}`}>{localMsg}</span>
-      )}
 
       {/* Selector de chats destino */}
       <Modal
@@ -244,32 +251,6 @@ export function WhatsAppSendButton({
               </div>
             )}
             <p className="text-[10px] text-gray-400 mt-1">Solo números, con código de país. No se guarda en la configuración.</p>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal
-        open={Boolean(successModal)}
-        onClose={() => setSuccessModal(null)}
-        z={98}
-        size="sm"
-        title="Enviado"
-        icon={<MessageCircle className="w-4 h-4 text-[#128c7e]" />}
-        footer={
-          <button
-            type="button"
-            onClick={() => setSuccessModal(null)}
-            className="w-full py-2.5 rounded-xl bg-[#128c7e] text-white text-sm font-semibold"
-          >
-            Listo
-          </button>
-        }
-      >
-        <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
-          <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5" />
-          <div className="min-w-0">
-            <p className="font-semibold">Mensaje enviado por WhatsApp</p>
-            <p className="mt-1 text-xs text-emerald-700">{successModal}</p>
           </div>
         </div>
       </Modal>

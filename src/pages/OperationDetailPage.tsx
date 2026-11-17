@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertTriangle, ArrowLeft, Calendar, Camera, CheckCircle2, Clock, Edit3, ExternalLink, FileText, Loader2, Mail, MapPin, MessageCircle, MessageSquare, Mic, Package, Send, Share2, ShieldCheck, Trash2, User, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Calendar, Camera, CheckCircle2, Clock, Edit3, ExternalLink, FileText, Mail, MapPin, MessageCircle, MessageSquare, Mic, Package, Send, Share2, ShieldCheck, Trash2, User, X } from 'lucide-react'
 import { apiRequest, type Operation, type PhotoRecord } from '../lib/api'
+import { sendOperationEmailInBackground, sendOperationWhatsAppInBackground } from '../lib/operation-share'
+import { notifyToast } from '../lib/background-send'
 import { operationTypeLabel } from '../lib/constants'
 import { getCompanyId } from '../lib/context'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
@@ -425,7 +427,6 @@ type WaDest = { id: string; label: string; to: string }
 function ShareButton({ trackingCode, companyId, whatsappEnabled = true }: { trackingCode: string; companyId?: string; whatsappEnabled?: boolean }) {
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<'channel' | 'whatsapp'>('channel')
-  const [sending, setSending] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [dests, setDests] = useState<WaDest[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -449,57 +450,28 @@ function ShareButton({ trackingCode, companyId, whatsappEnabled = true }: { trac
   }
 
   // Envía a WhatsApp. `tos`: lista de destinos; si está vacía, usa el default del backend.
-  const sendWhatsApp = async (tos: string[]) => {
-    setSending(true); setMsg(null)
-    try {
-      if (tos.length === 0) {
-        const r = await apiRequest<{ message: string; partial?: boolean; failedParts?: number; sent?: number }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode } })
-        setMsg(`✓ ${r.message}`)
-      } else {
-        let ok = 0
-        let partial = 0
-        for (const to of tos) {
-          try {
-            const r = await apiRequest<{ partial?: boolean; sent?: number; failedParts?: number }>('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode, to } })
-            ok++
-            if (r.partial) partial++
-          } catch { /* sigue */ }
-        }
-        setMsg(
-          ok === 0
-            ? `No se pudo enviar el registro a ninguno de los ${tos.length} chat(s).`
-            : partial > 0
-              ? `✓ Registro enviado a ${ok} chat(s), con contenido parcial en ${partial}.`
-              : ok === tos.length
-                ? `✓ Registro enviado a ${ok} chat(s).`
-                : `✓ Enviado a ${ok} de ${tos.length} chat(s).`,
-        )
-      }
-      setOpen(false)
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'No se pudo enviar a WhatsApp.')
-    } finally { setSending(false) }
+  // Segundo plano: cierra el modal al instante; el resultado llega como
+  // notificación flotante y se puede seguir usando la app mientras tanto.
+  const sendWhatsApp = (tos: string[]) => {
+    setMsg(null)
+    setOpen(false)
+    sendOperationWhatsAppInBackground(trackingCode, tos)
   }
 
   const onPickWhatsApp = () => {
     // 0 o 1 destino → enviar directo; 2+ → pedir selección.
-    if (dests.length <= 1) void sendWhatsApp(dests.length === 1 ? [dests[0].to] : [])
+    if (dests.length <= 1) sendWhatsApp(dests.length === 1 ? [dests[0].to] : [])
     else { setStep('whatsapp'); setSelected(new Set(dests.map((d) => d.to))) }
   }
 
-  const sendEmail = async () => {
+  const sendEmail = () => {
     if (!emailTo) {
-      setMsg('No hay correo destinatario configurado. Añádelo en Configuración → Enviar por correo.')
+      notifyToast('error', 'No hay correo destinatario', 'Añádelo en Configuración → Enviar por correo.', 'email')
       return
     }
-    setSending(true); setMsg(null)
-    try {
-      const r = await apiRequest<{ message: string; to?: string }>(`/operations/${trackingCode}/send-email`, { method: 'POST' })
-      setMsg(`✓ Registro enviado por correo a ${r.to ?? emailTo}.`)
-      setOpen(false)
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'No se pudo enviar por correo.')
-    } finally { setSending(false) }
+    setMsg(null)
+    setOpen(false)
+    sendOperationEmailInBackground(trackingCode, emailTo)
   }
 
   const toggle = (to: string) => {
@@ -538,7 +510,7 @@ function ShareButton({ trackingCode, companyId, whatsappEnabled = true }: { trac
               <div className="p-4 space-y-2">
                 <p className="text-xs text-gray-500 mb-1">¿Por dónde quieres enviar el registro?</p>
                 {whatsappEnabled && (
-                <button onClick={() => onPickWhatsApp()} disabled={sending}
+                <button onClick={() => onPickWhatsApp()}
                   className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-[#128c7e] hover:bg-emerald-50 transition-colors disabled:opacity-50">
                   <div className="w-10 h-10 rounded-full bg-[#128c7e]/10 flex items-center justify-center flex-shrink-0">
                     <MessageCircle className="w-5 h-5 text-[#128c7e]" />
@@ -549,7 +521,7 @@ function ShareButton({ trackingCode, companyId, whatsappEnabled = true }: { trac
                   </div>
                 </button>
                 )}
-                <button onClick={() => void sendEmail()} disabled={sending}
+                <button onClick={sendEmail}
                   className="w-full flex items-center gap-3 p-3 rounded-xl border border-gray-200 hover:border-indigo-400 hover:bg-indigo-50 transition-colors disabled:opacity-50">
                   <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center flex-shrink-0">
                     <Mail className="w-5 h-5 text-indigo-500" />
@@ -561,7 +533,6 @@ function ShareButton({ trackingCode, companyId, whatsappEnabled = true }: { trac
                     </p>
                   </div>
                 </button>
-                {sending && <p className="text-xs text-gray-500 text-center pt-1">Enviando…</p>}
               </div>
             ) : (
               <>
@@ -584,9 +555,9 @@ function ShareButton({ trackingCode, companyId, whatsappEnabled = true }: { trac
                 </div>
                 <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-200">
                   <button onClick={() => setStep('channel')} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600">Atrás</button>
-                  <button onClick={() => void sendWhatsApp([...selected])} disabled={sending || selected.size === 0}
+                  <button onClick={() => sendWhatsApp([...selected])} disabled={selected.size === 0}
                     className="flex-1 py-2.5 rounded-xl bg-[#128c7e] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2">
-                    {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    <Send className="w-4 h-4" />
                     Enviar ({selected.size})
                   </button>
                 </div>
