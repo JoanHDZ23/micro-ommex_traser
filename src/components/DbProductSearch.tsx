@@ -18,6 +18,7 @@ import { getCompanyId } from '../lib/context'
 import { adjustReceived, receivedKey, useReceivedMap } from '../lib/received-store'
 import { BarcodeScanner } from './BarcodeScanner'
 import { ReceivedQty } from './ReceivedQty'
+import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 
 export interface DbProductSearchProps {
   /** Id de la tabla DATA fijada en el registro. */
@@ -138,6 +139,10 @@ export function DbProductSearch({
     setValue(clean)
     void runSearch(clean)
   }
+
+  // Lector físico: un código leído (sin el campo enfocado) se busca igual que
+  // uno escaneado con la cámara. Con el campo enfocado, se escribe en él.
+  useHardwareScanner(onScan, { priority: SCAN_PRIORITY.search })
 
   return (
     <div className="space-y-3">

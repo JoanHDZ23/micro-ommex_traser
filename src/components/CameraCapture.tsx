@@ -4,6 +4,7 @@ import { ErrorState, LoadingState } from './ui'
 import { ImageEditor } from './ImageEditor'
 import { BarcodeScanner } from './BarcodeScanner'
 import { DbProductSearch } from './DbProductSearch'
+import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { drawStampOnCanvas, getAddress, getAddressNow, getCoordsNow, primeCoords } from '../lib/photo-stamp'
 import { searchInSheet, warmSheetCache, type SheetSearchItem } from '../lib/api'
 import { compressImageToBase64 } from '../lib/image-compress'
@@ -513,6 +514,43 @@ export function CameraCapture({
     if (!preview) void startCamera()
   }
 
+  // Código leído (cámara de código de barras o lector físico) → producto activo.
+  // `fromCameraScanner` = venía del escáner de cámara (hay que cerrarlo y
+  // reanudar la cámara de fotos); con el lector físico la cámara sigue activa.
+  const handleScannedCode = (code: string, fromCameraScanner: boolean) => {
+    const clean = dbConfig?.codeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim()
+    if (fromCameraScanner) closeScanner()
+    if (!clean) return
+    // Registra ya el producto (por si el lookup tarda/falla).
+    registerProduct(clean)
+    // Si hay DATA configurada, busca la fila para traer TODAS las columnas.
+    // Usa el buscador (parcial/por cualquier celda) para no depender de
+    // una coincidencia exacta en la columna de código.
+    if (dbConfig?.sheetId) {
+      const cid = getCompanyId()
+      if (cid) {
+        void searchInSheet({
+          sheetId: dbConfig.sheetId, companyId: cid, q: clean,
+          codeColumn: dbConfig.codeColumn ?? 0, descColumn: dbConfig.descColumn, limit: 10,
+        }).then((r) => {
+          const exact = r.results.find((it) => it.code.trim().toLowerCase() === clean.toLowerCase())
+          const best = exact ?? r.results[0]
+          if (best) {
+            // Adjunta los datos al MISMO código escaneado (sin cambiar el activo).
+            registerProduct(clean, best, r.headers ?? [], false)
+          }
+        }).catch(() => { /* sin datos: queda solo el código */ })
+      }
+    }
+  }
+
+  // Lector físico: con la cámara multi abierta, cada código leído cambia el
+  // producto activo sin abrir el escáner de cámara.
+  useHardwareScanner((code) => handleScannedCode(code, false), {
+    enabled: multi && allowProductLink,
+    priority: SCAN_PRIORITY.camera,
+  })
+
   const trayCount = tray.length + (preview ? 1 : 0)
 
   return (
@@ -816,32 +854,7 @@ export function CameraCapture({
       {/* Escáner de código de barras (modo multi) */}
       {showScanner && (
         <BarcodeScanner
-          onResult={(code) => {
-            const clean = dbConfig?.codeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim()
-            if (!clean) { closeScanner(); return }
-            // Registra ya el producto (por si el lookup tarda/falla).
-            registerProduct(clean)
-            closeScanner()
-            // Si hay DATA configurada, busca la fila para traer TODAS las columnas.
-            // Usa el buscador (parcial/por cualquier celda) para no depender de
-            // una coincidencia exacta en la columna de código.
-            if (dbConfig?.sheetId) {
-              const cid = getCompanyId()
-              if (cid) {
-                void searchInSheet({
-                  sheetId: dbConfig.sheetId, companyId: cid, q: clean,
-                  codeColumn: dbConfig.codeColumn ?? 0, descColumn: dbConfig.descColumn, limit: 10,
-                }).then((r) => {
-                  const exact = r.results.find((it) => it.code.trim().toLowerCase() === clean.toLowerCase())
-                  const best = exact ?? r.results[0]
-                  if (best) {
-                    // Adjunta los datos al MISMO código escaneado (sin cambiar el activo).
-                    registerProduct(clean, best, r.headers ?? [], false)
-                  }
-                }).catch(() => { /* sin datos: queda solo el código */ })
-              }
-            }
-          }}
+          onResult={(code) => handleScannedCode(code, true)}
           onClose={closeScanner}
         />
       )}

@@ -16,6 +16,7 @@ import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate }
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { compressImageToBase64 } from '../lib/image-compress'
 import { BarcodeScanner } from '../components/BarcodeScanner'
+import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import type { PhotoRecord } from '../lib/api'
 import { useTracerFeatures } from '../lib/tracer-features'
 import { getCompanyId } from '../lib/context'
@@ -2452,6 +2453,17 @@ export function WizardPage() {
       setScanCheck({ loading: false })
     }
   }
+
+  // Lector físico de código de barras (pistola USB/Bluetooth) en el registro:
+  //  - Con la bandeja de fotos abierta → vincula las fotos a ese producto
+  //    (igual que "Escanear código" de la bandeja).
+  //  - Si no → abre la confirmación del producto escaneado (igual que la cámara).
+  // Mientras la cámara de fotos está abierta no actúa (la cámara multi tiene el suyo).
+  useHardwareScanner((code) => {
+    if (showCaptureTray) { applyScannedProductToTray(code); return }
+    setShowAddProductModal(false)
+    void handleScanResult(code)
+  }, { enabled: !showCamera, priority: SCAN_PRIORITY.page })
 
   // Captura foto y escribe TODO el texto detectado en el campo indicado.
   // target: 'scan' → nombre en el modal de escaneo · 'code' → campo del modal de agregar producto

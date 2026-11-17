@@ -11,6 +11,7 @@ import { apiRequest, fileToBase64, type CompanySheet, type Operation, type Parse
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { ActionMenu, type ActionMenuItem } from './ActionMenu'
+import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
 import { adjustReceived, getReceived, receivedKey, refreshReceived, useReceivedMap } from '../lib/received-store'
 import { buildStyledXlsx, downloadBlob } from '../lib/xlsx-styled'
@@ -123,6 +124,8 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
   const [columnFilters, setColumnFilters] = useState<Record<number, string>>({})
   const [showColumnFilters, setShowColumnFilters] = useState(false)
   const [scanning, setScanning] = useState(false)
+  // Lector físico: un código leído filtra la tabla (igual que el escáner de cámara).
+  useHardwareScanner((code) => setFilterText(code.trim()), { priority: SCAN_PRIORITY.table })
   const [selected, setSelected] = useState<Set<number>>(new Set())
   // Vista de los datos: 'cards' (items, por defecto) o 'table' (tabla clásica).
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards')

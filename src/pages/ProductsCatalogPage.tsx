@@ -5,6 +5,7 @@ import { apiRequest, getProductMovements, type LocationRef, type Operation, type
 import { getCompanyId } from '../lib/context'
 import { useTracerFeatures } from '../lib/tracer-features'
 import { BarcodeScanner } from '../components/BarcodeScanner'
+import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { compressImageToBase64 } from '../lib/image-compress'
 import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, SectionHeader } from '../components/ui'
 
@@ -342,6 +343,8 @@ function RegisterProductModal({ companyId, onClose, onDone }: { companyId: strin
     setShowScanner(false)
     setProductCode(code.toUpperCase())
   }
+  // Lector físico: llena el código aunque el campo no esté enfocado.
+  useHardwareScanner(handleScanResult, { priority: SCAN_PRIORITY.modal })
 
   // Escanear texto de etiqueta (OCR) → escribe en la descripción
   const handleScanLabelOCR = async (e: React.ChangeEvent<HTMLInputElement>) => {

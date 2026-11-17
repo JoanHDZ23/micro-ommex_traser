@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
 import { LoadingState, ErrorState } from './ui'
+import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 
 /**
  * Escáner de código de barras. Usa el BarcodeDetector nativo (Chrome Android)
@@ -164,6 +165,19 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
 
   const handleClose = () => { cancelAnimationFrame(animRef.current); controlsRef.current?.stop(); streamRef.current?.getTracks().forEach((t) => t.stop()); onClose() }
 
+  // Lector físico (pistola USB/Bluetooth): si lee un código con el escáner
+  // abierto, se usa igual que una lectura de la cámara.
+  // Igual que la lectura por cámara: apaga la cámara y entrega el código con
+  // onResult (sin llamar a onClose, que algunos padres usan para reabrir otra cámara).
+  useHardwareScanner((code) => {
+    setScanning(false)
+    cancelAnimationFrame(animRef.current)
+    controlsRef.current?.stop()
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
+    onResult(code)
+  }, { priority: SCAN_PRIORITY.scanner })
+
   // Cierre con Escape (semántica de diálogo accesible sin alterar el layout del video).
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') handleClose() }
@@ -229,7 +243,7 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
           </div>
         ) : (
           <>
-            <p className="text-white text-xs text-center opacity-80">Coloca el código dentro del recuadro</p>
+            <p className="text-white text-xs text-center opacity-80">Coloca el código dentro del recuadro · o léelo con el lector de código de barras</p>
             <button onClick={() => setManualInput(true)} aria-label="Ingresar manualmente" className="w-full py-2.5 rounded-lg bg-white/15 text-white text-sm font-medium border border-white/30 backdrop-blur-sm">Ingresar manualmente</button>
           </>
         )}
