@@ -13,6 +13,7 @@
  *    de la página). Así un solo lector sirve en toda la app sin abrir la cámara.
  */
 import { useEffect, useRef } from 'react'
+import { markHardwareScannerSeen } from './scanner-device'
 
 export type ScanHandler = (code: string) => void
 
@@ -61,6 +62,8 @@ function deliver(): boolean {
   if (!ok) return false
   const target = topEntry()
   if (!target) return false
+  // Este equipo tiene lector físico: desde ahora "Escanear" lo usa primero.
+  markHardwareScannerSeen()
   try { navigator.vibrate?.(30) } catch { /* sin vibración */ }
   target.ref.current(code)
   return true
