@@ -12,6 +12,7 @@
  *    cerrada. Si el backend invalida el token, se recrea de forma transparente.
  */
 import { getCompanyId, getOperatorName, getUserRole } from './context'
+import { failoverFetch } from './backend-failover'
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -114,7 +115,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 async function requestSessionToken(companyId: string): Promise<string | null> {
   for (let attempt = 0; attempt <= SESSION_RETRIES; attempt++) {
     try {
-      const res = await fetch(`${BASE_URL}/auth/session`, {
+      const res = await failoverFetch(`${BASE_URL}/auth/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ companyId, user: getOperatorName(), role: getUserRole() }),
@@ -178,7 +179,7 @@ export async function logout(): Promise<void> {
   storeToken(null)
   if (!token) return
   try {
-    await fetch(`${BASE_URL}/auth/logout`, {
+    await failoverFetch(`${BASE_URL}/auth/logout`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     })
@@ -193,7 +194,7 @@ async function sendHeartbeat(): Promise<void> {
   // cerrada mientras siga en uso. Ya NO se cierra por inactividad.
   markActivity()
   try {
-    const res = await fetch(`${BASE_URL}/auth/heartbeat`, {
+    const res = await failoverFetch(`${BASE_URL}/auth/heartbeat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     })

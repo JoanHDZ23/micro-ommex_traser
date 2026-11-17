@@ -32,9 +32,15 @@ export default defineConfig({
           // Network-first para la API (usa cache solo si hay error de red).
           // Matchea tanto la ruta relativa /api (dev) como la URL absoluta de producción.
           {
+            // Incluye el Render principal y el alternativo (failover). /health
+            // se excluye: la sonda de failover necesita la respuesta REAL, no
+            // una copia cacheada que ocultaría que el principal está caído.
             urlPattern: ({ url }) =>
-              url.pathname.startsWith('/api') ||
-              url.hostname === 'ommex-backend.onrender.com',
+              !url.pathname.endsWith('/health') && (
+                url.pathname.startsWith('/api') ||
+                url.hostname === 'ommex-backend.onrender.com' ||
+                url.hostname === 'ommex-backend-2ea0.onrender.com'
+              ),
             handler: 'NetworkFirst',
             options: {
               cacheName: 'api-responses',

@@ -1,6 +1,7 @@
 import { enqueue } from './sync-queue'
 import { ensureSession, getToken, renewSession, touchActivity } from './auth'
 import { cacheSheetData, getOfflineSheetData, lookupOfflineSheet, searchOfflineSheet } from './local-tables'
+import { failoverFetch } from './backend-failover'
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
 
@@ -170,7 +171,12 @@ export async function apiRequest<T>(endpoint: string, options: ApiOptions = {}):
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null
     try {
-      return await fetch(`${BASE_URL}${endpoint}`, controller ? { ...config, signal: controller.signal } : config)
+      // failoverFetch: usa el Render principal; si no responde, el alternativo.
+      return await failoverFetch(
+        `${BASE_URL}${endpoint}`,
+        controller ? { ...config, signal: controller.signal } : config,
+        { noReplay: isWhatsappSend },
+      )
     } finally {
       if (timer) clearTimeout(timer)
     }
