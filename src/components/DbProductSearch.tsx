@@ -11,11 +11,11 @@
  * bandeja de fotos (escanear/catálogo). No crea nada por sí mismo: delega la
  * acción final en `onSelect`.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Database, Loader2, Package, QrCode, Search, WifiOff } from 'lucide-react'
-import { NetworkError, searchInSheet, type SheetSearchItem } from '../lib/api'
+import { NetworkError, reportNotFoundCode, searchInSheet, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
-import { adjustReceived, receivedKey, useReceivedMap } from '../lib/received-store'
+import { adjustReceived, getActiveScope, receivedKey, useReceivedMap } from '../lib/received-store'
 import { BarcodeScanner } from './BarcodeScanner'
 import { ReceivedQty } from './ReceivedQty'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
@@ -61,6 +61,8 @@ export function DbProductSearch({
   // sin esto, un fallo de red se mostraba como si el producto no existiera.
   const [searchError, setSearchError] = useState<string | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
+  // Último código leído con el escáner (para registrar los no encontrados).
+  const lastScanned = useRef<string | null>(null)
 
   // `runSearch` NO depende de `onSelect` (el padre lo pasa como arrow inline,
   // nueva en cada render): si dependiera, el polling del wizard cada 5 s la
@@ -81,6 +83,11 @@ export function DbProductSearch({
       setHeaders(r.headers ?? [])
       setTotal(r.total)
       setSearched(true)
+      // Código ESCANEADO que no está en la DATA → lista de "no encontrados".
+      if (r.total === 0 && lastScanned.current && lastScanned.current.toLowerCase() === q.toLowerCase()) {
+        void reportNotFoundCode(companyId, q, { sheetId, scope: getActiveScope(companyId).id }).catch(() => {})
+        lastScanned.current = null
+      }
     } catch (err) {
       // NO marcar como "no encontrado": es un fallo de consulta, no un vacío.
       setResults([]); setHeaders([]); setTotal(0); setSearched(true)
@@ -120,6 +127,7 @@ export function DbProductSearch({
   const onScan = (code: string) => {
     setScannerOpen(false)
     const clean = codeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim()
+    lastScanned.current = clean
     setValue(clean)
     void runSearch(clean)
   }

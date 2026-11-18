@@ -27,6 +27,8 @@ export interface SendToast {
   channel?: SendChannel
   title: string
   detail?: string
+  /** Botón opcional en el aviso (p. ej. "Deshacer"). */
+  action?: { label: string; run: () => void }
 }
 
 export interface SendOutcome {
@@ -62,6 +64,10 @@ function schedule(id: number, kind: ToastKind): void {
 function push(t: Omit<SendToast, 'id'>): number {
   const id = ++seq
   toasts = [...toasts, { ...t, id }]
+  // Con botón (p. ej. "Deshacer") el aviso se queda más tiempo.
+  if (t.action && t.kind !== 'error') {
+    setTimeout(() => schedule(id, 'partial'), 0)
+  }
   // Limita la pila: descarta primero los avisos ya terminados más antiguos.
   while (toasts.length > MAX_VISIBLE) {
     const idx = toasts.findIndex((x) => x.kind !== 'pending')
@@ -93,8 +99,14 @@ export function dismissToast(id: number): void {
 }
 
 /** Aviso simple (sin envío asociado), p. ej. "No hay chats configurados". */
-export function notifyToast(kind: Exclude<ToastKind, 'pending'>, title: string, detail?: string, channel?: SendChannel): void {
-  push({ kind, title, detail, channel })
+export function notifyToast(
+  kind: Exclude<ToastKind, 'pending'>,
+  title: string,
+  detail?: string,
+  channel?: SendChannel,
+  action?: { label: string; run: () => void },
+): void {
+  push({ kind, title, detail, channel, action })
 }
 
 export function useSendToasts(): SendToast[] {

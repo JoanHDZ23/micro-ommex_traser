@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2, Download,
@@ -6,20 +6,29 @@ import {
   Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
   Star, LayoutGrid, List, Package, SlidersHorizontal,
 } from 'lucide-react'
-import { getPrimarySheetId, getSheetColumns, setPrimarySheet, setSheetColumns } from '../lib/db-settings'
-import { apiRequest, fileToBase64, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
+import { countStatus, getPrimarySheetId, getSheetColumns, parseExpectedQty, setPrimarySheet, setSheetColumns, type CountStatus } from '../lib/db-settings'
+import { apiRequest, fileToBase64, syncSheetToGoogle, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { ActionMenu, type ActionMenuItem } from './ActionMenu'
 import { DbProductSearch } from './DbProductSearch'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
-import { adjustReceived, getReceived, receivedKey, refreshReceived, useReceivedMap } from '../lib/received-store'
+import { adjustReceived, getReceived, receivedKey, refreshReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
+import { ReceptionPicker } from './ReceptionPicker'
+import { NotFoundCodesPanel } from './NotFoundCodesPanel'
+import { OfflineDataStatus } from './OfflineDataStatus'
 import { buildStyledXlsx, downloadBlob } from '../lib/xlsx-styled'
 import {
   parseFileLocally, parsePdfLocally, isPdf, saveLocalTable, listLocalTables,
-  getLocalTable, updateLocalTableRows, deleteLocalTable,
+  getLocalTable, updateLocalTableRows, deleteLocalTable, cacheSheetData,
 } from '../lib/local-tables'
+
+/** Qué filas se descargan en el Excel. */
+type DownloadMode = 'all' | 'marked' | 'pending' | 'filtered'
+const DOWNLOAD_MODE_LABEL: Record<DownloadMode, string> = {
+  all: 'Todo', marked: 'Marcados', pending: 'Pendientes', filtered: 'Filtrados',
+}
 
 interface SheetsModalProps {
   open: boolean
@@ -73,6 +82,10 @@ interface DataTableProps {
   codeColumn?: number
   /** Texto de filtro inicial (código escrito/escaneado) para arrancar filtrado. */
   initialFilter?: string
+  /** Columna con la cantidad ESPERADA (−1/undefined = sin conteo contra lo esperado). */
+  expectedColumn?: number
+  /** Recibe las filas que quedan tras los filtros (para descargar "lo filtrado"). */
+  filteredRowsRef?: MutableRefObject<string[][] | null>
   /** Si se definen, habilita las acciones por fila / selección múltiple (modo registros). */
   actions?: {
     /** Columna usada como código/nombre del producto. */
@@ -118,7 +131,29 @@ function loadMarkedQty(key?: string): Record<number, number> {
   return {}
 }
 
-function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, sheetId, codeColumn }: DataTableProps) {
+/** Colores del conteo contra lo esperado. */
+const COUNT_STYLE: Record<CountStatus, { row: string; badge: string; label: string }> = {
+  none: { row: '', badge: 'bg-gray-100 text-gray-600 border-gray-200', label: 'Sin marcar' },
+  pending: { row: '', badge: 'bg-gray-100 text-gray-600 border-gray-200', label: 'Pendiente' },
+  partial: { row: 'bg-amber-50/80 border-amber-200', badge: 'bg-amber-100 text-amber-800 border-amber-300', label: 'Incompleto' },
+  complete: { row: 'bg-emerald-50/70 border-emerald-200', badge: 'bg-emerald-100 text-emerald-800 border-emerald-300', label: 'Completo' },
+  over: { row: 'bg-red-50/80 border-red-200', badge: 'bg-red-100 text-red-800 border-red-300', label: 'Sobrante' },
+}
+
+/** "marcado X de Y" con el color del estado. */
+function CountBadge({ marked, expected, status }: { marked: number; expected: number; status: CountStatus }) {
+  const s = COUNT_STYLE[status]
+  return (
+    <span title={s.label}
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-bold whitespace-nowrap ${s.badge}`}>
+      {marked} / {expected}
+    </span>
+  )
+}
+
+type StatusFilter = 'all' | 'pending' | 'partial' | 'over' | 'complete'
+
+function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, sheetId, codeColumn, expectedColumn, filteredRowsRef }: DataTableProps) {
   const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas (filtro global)
   const [filterText, setFilterText] = useState(initialFilter ?? '')
   // Filtros por columna (estilo Excel): { [colIndex]: texto }. Se aplican con AND.
@@ -259,6 +294,24 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
     return { totalFoundItems: seen.size, totalFoundQty: qty }
   }, [serverMarks, marked, markedQty, rows, codeColumn, receivedMap])
 
+  // ── Conteo contra lo ESPERADO (columna configurada en "Columnas") ──
+  const hasExpected = typeof expectedColumn === 'number' && expectedColumn >= 0
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const expectedOf = (row: string[]): number | null => (hasExpected ? parseExpectedQty(row[expectedColumn!]) : null)
+  const markedOf = (row: string[], gIdx: number): number => (isRowMarked(row, gIdx) ? rowQty(row, gIdx) : 0)
+  const statusOf = (row: string[], gIdx: number): CountStatus => countStatus(markedOf(row, gIdx), expectedOf(row))
+  const statusCounts = useMemo(() => {
+    const c = { pending: 0, partial: 0, complete: 0, over: 0 }
+    if (!hasExpected) return c
+    rows.forEach((row, i) => {
+      const s = statusOf(row, i)
+      if (s !== 'none') c[s]++
+    })
+    return c
+    // statusOf depende de las marcas (receivedMap / marked) y de la columna esperada.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, hasExpected, expectedColumn, receivedMap, marked, markedQty, serverMarks, codeColumn])
+
   // Lista de filtros de columna activos (con texto no vacío).
   const activeColumnFilters = useMemo(
     () => Object.entries(columnFilters)
@@ -269,9 +322,12 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
 
   const filtered = useMemo(() => {
     const q = filterText.trim().toLowerCase()
+    const byStatus = hasExpected && statusFilter !== 'all'
     // Sin ningún filtro activo → todas las filas
-    if (!q && activeColumnFilters.length === 0) return rows
-    return rows.filter((row) => {
+    if (!q && activeColumnFilters.length === 0 && !byStatus) return rows
+    return rows.filter((row, idx) => {
+      // 0) Estado del conteo (pendientes / incompletos / sobrantes / completos)
+      if (byStatus && statusOf(row, idx) !== statusFilter) return false
       // 1) Todos los filtros por columna deben cumplirse (AND, estilo Excel)
       for (const f of activeColumnFilters) {
         if (!(row[f.col] ?? '').toLowerCase().includes(f.text)) return false
@@ -283,7 +339,13 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
       }
       return true
     })
-  }, [rows, filterText, filterCol, activeColumnFilters])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, filterText, filterCol, activeColumnFilters, hasExpected, statusFilter, statusCounts])
+
+  // Lo filtrado en pantalla queda disponible para "Descargar → lo filtrado".
+  useEffect(() => {
+    if (filteredRowsRef) filteredRowsRef.current = filtered
+  }, [filtered, filteredRowsRef])
 
   const setColumnFilter = (col: number, text: string) => {
     setColumnFilters((prev) => {
@@ -476,6 +538,25 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
         </div>
       )}
 
+      {/* ── Resumen del conteo contra lo esperado (toca para filtrar) ── */}
+      {hasExpected && (
+        <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filtrar por estado del conteo">
+          {([
+            ['all', `Todos (${rows.length})`, 'bg-[var(--color-surface)] text-[var(--color-text-2)] border-[var(--color-border)]'],
+            ['pending', `Pendientes (${statusCounts.pending})`, COUNT_STYLE.pending.badge],
+            ['partial', `Incompletos (${statusCounts.partial})`, COUNT_STYLE.partial.badge],
+            ['over', `Sobrantes (${statusCounts.over})`, COUNT_STYLE.over.badge],
+            ['complete', `Completos (${statusCounts.complete})`, COUNT_STYLE.complete.badge],
+          ] as Array<[StatusFilter, string, string]>).map(([key, label, cls]) => (
+            <button key={key} type="button" onClick={() => setStatusFilter(key)}
+              aria-pressed={statusFilter === key}
+              className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold transition-shadow ${cls} ${statusFilter === key ? 'ring-2 ring-[var(--color-primary)]/50' : 'opacity-80'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ── Vista de ITEMS (tarjetas) — cada fila como una ficha de producto ── */}
       {viewMode === 'cards' ? (
         <div className="space-y-2">
@@ -505,10 +586,14 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                 // Descripción destacada: columna de descripción si está configurada.
                 const descCol = actions && actions.descCol >= 0 ? actions.descCol : -1
                 const desc = descCol >= 0 ? (row[descCol] ?? '').trim() : ''
+                const expected = expectedOf(row)
+                const status = statusOf(row, gIdx)
+                const tint = expected !== null ? COUNT_STYLE[status].row : ''
                 return (
                   <div key={ri}
                     className={`rounded-[var(--radius-lg)] border p-3 transition-colors ${
-                      isMarked ? 'bg-emerald-50/70 border-emerald-200'
+                      tint ? tint
+                        : isMarked ? 'bg-emerald-50/70 border-emerald-200'
                         : isSel ? 'bg-[var(--color-primary-bg)]/50 border-[var(--color-primary)]/40'
                         : 'bg-[var(--color-surface)] border-[var(--color-border)]'
                     }`}>
@@ -550,6 +635,9 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                           }`}>
                           <CheckCircle2 className="w-4 h-4" />
                         </button>
+                        {expected !== null && (
+                          <CountBadge marked={markedOf(row, gIdx)} expected={expected} status={status} />
+                        )}
                         {isMarked && (
                           <div className="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-1 py-0.5">
                             <button onClick={() => bumpQtyRow(row, gIdx, -1)}
@@ -661,8 +749,14 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                 const gIdx = indexOfRow(row)
                 const isSel = selected.has(gIdx)
                 const isMarked = isRowMarked(row, gIdx)
+                const expected = expectedOf(row)
+                const status = statusOf(row, gIdx)
+                const tint = expected !== null && (status === 'partial' || status === 'over')
+                  ? (status === 'partial' ? 'bg-amber-50/80' : 'bg-red-50/80') : ''
                 // La fila marcada se pinta de verde (producto cogido); la seleccionada, de azul tenue.
-                const rowClass = isMarked
+                const rowClass = tint
+                  ? tint
+                  : isMarked
                   ? 'bg-emerald-50/70'
                   : isSel
                     ? 'bg-[var(--color-primary-bg)]/60'
@@ -687,6 +781,9 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                           }`}>
                           <CheckCircle2 className="w-4 h-4" />
                         </button>
+                        {expected !== null && (
+                          <CountBadge marked={markedOf(row, gIdx)} expected={expected} status={status} />
+                        )}
                         {isMarked && (
                           <div className="flex items-center gap-0.5">
                             <button onClick={() => bumpQtyRow(row, gIdx, -1)} aria-label="Menos"
@@ -777,6 +874,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   const [primarySheetId, setPrimarySheetIdState] = useState<string | undefined>(
     () => getPrimarySheetId(companyId),
   )
+  // Recepción activa: las marcas y descargas usan su conteo.
+  const scope = useActiveScope(companyId)
+
   // Marca/desmarca una tabla como la DATA principal de la empresa.
   const togglePrimarySheet = (sheet: CompanySheet) => {
     const next = primarySheetId === sheet.id ? undefined : sheet.id
@@ -795,13 +895,16 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     codeCol: number
     descCol: number
     extraCols: number[]
+    expectedCol: number
     loading: boolean
   } | null>(null)
+  // Sube cuando cambian las columnas guardadas (para que el visor y el buscador se actualicen).
+  const [colsVersion, setColsVersion] = useState(0)
 
   // Abre el modal de columnas para una tabla: carga sus encabezados y la
   // configuración guardada (o la adivina por el nombre de la columna).
   const openColumnConfig = async (sheet: CompanySheet) => {
-    setColCfg({ sheet, headers: [], codeCol: 0, descCol: -1, extraCols: [], loading: true })
+    setColCfg({ sheet, headers: [], codeCol: 0, descCol: -1, extraCols: [], expectedCol: -1, loading: true })
     let headers: string[] = []
     const local = getLocalTable(companyId, sheet.id)
     if (local) {
@@ -826,7 +929,13 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       descCol = gd >= 0 ? gd : -1
       extraCols = []
     }
-    setColCfg({ sheet, headers, codeCol, descCol, extraCols, loading: false })
+    let expectedCol = typeof saved.expectedColumn === 'number' && saved.expectedColumn < numCols ? saved.expectedColumn : -1
+    if (expectedCol < 0 && !configured) {
+      // Sugerencia por nombre de columna (se puede cambiar antes de guardar).
+      const ge = headers.findIndex((h) => /cant|qty|esperad|unidades|stock/i.test(h || ''))
+      expectedCol = ge >= 0 && ge !== codeCol ? ge : -1
+    }
+    setColCfg({ sheet, headers, codeCol, descCol, extraCols, expectedCol, loading: false })
   }
 
   // Guarda la configuración de columnas de la tabla (global, se aplica siempre).
@@ -836,7 +945,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       codeColumn: colCfg.codeCol,
       descColumn: colCfg.descCol,
       extraColumns: colCfg.extraCols,
+      expectedColumn: colCfg.expectedCol,
     })
+    setColsVersion((v) => v + 1)
     setSuccess(`✓ Columnas de "${colCfg.sheet.sheetName}" guardadas. Se aplicarán al traer productos.`)
     setColCfg(null)
   }
@@ -1247,14 +1358,19 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     }
 
     try {
-      const res = await apiRequest<{ message: string; rowCount: number; sheetUpdated: boolean }>(
+      const res = await apiRequest<{ message: string; rowCount: number; sheetUpdated: boolean; syncPending?: boolean }>(
         `/sheets/${encodeURIComponent(viewing.id)}/rows`,
         { method: 'PUT', body: { companyId, rows: editRows, headers: viewing.headers } },
       )
       // Reflejar los cambios en el visor y en el listado
-      setViewing({ ...viewing, rows: editRows, rowCount: res.rowCount })
-      setSheets((prev) => prev.map((s) => (s.id === viewing.id ? { ...s, rowCount: res.rowCount } : s)))
-      setSuccess(`✓ ${res.message}`)
+      const syncPending = res.syncPending === true
+      const updated = { ...viewing, rows: editRows, rowCount: res.rowCount, syncPending, source: 'stored' as const }
+      setViewing(updated)
+      setSheets((prev) => prev.map((s) => (s.id === viewing.id ? { ...s, rowCount: res.rowCount, syncPending } : s)))
+      // La copia sin conexión también lleva los cambios.
+      cacheSheetData(companyId, updated)
+      if (syncPending) setError(`${res.message} Usa "Reintentar sincronización" cuando Google Sheets responda.`)
+      else setSuccess(`✓ ${res.message}`)
       setEditing(false)
       setEditRows([])
     } catch (err) {
@@ -1272,37 +1388,72 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   // el archivo salía SIN los cambios hechos en la app.
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
-  /** Arma el .xlsx (filas marcadas en verde + "Cantidad marcada") y lo descarga. */
-  const exportTableXlsx = async (meta: { id: string; sheetName: string }, headers: string[], rows: string[][]) => {
-    // Filas MARCADAS (compartidas por la empresa, por código de producto).
+  /**
+   * Arma el .xlsx (filas marcadas en verde + "Cantidad marcada") y lo descarga.
+   * `mode`: 'all' todo · 'marked' solo lo marcado · 'pending' lo que falta
+   * (sin marcar, o marcado por debajo de lo esperado) · 'filtered' = `rows`
+   * ya viene filtrado desde la pantalla. Devuelve cuántas filas se exportaron.
+   */
+  const exportTableXlsx = async (
+    meta: { id: string; sheetName: string },
+    headers: string[],
+    rows: string[][],
+    mode: DownloadMode = 'all',
+  ): Promise<number> => {
+    // Filas MARCADAS en la recepción activa (compartidas por la empresa, por código).
     await refreshReceived(companyId)
-    const codeCol = getSheetColumns(companyId, meta.id).codeColumn
+    const cols = getSheetColumns(companyId, meta.id)
+    const codeCol = cols.codeColumn
+    const expCol = typeof cols.expectedColumn === 'number' ? cols.expectedColumn : -1
     let width = Math.max(headers.length, 1)
     for (const r of rows) if (r.length > width) width = r.length
-    const markedRows = new Set<number>()
-    const qtyByRow: number[] = rows.map((row, i) => {
+
+    const enriched = rows.map((row) => {
       const code = codeCol >= 0 ? String(row[codeCol] ?? '').trim() : ''
       const q = code ? (getReceived(code)?.quantity ?? 0) : 0
-      if (q > 0) markedRows.add(i)
-      return q
+      const expected = expCol >= 0 ? parseExpectedQty(row[expCol]) : null
+      return { row, q, expected, status: countStatus(q, expected) }
     })
-    const outHeaders = [...Array.from({ length: width }, (_, c) => headers[c] ?? `Columna ${c + 1}`), 'Cantidad marcada']
-    const outRows = rows.map((row, i) => [
-      ...Array.from({ length: width }, (_, c) => row[c] ?? ''),
-      qtyByRow[i] > 0 ? String(qtyByRow[i]) : '',
-    ])
+    const picked = enriched.filter((e) => {
+      if (mode === 'marked') return e.q > 0
+      if (mode === 'pending') return e.expected !== null ? e.status === 'pending' || e.status === 'partial' : e.q === 0
+      return true
+    })
+
+    const withStatus = expCol >= 0
+    const STATUS_LABEL: Record<CountStatus, string> = { none: '', pending: 'Pendiente', partial: 'Incompleto', complete: 'Completo', over: 'Sobrante' }
+    const outHeaders = [
+      ...Array.from({ length: width }, (_, c) => headers[c] ?? `Columna ${c + 1}`),
+      'Cantidad marcada',
+      ...(withStatus ? ['Diferencia', 'Estado'] : []),
+    ]
+    const markedRows = new Set<number>()
+    const outRows = picked.map((e, i) => {
+      if (e.q > 0) markedRows.add(i)
+      return [
+        ...Array.from({ length: width }, (_, c) => e.row[c] ?? ''),
+        e.q > 0 ? String(e.q) : '',
+        ...(withStatus
+          ? [e.expected !== null ? String(e.q - e.expected) : '', STATUS_LABEL[e.status]]
+          : []),
+      ]
+    })
     const blob = buildStyledXlsx({
       headers: outHeaders, rows: outRows, markedRows, boldMarkedColumn: width,
       // Números como números (igual que en el Excel original); el código, como texto.
       numbers: true,
       textColumns: codeCol >= 0 ? new Set([codeCol]) : undefined,
     })
-    const safeName = (meta.sheetName || 'data').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'data'
+    const safe = (s: string) => s.replace(/[\\/:*?"<>|]+/g, '_').trim()
+    const safeName = safe(meta.sheetName || 'data') || 'data'
+    const scopeTag = scope.id ? `_${safe(scope.name)}` : ''
+    const modeTag = mode === 'all' ? '' : `_${DOWNLOAD_MODE_LABEL[mode].toLowerCase()}`
     const stamp = new Date().toISOString().slice(0, 10)
-    downloadBlob(blob, `${safeName}_${stamp}.xlsx`)
+    downloadBlob(blob, `${safeName}${scopeTag}${modeTag}_${stamp}.xlsx`)
+    return outRows.length
   }
 
-  const handleDownload = async (sheet: CompanySheet) => {
+  const handleDownload = async (sheet: CompanySheet, mode: DownloadMode = 'all') => {
     if (!companyId) return
     setDownloadingId(sheet.id); setError(null)
     try {
@@ -1336,7 +1487,8 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
           } catch { /* se queda la copia guardada */ }
         }
       }
-      await exportTableXlsx(sheet, headers, rows)
+      const n = await exportTableXlsx(sheet, headers, rows, mode)
+      if (n === 0) setSuccess(`No hay filas ${DOWNLOAD_MODE_LABEL[mode].toLowerCase()}: se descargó el archivo solo con el encabezado.`)
       if (truncated) {
         setError(`Se descargaron las primeras ${rows.length} filas: la tabla supera el máximo que guarda la app.`)
       }
@@ -1347,12 +1499,16 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     }
   }
 
-  // Descarga desde el visor: exactamente lo que se ve en pantalla (ya guardado).
-  const downloadViewing = async () => {
+  // Descarga desde el visor: lo que se ve en pantalla (ya guardado), todo o
+  // con filtro (marcados / pendientes / lo filtrado en pantalla).
+  const viewFilteredRef = useRef<string[][] | null>(null)
+  const downloadViewing = async (mode: DownloadMode = 'all') => {
     if (!viewing || !companyId) return
-    setDownloadingId(viewing.id); setError(null)
+    setDownloadingId(viewing.id); setError(null); setSuccess(null)
     try {
-      await exportTableXlsx(viewing, viewing.headers ?? [], viewing.rows ?? [])
+      const source = mode === 'filtered' ? (viewFilteredRef.current ?? viewing.rows ?? []) : (viewing.rows ?? [])
+      const n = await exportTableXlsx(viewing, viewing.headers ?? [], source, mode)
+      if (n === 0) setSuccess(`No hay filas ${DOWNLOAD_MODE_LABEL[mode].toLowerCase()}: se descargó el archivo solo con el encabezado.`)
       if (viewing.rowsTruncated) {
         setError(`Se descargaron las ${viewing.rows.length} filas que guarda la app: la tabla original es más grande.`)
       }
@@ -1360,6 +1516,23 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       setError(err instanceof Error ? err.message : 'No se pudo descargar la tabla.')
     } finally {
       setDownloadingId(null)
+    }
+  }
+
+  // Reintenta copiar a Google Sheets los cambios que no llegaron al guardar.
+  const [syncingId, setSyncingId] = useState<string | null>(null)
+  const retrySync = async (sheetId: string) => {
+    if (!companyId) return
+    setSyncingId(sheetId); setError(null); setSuccess(null)
+    try {
+      const r = await syncSheetToGoogle(companyId, sheetId)
+      setSheets((prev) => prev.map((s) => (s.id === sheetId ? { ...s, syncPending: false } : s)))
+      setViewing((v) => (v && v.id === sheetId ? { ...v, syncPending: false } : v))
+      setSuccess(`✓ ${r.message}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo sincronizar con Google Sheets.')
+    } finally {
+      setSyncingId(null)
     }
   }
 
@@ -1580,16 +1753,37 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
             ) : (
               <>
                 {/* ── Modo lectura ── */}
+                {viewing.syncPending && (
+                  <div role="alert" className="flex items-start gap-2 p-3 rounded-[var(--radius-lg)] bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold">Los últimos cambios no llegaron a Google Sheets.</p>
+                      <p className="mt-0.5">Están guardados en la app (y en el Excel que descargues), pero la hoja de Google todavía tiene la versión anterior.</p>
+                      <Button size="sm" variant="secondary" className="mt-2" onClick={() => void retrySync(viewing.id)} loading={syncingId === viewing.id}
+                        leftIcon={<RefreshCw className="w-3.5 h-3.5" />}>
+                        Reintentar sincronización
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 flex-wrap">
                   <Button variant="secondary" onClick={startEditing}
                     leftIcon={<Pencil className="w-4 h-4" />}>
                     Editar datos
                   </Button>
                   {/* Descarga el Excel con los cambios guardados y las filas marcadas en verde */}
-                  <Button variant="secondary" onClick={() => void downloadViewing()} loading={downloadingId === viewing.id}
-                    leftIcon={<Download className="w-4 h-4" />}>
-                    Descargar Excel
-                  </Button>
+                  <ActionMenu
+                    label="Descargar Excel"
+                    busy={downloadingId === viewing.id}
+                    trigger={<><Download className="w-4 h-4" /> Descargar Excel</>}
+                    triggerClassName="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-bg)]"
+                    items={[
+                      { key: 'all', label: 'Toda la tabla', icon: <Download className="w-4 h-4" />, onSelect: () => void downloadViewing('all') },
+                      { key: 'marked', label: 'Solo marcados', icon: <CheckCircle2 className="w-4 h-4 text-emerald-600" />, onSelect: () => void downloadViewing('marked') },
+                      { key: 'pending', label: 'Solo pendientes', icon: <AlertCircle className="w-4 h-4 text-amber-600" />, onSelect: () => void downloadViewing('pending') },
+                      { key: 'filtered', label: 'Lo filtrado en pantalla', icon: <Filter className="w-4 h-4" />, onSelect: () => void downloadViewing('filtered') },
+                    ]}
+                  />
                   {viewing.sheetUrl && (
                     <Button variant="secondary" onClick={() => void refreshFromSheet()} loading={loadingView}
                       leftIcon={<RefreshCw className="w-4 h-4" />}>
@@ -1611,6 +1805,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                     Usar como DATA
                   </Button>
                 </div>
+                <ReceptionPicker companyId={companyId} />
                 <DataTable
                   headers={viewing.headers}
                   rows={viewing.rows}
@@ -1618,6 +1813,8 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   companyId={companyId}
                   sheetId={viewing.id}
                   codeColumn={getSheetColumns(companyId, viewing.id).codeColumn}
+                  expectedColumn={getSheetColumns(companyId, viewing.id).expectedColumn}
+                  filteredRowsRef={viewFilteredRef}
                   initialFilter={viewFilter ?? initialFilter}
                   actions={{
                     codeCol, descCol, extraCols,
@@ -1674,8 +1871,10 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   </p>
                   <span className="text-[10px] text-[var(--color-text-3)] flex-shrink-0">DATA principal</span>
                 </div>
+                {/* Recepción en la que se cuenta (cada carga con su propio conteo) */}
+                <ReceptionPicker companyId={companyId} />
                 <DbProductSearch
-                  key={primarySheet.id}
+                  key={`${primarySheet.id}:${colsVersion}:${scope.id}`}
                   sheetId={primarySheet.id}
                   sheetName={primarySheet.sheetName}
                   codeColumn={getSheetColumns(companyId, primarySheet.id).codeColumn}
@@ -1684,6 +1883,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   // "Usar" abre la tabla filtrada por ese código.
                   onSelect={(item) => void handleView(primarySheet, item.code || undefined)}
                 />
+                <OfflineDataStatus companyId={companyId} sheetId={primarySheet.id} version={colsVersion} />
               </section>
             ) : sheets.length > 0 ? (
               <p className="text-[11px] text-[var(--color-text-3)] flex items-center gap-1.5 px-1">
@@ -1691,6 +1891,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                 Marca una tabla como DATA principal (menú ⋮ → Hacer principal) para buscar y escanear aquí.
               </p>
             ) : null}
+
+            {/* Códigos escaneados que no estaban en la DATA */}
+            <NotFoundCodesPanel companyId={companyId} />
 
             {/* ── Subida ── */}
             <section className="space-y-3">
@@ -1839,6 +2042,29 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                       disabled: downloadingId === s.id,
                     },
                     {
+                      key: 'download-marked',
+                      label: 'Descargar solo marcados',
+                      icon: <CheckCircle2 className="w-4 h-4 text-emerald-600" />,
+                      onSelect: () => void handleDownload(s, 'marked'),
+                      disabled: downloadingId === s.id,
+                    },
+                    {
+                      key: 'download-pending',
+                      label: 'Descargar solo pendientes',
+                      icon: <AlertCircle className="w-4 h-4 text-amber-600" />,
+                      onSelect: () => void handleDownload(s, 'pending'),
+                      disabled: downloadingId === s.id,
+                    },
+                    ...(s.syncPending && s.sheetUrl
+                      ? [{
+                        key: 'sync',
+                        label: syncingId === s.id ? 'Sincronizando…' : 'Reintentar sincronización con Sheets',
+                        icon: syncingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 text-amber-600" />,
+                        onSelect: () => void retrySync(s.id),
+                        disabled: syncingId === s.id,
+                      }]
+                      : []),
+                    {
                       key: 'delete',
                       label: deletingId === s.id ? 'Eliminando…' : 'Eliminar tabla',
                       icon: deletingId === s.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />,
@@ -1871,6 +2097,12 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                           {s.sheetUrl && (
                             <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 flex-shrink-0">
                               Drive
+                            </span>
+                          )}
+                          {s.syncPending && s.sheetUrl && (
+                            <span title="Los últimos cambios no llegaron a Google Sheets (menú ⋮ → Reintentar)"
+                              className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-300 flex-shrink-0">
+                              Sin sincronizar
                             </span>
                           )}
                         </div>
@@ -2114,6 +2346,20 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                       <option value={-1}>— ninguna —</option>
                       {colCfg.headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
                     </select>
+                  </label>
+
+                  {/* Columna de cantidad esperada (conteo contra lo esperado) */}
+                  <label className="space-y-1.5 block">
+                    <span className="text-xs font-semibold text-[var(--color-text-2)]">Cantidad esperada</span>
+                    <select value={colCfg.expectedCol}
+                      onChange={(e) => { const v = Number(e.target.value); setColCfg((p) => p && ({ ...p, expectedCol: v })) }}
+                      className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm">
+                      <option value={-1}>— ninguna —</option>
+                      {colCfg.headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
+                    </select>
+                    <span className="block text-[10px] text-[var(--color-text-3)]">
+                      Si la eliges, cada producto muestra "marcado X de Y" en verde (completo), amarillo (incompleto) o rojo (sobrante).
+                    </span>
                   </label>
 
                   {/* Columnas adicionales */}

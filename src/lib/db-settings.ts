@@ -26,13 +26,18 @@ export interface SheetColumnSettings {
   descColumn: number
   /** Columnas adicionales que se traen de la DATA (en orden). */
   extraColumns: number[]
+  /** Columna con la cantidad ESPERADA del producto (−1 = ninguna). */
+  expectedColumn?: number
 }
 
 export const DEFAULT_SHEET_COLUMNS: SheetColumnSettings = {
   codeColumn: 0,
   descColumn: -1,
   extraColumns: [],
+  expectedColumn: -1,
 }
+
+export { countStatus, parseExpectedQty, type CountStatus } from './count-status'
 
 /** Ajustes efectivos de la DATA de la empresa (tabla principal + columnas de esa tabla). */
 export interface DbSettings extends SheetColumnSettings {
@@ -132,7 +137,8 @@ export function getSheetColumns(companyId: string, sheetId: string): SheetColumn
 export function setSheetColumns(companyId: string, sheetId: string, cols: SheetColumnSettings): void {
   if (!companyId || !sheetId) return
   const data = getCompany(companyId)
-  data.columns[sheetId] = cols
+  // Se combina con lo guardado: quien no envía `expectedColumn` no la borra.
+  data.columns[sheetId] = { ...DEFAULT_SHEET_COLUMNS, ...data.columns[sheetId], ...cols }
   cache.set(companyId, data)
   persist(companyId)
 }

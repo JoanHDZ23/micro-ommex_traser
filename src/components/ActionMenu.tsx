@@ -33,12 +33,16 @@ export interface ActionMenuProps {
   label: string
   /** Muestra un spinner en el botón (acción en curso). */
   busy?: boolean
+  /** Contenido del botón (por defecto el ícono ⋮). */
+  trigger?: ReactNode
+  /** Clases del botón cuando se usa `trigger`. */
+  triggerClassName?: string
 }
 
 const MENU_WIDTH = 224
 const GAP = 6
 
-export function ActionMenu({ items, label, busy = false }: ActionMenuProps) {
+export function ActionMenu({ items, label, busy = false, trigger, triggerClassName }: ActionMenuProps) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ top: number; left: number; up: boolean } | null>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
@@ -131,9 +135,13 @@ export function ActionMenu({ items, label, busy = false }: ActionMenuProps) {
         aria-expanded={open}
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v) }}
         onKeyDown={(e) => { if (e.key === 'ArrowDown' && !open) { e.preventDefault(); setOpen(true) } }}
-        className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-[var(--color-text-2)] hover:bg-[var(--color-bg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 transition-colors ${open ? 'bg-[var(--color-bg)]' : ''}`}
+        className={trigger
+          ? (triggerClassName ?? 'inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium')
+          : `w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 text-[var(--color-text-2)] hover:bg-[var(--color-bg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/40 transition-colors ${open ? 'bg-[var(--color-bg)]' : ''}`}
       >
-        {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <MoreVertical className="w-5 h-5" />}
+        {trigger
+          ? (busy ? <><Loader2 className="w-4 h-4 animate-spin" />{trigger}</> : trigger)
+          : (busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <MoreVertical className="w-5 h-5" />)}
       </button>
 
       {open && createPortal(

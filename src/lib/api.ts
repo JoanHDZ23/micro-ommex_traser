@@ -1,6 +1,6 @@
 import { enqueue } from './sync-queue'
 import { ensureSession, getToken, renewSession, touchActivity } from './auth'
-import { cacheSheetData, getOfflineSheetData, lookupOfflineSheet, searchOfflineSheet } from './local-tables'
+import { cacheSheetData, getLocalTable, getSnapshotInfo, lookupOfflineSheet, searchOfflineSheet } from './local-tables'
 import { failoverFetch } from './backend-failover'
 
 const BASE_URL = import.meta.env.VITE_API_URL || '/api'
@@ -453,6 +453,8 @@ export interface CompanySheet {
   columns: string[]
   rowCount: number
   createdAt: string
+  /** true si el último guardado en la app no llegó a Google Sheets. */
+  syncPending?: boolean
 }
 
 export interface ParsedTable {
@@ -472,6 +474,9 @@ export interface SheetData {
   /** Origen de los datos devueltos: 'sheet' (en vivo) o 'stored' (copia local). */
   source?: 'sheet' | 'stored'
   createdAt: string
+  updatedAt?: string
+  /** true si el último guardado en la app no llegó a Google Sheets. */
+  syncPending?: boolean
 }
 
 export interface SheetLookupResult {
@@ -548,25 +553,110 @@ export async function adjustProductReceived(
   companyId: string,
   productCode: string,
   delta: number,
-  extra: { trackingCode?: string; sheetId?: string } = {},
-): Promise<ReceivedProduct> {
-  const r = await apiRequest<{ received: ReceivedProduct }>(`/received`, {
+  extra: { trackingCode?: string; sheetId?: string; scope?: string } = {},
+): Promise<ReceivedProduct & { historyId?: string }> {
+  const r = await apiRequest<{ received: ReceivedProduct; historyId?: string }>(`/received`, {
     method: 'POST',
     body: { companyId, productCode, delta, ...extra },
+  })
+  return { ...r.received, historyId: r.historyId }
+}
+
+/**
+ * Lista los productos marcados en una recepción ('' = General). El frontend la
+ * consulta (y refresca con el polling) para mostrar la marca a TODOS los
+ * empleados, no solo a quien la puso.
+ */
+export async function getReceivedProducts(companyId: string, scope = ''): Promise<ReceivedProduct[]> {
+  const r = await apiRequest<{ received: ReceivedProduct[] }>(
+    `/received?companyId=${encodeURIComponent(companyId)}&scope=${encodeURIComponent(scope)}`,
+  )
+  return r.received ?? []
+}
+
+/** Un cambio de marca (quién marcó cuánto y cuándo). */
+export interface ReceivedHistoryEntry {
+  id: string
+  scope: string
+  productCode: string
+  before: number
+  after: number
+  user: string
+  at: string
+  action: 'mark' | 'unmark' | 'undo'
+  undone?: boolean
+  undoOf?: string
+}
+
+export async function getReceivedHistory(companyId: string, scope: string, productCode?: string, limit = 20): Promise<ReceivedHistoryEntry[]> {
+  const qs = new URLSearchParams({ companyId, scope, limit: String(limit) })
+  if (productCode) qs.set('productCode', productCode)
+  const r = await apiRequest<{ history: ReceivedHistoryEntry[] }>(`/received/history?${qs.toString()}`)
+  return r.history ?? []
+}
+
+/** Deshace un cambio de marca (una sola vez). Devuelve la cantidad resultante. */
+export async function undoReceivedChange(companyId: string, historyId: string): Promise<{ productCode: string; scope: string; quantity: number }> {
+  const r = await apiRequest<{ received: { productCode: string; scope: string; quantity: number } }>(`/received/undo`, {
+    method: 'POST',
+    body: { companyId, historyId },
   })
   return r.received
 }
 
-/**
- * Lista los productos marcados como recibidos por toda la empresa. El
- * frontend la consulta (y refresca con el polling) para mostrar la marca a
- * TODOS los empleados, no solo a quien la puso.
- */
-export async function getReceivedProducts(companyId: string): Promise<ReceivedProduct[]> {
-  const r = await apiRequest<{ received: ReceivedProduct[] }>(
-    `/received?companyId=${encodeURIComponent(companyId)}`,
-  )
-  return r.received ?? []
+/** Recepción: agrupa un conteo (una carga). '' = General. */
+export interface ReceptionScope {
+  id: string
+  name: string
+  createdAt: string
+  createdBy?: string
+  closed?: boolean
+}
+
+export async function listReceptionScopes(companyId: string): Promise<ReceptionScope[]> {
+  const r = await apiRequest<{ scopes: ReceptionScope[] }>(`/received/scopes?companyId=${encodeURIComponent(companyId)}`)
+  return r.scopes ?? []
+}
+
+export async function createReceptionScope(companyId: string, name: string): Promise<ReceptionScope> {
+  const r = await apiRequest<{ scope: ReceptionScope }>(`/received/scopes`, { method: 'POST', body: { companyId, name } })
+  return r.scope
+}
+
+export async function setReceptionScopeClosed(companyId: string, id: string, closed: boolean): Promise<void> {
+  await apiRequest(`/received/scopes/${encodeURIComponent(id)}`, { method: 'PATCH', body: { companyId, closed } })
+}
+
+/** Código escaneado que no estaba en la DATA. */
+export interface NotFoundCode {
+  code: string
+  count: number
+  firstAt: string
+  lastAt: string
+  lastBy?: string
+  sheetId?: string
+  scope?: string
+}
+
+export async function reportNotFoundCode(companyId: string, code: string, extra: { sheetId?: string; scope?: string } = {}): Promise<void> {
+  await apiRequest(`/received/not-found`, { method: 'POST', body: { companyId, code, ...extra } })
+}
+
+export async function listNotFoundCodes(companyId: string): Promise<NotFoundCode[]> {
+  const r = await apiRequest<{ notFound: NotFoundCode[] }>(`/received/not-found?companyId=${encodeURIComponent(companyId)}`)
+  return r.notFound ?? []
+}
+
+export async function removeNotFoundCode(companyId: string, code: string): Promise<void> {
+  await apiRequest(`/received/not-found/${encodeURIComponent(code)}?companyId=${encodeURIComponent(companyId)}`, { method: 'DELETE' })
+}
+
+/** Reintenta copiar a Google Sheets la versión guardada en la app. */
+export async function syncSheetToGoogle(companyId: string, sheetId: string): Promise<{ message: string; sheetUpdated: boolean }> {
+  return apiRequest<{ message: string; sheetUpdated: boolean }>(`/sheets/${encodeURIComponent(sheetId)}/sync`, {
+    method: 'POST',
+    body: { companyId },
+  })
 }
 
 /** Marca un producto como recibido para toda la empresa (idempotente). */
@@ -602,14 +692,20 @@ export async function unmarkProductReceived(
  * Debe llamarse mientras haya internet (al fijar la tabla del registro o al
  * abrir la cámara) para garantizar datos disponibles offline.
  */
-export async function warmSheetCache(sheetId: string, companyId: string): Promise<boolean> {
+export async function warmSheetCache(
+  sheetId: string,
+  companyId: string,
+  opts: { force?: boolean; maxAgeMs?: number } = {},
+): Promise<boolean> {
   if (!sheetId || !companyId) return false
-  if (getOfflineSheetData(companyId, sheetId)) return true
+  if (getLocalTable(companyId, sheetId)) return true // tabla del dispositivo: ya está
+  const info = getSnapshotInfo(companyId, sheetId)
+  const fresh = info && (opts.maxAgeMs === undefined || Date.now() - Date.parse(info.cachedAt) < opts.maxAgeMs)
+  if (!opts.force && fresh) return true
   try {
     const data = await apiRequest<SheetData>(`/sheets/${encodeURIComponent(sheetId)}?companyId=${encodeURIComponent(companyId)}`)
     if (data && typeof data === 'object' && Array.isArray((data as SheetData).rows)) {
-      cacheSheetData(companyId, data as SheetData)
-      return true
+      return cacheSheetData(companyId, data as SheetData)
     }
   } catch {
     /* sin conexión o error: se reintenta en la próxima llamada */

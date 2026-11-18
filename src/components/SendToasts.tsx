@@ -47,6 +47,13 @@ export function SendToasts() {
             </p>
             {t.detail && <p className="text-xs opacity-80 mt-0.5 break-words">{t.detail}</p>}
             {t.kind === 'pending' && <p className="text-[11px] opacity-60 mt-1">Puedes seguir usando la app. Te avisamos al terminar.</p>}
+            {t.action && (
+              <button type="button"
+                onClick={() => { const a = t.action; dismissToast(t.id); a?.run() }}
+                className="mt-1.5 text-xs font-bold underline underline-offset-2">
+                {t.action.label}
+              </button>
+            )}
           </div>
           <button
             type="button"

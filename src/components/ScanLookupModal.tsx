@@ -16,12 +16,32 @@ import { AlertTriangle, CheckCircle2, Loader2, Minus, Package, Plus, ScanLine, S
 import { Modal } from './ui'
 import { NetworkError, searchInSheet, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
-import { getDbSettings } from '../lib/db-settings'
+import { countStatus, getDbSettings, parseExpectedQty, type CountStatus } from '../lib/db-settings'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
-import { adjustReceived, receivedKey, useReceivedMap } from '../lib/received-store'
+import { adjustReceivedDetailed, getActiveScope, receivedKey, undoReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { notifyToast } from '../lib/background-send'
+import { getReceivedHistory, reportNotFoundCode, warmSheetCache, type ReceivedHistoryEntry } from '../lib/api'
 
 type Status = 'idle' | 'loading' | 'done' | 'error' | 'no-data'
+
+/** Códigos ya reportados como "no encontrados" en esta sesión (sin repetir). */
+const reportedMissing = new Set<string>()
+function reportMissing(companyId: string, code: string, sheetId?: string, scope?: string): void {
+  const k = `${companyId}|${code.toLowerCase()}`
+  if (!companyId || !code || reportedMissing.has(k)) return
+  reportedMissing.add(k)
+  void reportNotFoundCode(companyId, code, { sheetId, scope }).catch(() => { reportedMissing.delete(k) })
+}
+
+const COPY_MAX_AGE_MS = 6 * 60 * 60 * 1000
+
+const STATUS_TEXT: Record<CountStatus, { cls: string; label: string }> = {
+  none: { cls: 'text-gray-500', label: 'Sin marcar' },
+  pending: { cls: 'text-gray-600', label: 'Pendiente' },
+  partial: { cls: 'text-amber-700', label: 'Incompleto' },
+  complete: { cls: 'text-emerald-700', label: 'Completo' },
+  over: { cls: 'text-red-700', label: 'Sobrante' },
+}
 
 export function ScanLookupModal() {
   const [open, setOpen] = useState(false)
@@ -45,6 +65,40 @@ export function ScanLookupModal() {
 
   const current = selected?.code ? receivedMap.get(receivedKey(selected.code)) : undefined
   const currentQty = current?.quantity ?? 0
+  const scope = useActiveScope(companyId)
+
+  // Cantidad ESPERADA de la fila (columna "Cantidad esperada" de la DATA).
+  const expected = useMemo(() => {
+    const col = db?.expectedColumn
+    if (!selected || typeof col !== 'number' || col < 0) return null
+    return parseExpectedQty(selected.row?.[col])
+  }, [selected, db])
+
+  // Últimos cambios de este producto (quién marcó cuánto y cuándo).
+  const [history, setHistory] = useState<ReceivedHistoryEntry[]>([])
+  useEffect(() => {
+    setHistory([])
+    if (!open || !selected?.code || !companyId) return
+    let alive = true
+    getReceivedHistory(companyId, scope.id, selected.code, 5)
+      .then((h) => { if (alive) setHistory(h) })
+      .catch(() => { /* sin conexión: sin historial */ })
+    return () => { alive = false }
+  }, [open, selected, companyId, scope.id, currentQty])
+
+  // Copia de la DATA principal en el dispositivo para buscar SIN señal:
+  // se guarda al abrir la app y al reconectar, si tiene más de 6 horas.
+  useEffect(() => {
+    const warm = () => {
+      const cfg = getDbSettings(companyId)
+      if (companyId && cfg.primarySheetId && navigator.onLine) {
+        void warmSheetCache(cfg.primarySheetId, companyId, { maxAgeMs: COPY_MAX_AGE_MS })
+      }
+    }
+    const t = setTimeout(warm, 4000) // después del arranque, sin competir con la carga inicial
+    window.addEventListener('online', warm)
+    return () => { clearTimeout(t); window.removeEventListener('online', warm) }
+  }, [companyId])
 
   // Por defecto, la cantidad propuesta es la ya marcada (o 1 si no hay marca).
   useEffect(() => {
@@ -78,6 +132,8 @@ export function ScanLookupModal() {
       setResults(r.results)
       setHeaders(r.headers ?? [])
       setStatus('done')
+      // No está en la DATA → se registra en "Códigos no encontrados" (una vez por sesión).
+      if (r.results.length === 0) reportMissing(companyId, q, cfg.primarySheetId, getActiveScope(companyId).id)
       // Coincidencia EXACTA de código → se muestra directamente (no se marca).
       const exact = r.results.find((it) => it.code.trim().toLowerCase() === q.toLowerCase())
       const only = exact ?? (r.results.length === 1 ? r.results[0] : undefined)
@@ -114,10 +170,25 @@ export function ScanLookupModal() {
     if (delta === 0) { close(); return }
     setSaving(true); setSaveError(null)
     try {
-      await adjustReceived(companyId, selected.code, delta, { sheetId: db?.primarySheetId })
+      const code = selected.code
+      const r = await adjustReceivedDetailed(companyId, code, delta, { sheetId: db?.primarySheetId })
+      const exp = expected !== null ? ` de ${expected}` : ''
+      // "Deshacer" revierte este cambio en el servidor (respeta lo que otros marcaron después).
+      const historyId = r.historyId
       notifyToast('success',
-        target > 0 ? `Marcado: ${selected.code}` : `Desmarcado: ${selected.code}`,
-        target > 0 ? `Cantidad: ${target}` : undefined)
+        target > 0 ? `Marcado: ${code}` : `Desmarcado: ${code}`,
+        `${target > 0 ? `Cantidad: ${target}${exp}` : 'Quitado del conteo'}${scope.id ? ` · ${scope.name}` : ''}`,
+        undefined,
+        historyId
+          ? {
+            label: 'Deshacer',
+            run: () => {
+              void undoReceived(companyId, historyId)
+                .then((q) => notifyToast('info', `Deshecho: ${code}`, `Cantidad: ${q}`))
+                .catch((e) => notifyToast('error', 'No se pudo deshacer', e instanceof Error ? e.message : undefined))
+            },
+          }
+          : undefined)
       close()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'No se pudo guardar la marca.')
@@ -200,7 +271,8 @@ export function ScanLookupModal() {
 
         {status === 'done' && results.length === 0 && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 text-red-700 text-xs">
-            <Package className="w-4 h-4 flex-shrink-0" /> No se encontró “{code}” en la DATA principal.
+            <Package className="w-4 h-4 flex-shrink-0" />
+            <span>No se encontró “{code}” en la DATA principal. Quedó en la lista de <b>códigos no encontrados</b> (Base de datos).</span>
           </div>
         )}
 
@@ -239,11 +311,56 @@ export function ScanLookupModal() {
               </dl>
             </div>
 
-            <p className="text-xs">
-              {currentQty > 0
-                ? <span className="text-emerald-700 font-medium">✓ Ya marcado: {currentQty} unidad(es){current?.receivedBy ? ` · por ${current.receivedBy}` : ''}</span>
-                : <span className="text-gray-500">Sin marcar</span>}
-            </p>
+            <div className="text-xs space-y-1">
+              {expected !== null ? (() => {
+                const st = countStatus(currentQty, expected)
+                return (
+                  <p className={`font-semibold ${STATUS_TEXT[st].cls}`}>
+                    Marcado {currentQty} de {expected} · {STATUS_TEXT[st].label}
+                    {currentQty !== expected && ` (${currentQty > expected ? '+' : ''}${currentQty - expected})`}
+                  </p>
+                )
+              })() : (
+                <p>
+                  {currentQty > 0
+                    ? <span className="text-emerald-700 font-medium">✓ Ya marcado: {currentQty} unidad(es)</span>
+                    : <span className="text-gray-500">Sin marcar</span>}
+                </p>
+              )}
+              <p className="text-[11px] text-gray-500">Recepción: <span className="font-medium text-gray-700">{scope.name}</span></p>
+            </div>
+
+            {/* Últimos cambios de este producto */}
+            {history.length > 0 && (
+              <details className="rounded-lg border border-gray-200 text-[11px]">
+                <summary className="px-3 py-2 cursor-pointer font-semibold text-gray-600">Historial ({history.length})</summary>
+                <ul className="divide-y divide-gray-100">
+                  {history.map((h) => {
+                    const d = h.after - h.before
+                    return (
+                      <li key={h.id} className="flex items-center gap-2 px-3 py-1.5">
+                        <span className={`font-bold w-10 ${d >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>{d >= 0 ? '+' : ''}{d}</span>
+                        <span className="flex-1 min-w-0 truncate text-gray-600">
+                          {h.action === 'undo' ? 'Deshacer · ' : ''}{h.user} · {new Date(h.at).toLocaleString('es-CO')}
+                        </span>
+                        {h.action !== 'undo' && !h.undone && (
+                          <button type="button"
+                            onClick={() => {
+                              void undoReceived(companyId, h.id)
+                                .then(() => setHistory((prev) => prev.map((x) => (x.id === h.id ? { ...x, undone: true } : x))))
+                                .catch((e) => setSaveError(e instanceof Error ? e.message : 'No se pudo deshacer.'))
+                            }}
+                            className="text-[11px] font-semibold text-[var(--color-primary)] underline">
+                            Deshacer
+                          </button>
+                        )}
+                        {h.undone && <span className="text-gray-400">deshecho</span>}
+                      </li>
+                    )
+                  })}
+                </ul>
+              </details>
+            )}
 
             {selected.code ? (
               <div>

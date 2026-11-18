@@ -162,8 +162,8 @@ function readSnapshots(): CachedSheetSnapshot[] {
   } catch { return [] }
 }
 
-function writeSnapshots(items: CachedSheetSnapshot[]) {
-  try { localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(items)) } catch { /* cuota llena */ }
+function writeSnapshots(items: CachedSheetSnapshot[]): boolean {
+  try { localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(items)); return true } catch { return false /* cuota llena */ }
 }
 
 const genId = () => Math.random().toString(36).slice(2, 12)
@@ -216,7 +216,7 @@ export function getLocalTable(companyId: string, id: string): SheetData | null {
 }
 
 /** Guarda una copia local utilizable de una tabla remota para búsquedas offline. */
-export function cacheSheetData(companyId: string, data: SheetData): void {
+export function cacheSheetData(companyId: string, data: SheetData): boolean {
   const all = readSnapshots().filter((x) => !(x.companyId === companyId && x.id === data.id))
   const record: CachedSheetSnapshot = {
     id: data.id,
@@ -230,7 +230,18 @@ export function cacheSheetData(companyId: string, data: SheetData): void {
     createdAt: data.createdAt,
     cachedAt: new Date().toISOString(),
   }
-  writeSnapshots([record, ...all].slice(0, 25))
+  // Si el almacenamiento del navegador se llena, se conservan menos copias
+  // (la recién guardada primero) en vez de no guardar ninguna.
+  for (const keep of [25, 5, 1]) {
+    if (writeSnapshots([record, ...all].slice(0, keep))) return true
+  }
+  return false
+}
+
+/** Fecha y tamaño de la copia sin conexión de una tabla (null si no hay). */
+export function getSnapshotInfo(companyId: string, id: string): { cachedAt: string; rowCount: number; rows: number } | null {
+  const s = readSnapshots().find((x) => x.companyId === companyId && x.id === id)
+  return s ? { cachedAt: s.cachedAt, rowCount: s.rowCount, rows: s.rows.length } : null
 }
 
 /** Devuelve una tabla utilizable offline: primero local, luego snapshot remoto cacheado. */
