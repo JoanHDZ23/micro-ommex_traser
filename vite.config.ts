@@ -35,8 +35,12 @@ export default defineConfig({
             // Incluye el Render principal y el alternativo (failover). /health
             // se excluye: la sonda de failover necesita la respuesta REAL, no
             // una copia cacheada que ocultaría que el principal está caído.
+            // Tampoco tablas (/sheets) ni marcas (/received): con el servidor
+            // lento (>8 s) el SW devolvía una copia VIEJA y la descarga salía
+            // sin los últimos cambios. La app ya guarda su propia copia offline.
             urlPattern: ({ url }) =>
-              !url.pathname.endsWith('/health') && (
+              !url.pathname.endsWith('/health') &&
+              !/\/(sheets|received)(\/|$)/.test(url.pathname) && (
                 url.pathname.startsWith('/api') ||
                 url.hostname === 'ommex-backend.onrender.com' ||
                 url.hostname === 'ommex-backend-2ea0.onrender.com'

@@ -21,6 +21,8 @@ import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { adjustReceivedDetailed, getActiveScope, receivedKey, undoReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { notifyToast } from '../lib/background-send'
 import { getReceivedHistory, reportNotFoundCode, warmSheetCache, type ReceivedHistoryEntry } from '../lib/api'
+import { normCode, searchResultMarkKeys, type RowMark } from '../lib/mark-keys'
+import { getOfflineSheetData } from '../lib/local-tables'
 
 type Status = 'idle' | 'loading' | 'done' | 'error' | 'no-data'
 
@@ -63,7 +65,10 @@ export function ScanLookupModal() {
   // entonces no se pisa con la cantidad ya marcada que llegue del servidor.
   const [qtyTouched, setQtyTouched] = useState(false)
 
-  const current = selected?.code ? receivedMap.get(receivedKey(selected.code)) : undefined
+  // Clave de marca de cada resultado (fila concreta si el código se repite).
+  const [marks, setMarks] = useState<Map<SheetSearchItem, RowMark>>(new Map())
+  const selMark: RowMark = selected ? (marks.get(selected) ?? { code: selected.code.trim(), rowKey: '' }) : { code: '', rowKey: '' }
+  const current = selMark.code ? receivedMap.get(receivedKey(selMark.code, selMark.rowKey)) : undefined
   const currentQty = current?.quantity ?? 0
   const scope = useActiveScope(companyId)
 
@@ -80,7 +85,7 @@ export function ScanLookupModal() {
     setHistory([])
     if (!open || !selected?.code || !companyId) return
     let alive = true
-    getReceivedHistory(companyId, scope.id, selected.code, 5)
+    getReceivedHistory(companyId, scope.id, selMark.code || selected.code, 5, selMark.rowKey)
       .then((h) => { if (alive) setHistory(h) })
       .catch(() => { /* sin conexión: sin historial */ })
     return () => { alive = false }
@@ -126,18 +131,22 @@ export function ScanLookupModal() {
     try {
       const r = await searchInSheet({
         sheetId: cfg.primarySheetId, companyId, q,
-        codeColumn: cfg.codeColumn, descColumn: cfg.descColumn, limit: 10,
+        codeColumn: cfg.codeColumn, descColumn: cfg.descColumn, limit: 25,
       })
       if (seq !== searchSeq.current) return // llegó otra lectura mientras tanto
+      const table = getOfflineSheetData(companyId, cfg.primarySheetId)
+      setMarks(searchResultMarkKeys(r.results, cfg.primarySheetId, table ? { rows: table.rows, codeCol: cfg.codeColumn } : undefined))
       setResults(r.results)
       setHeaders(r.headers ?? [])
       setStatus('done')
       // No está en la DATA → se registra en "Códigos no encontrados" (una vez por sesión).
       if (r.results.length === 0) reportMissing(companyId, q, cfg.primarySheetId, getActiveScope(companyId).id)
       // Coincidencia EXACTA de código → se muestra directamente (no se marca).
-      const exact = r.results.find((it) => it.code.trim().toLowerCase() === q.toLowerCase())
-      const only = exact ?? (r.results.length === 1 ? r.results[0] : undefined)
+      // Si el código está en VARIAS filas, se pide elegir cuál (no se adivina).
+      const exact = r.results.filter((it) => normCode(it.code) === normCode(q))
+      const only = exact.length === 1 ? exact[0] : exact.length === 0 && r.results.length === 1 ? r.results[0] : undefined
       if (only) pick(only)
+      else if (exact.length > 1) setResults(exact)
     } catch (err) {
       if (seq !== searchSeq.current) return
       setStatus('error')
@@ -170,8 +179,8 @@ export function ScanLookupModal() {
     if (delta === 0) { close(); return }
     setSaving(true); setSaveError(null)
     try {
-      const code = selected.code
-      const r = await adjustReceivedDetailed(companyId, code, delta, { sheetId: db?.primarySheetId })
+      const code = selMark.code || selected.code
+      const r = await adjustReceivedDetailed(companyId, code, delta, { sheetId: db?.primarySheetId, rowKey: selMark.rowKey })
       const exp = expected !== null ? ` de ${expected}` : ''
       // "Deshacer" revierte este cambio en el servidor (respeta lo que otros marcaron después).
       const historyId = r.historyId
@@ -284,10 +293,21 @@ export function ScanLookupModal() {
               <button key={it.rowIndex} type="button" onClick={() => pick(it)}
                 className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-gray-200 hover:bg-emerald-50 text-left">
                 <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-800 truncate">{it.code || '(sin código)'}</p>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-gray-800 truncate">
+                    {it.code || '(sin código)'} <span className="text-[10px] font-normal text-gray-400">· fila {it.rowIndex + 1}</span>
+                  </p>
                   {it.descripcion && <p className="text-[11px] text-gray-500 truncate">{it.descripcion}</p>}
+                  {/* Otros datos de la fila, para distinguir filas con el mismo código */}
+                  <p className="text-[10px] text-gray-400 truncate">
+                    {(it.row ?? []).map((v) => String(v ?? '').trim()).filter((v) => v && normCode(v) !== normCode(it.code) && v !== it.descripcion).slice(0, 4).join(' · ')}
+                  </p>
                 </div>
+                {(() => {
+                  const m = marks.get(it)
+                  const q = m?.code ? receivedMap.get(receivedKey(m.code, m.rowKey))?.quantity ?? 0 : 0
+                  return q > 0 ? <span className="text-[10px] font-bold text-emerald-700 flex-shrink-0">✓ ×{q}</span> : null
+                })()}
               </button>
             ))}
           </div>

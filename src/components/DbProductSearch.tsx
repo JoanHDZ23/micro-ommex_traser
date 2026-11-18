@@ -11,7 +11,7 @@
  * bandeja de fotos (escanear/catálogo). No crea nada por sí mismo: delega la
  * acción final en `onSelect`.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Database, Loader2, Package, QrCode, Search, WifiOff } from 'lucide-react'
 import { NetworkError, reportNotFoundCode, searchInSheet, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
@@ -19,6 +19,8 @@ import { adjustReceived, getActiveScope, receivedKey, useReceivedMap } from '../
 import { BarcodeScanner } from './BarcodeScanner'
 import { ReceivedQty } from './ReceivedQty'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
+import { searchResultMarkKeys } from '../lib/mark-keys'
+import { getOfflineSheetData } from '../lib/local-tables'
 
 export interface DbProductSearchProps {
   /** Id de la tabla DATA fijada en el registro. */
@@ -112,11 +114,24 @@ export function DbProductSearch({
   const companyIdForReceived = getCompanyId()
   const receivedMap = useReceivedMap(companyIdForReceived)
   const [receivedError, setReceivedError] = useState<string | null>(null)
-  const changeReceived = (code: string, delta: number) => {
-    if (!code.trim()) return
+  // Clave de marca de cada resultado: igual que en la tabla (si el código se
+  // repite, cada fila tiene su propia marca). Se usa la copia local de la tabla
+  // para numerar exactamente igual que la vista de la DATA.
+  const resultMarks = useMemo(() => {
+    const table = getOfflineSheetData(companyIdForReceived, sheetId)
+    return searchResultMarkKeys(results, sheetId, table ? { rows: table.rows, codeCol: codeColumn } : undefined)
+  }, [results, sheetId, codeColumn, companyIdForReceived])
+  const markOf = (item: SheetSearchItem) => resultMarks.get(item) ?? { code: item.code.trim(), rowKey: '' }
+  const infoOf = (item: SheetSearchItem) => {
+    const m = markOf(item)
+    return m.code ? receivedMap.get(receivedKey(m.code, m.rowKey)) : undefined
+  }
+  const changeReceived = (item: SheetSearchItem, delta: number) => {
+    const m = markOf(item)
+    if (!m.code) return
     setReceivedError(null)
-    void adjustReceived(companyIdForReceived, code, delta, { sheetId })
-      .catch(() => setReceivedError('No se pudo actualizar la cantidad. Revisa la conexión.'))
+    void adjustReceived(companyIdForReceived, m.code, delta, { sheetId, rowKey: m.rowKey })
+      .catch((e) => setReceivedError(e instanceof Error && e.message ? e.message : 'No se pudo actualizar la cantidad. Revisa la conexión.'))
   }
 
   const handleChange = (raw: string) => {
@@ -213,8 +228,8 @@ export function DbProductSearch({
             </button>
             {results[0].code && (
               <ReceivedQty compact
-                info={receivedMap.get(receivedKey(results[0].code))}
-                onChange={(d) => changeReceived(results[0].code, d)} />
+                info={infoOf(results[0])}
+                onChange={(d) => changeReceived(results[0], d)} />
             )}
           </div>
         ) : (
@@ -226,7 +241,7 @@ export function DbProductSearch({
             </div>
             <div className="max-h-56 overflow-y-auto space-y-1 rounded-lg border border-gray-100 p-1">
               {results.map((item) => {
-                const info = item.code ? receivedMap.get(receivedKey(item.code)) : undefined
+                const info = item.code ? infoOf(item) : undefined
                 return (
                   <div key={item.rowIndex}
                     className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg transition-colors ${info ? 'bg-emerald-50/70' : 'hover:bg-emerald-50'}`}>
@@ -243,7 +258,7 @@ export function DbProductSearch({
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 font-medium flex-shrink-0">Usar</span>
                     </button>
                     {item.code && (
-                      <ReceivedQty compact info={info} onChange={(d) => changeReceived(item.code, d)} />
+                      <ReceivedQty compact info={info} onChange={(d) => changeReceived(item, d)} />
                     )}
                   </div>
                 )

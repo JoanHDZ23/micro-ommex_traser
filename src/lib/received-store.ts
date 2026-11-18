@@ -94,14 +94,31 @@ function setMap(next: Map<string, ReceivedInfo>): void {
   emit()
 }
 
-/** Clave normalizada de un código de producto. */
-export function receivedKey(code: string): string {
-  return String(code ?? '').trim().toLowerCase()
+/**
+ * Clave normalizada de una marca: código en minúsculas y, si la marca es de
+ * una FILA concreta (código repetido en la tabla), su rowKey (ver mark-keys.ts).
+ */
+export function receivedKey(code: string, rowKey = ''): string {
+  const c = String(code ?? '').trim().toLowerCase()
+  return rowKey ? `${c}#${rowKey}` : c
 }
 
-/** Info de marcado de un código (undefined si no está marcado). */
-export function getReceived(code: string): ReceivedInfo | undefined {
-  return map.get(receivedKey(code))
+/** Info de marcado de un código/fila (undefined si no está marcado). */
+export function getReceived(code: string, rowKey = ''): ReceivedInfo | undefined {
+  return map.get(receivedKey(code, rowKey))
+}
+
+// Marcas enviadas que el servidor aún no confirmó (para no descargar sin ellas).
+const pending = new Set<Promise<unknown>>()
+
+/**
+ * Espera a que se guarden las marcas en curso y trae del servidor la lista
+ * más reciente. Se usa antes de DESCARGAR, para que el Excel refleje todo.
+ */
+export async function flushReceived(companyId: string): Promise<void> {
+  if (pending.size) await Promise.allSettled([...pending])
+  if (inFlight) await inFlight // una recarga empezada antes de las marcas puede traer datos viejos
+  await refreshReceived(companyId)
 }
 
 /** Recarga desde el servidor los marcados de la empresa en la recepción activa. */
@@ -121,7 +138,7 @@ export function refreshReceived(companyId: string): Promise<void> {
       const next = new Map<string, ReceivedInfo>()
       for (const r of list) {
         const q = Number(r.quantity) > 0 ? Math.floor(Number(r.quantity)) : 1
-        next.set(receivedKey(r.productCode), { quantity: q, receivedBy: r.receivedBy, receivedAt: r.receivedAt })
+        next.set(receivedKey(r.productCode, r.rowKey ?? ''), { quantity: q, receivedBy: r.receivedBy, receivedAt: r.receivedAt })
       }
       loadedFor = `${companyId}|${scope}`
       setMap(next)
@@ -149,9 +166,9 @@ export async function adjustReceivedDetailed(
   companyId: string,
   code: string,
   delta: number,
-  extra: { trackingCode?: string; sheetId?: string } = {},
+  extra: { trackingCode?: string; sheetId?: string; rowKey?: string } = {},
 ): Promise<AdjustResult> {
-  const key = receivedKey(code)
+  const key = receivedKey(code, extra.rowKey ?? '')
   if (!companyId || !key || !delta) return { quantity: map.get(key)?.quantity ?? 0 }
   currentCompany = companyId
   const scope = getActiveScope(companyId).id
@@ -165,8 +182,11 @@ export async function adjustReceivedDetailed(
   }
   setMap(next)
 
+  const req = adjustProductReceived(companyId, code.trim(), delta, { ...extra, scope })
+  pending.add(req)
+  void req.finally(() => pending.delete(req)).catch(() => {})
   try {
-    const r = await adjustProductReceived(companyId, code.trim(), delta, { ...extra, scope })
+    const r = await req
     if (getActiveScope(companyId).id === scope) {
       const after = new Map(map)
       if (r.quantity > 0) after.set(key, { quantity: r.quantity, receivedBy: r.receivedBy, receivedAt: r.receivedAt })
@@ -189,7 +209,7 @@ export async function adjustReceived(
   companyId: string,
   code: string,
   delta: number,
-  extra: { trackingCode?: string; sheetId?: string } = {},
+  extra: { trackingCode?: string; sheetId?: string; rowKey?: string } = {},
 ): Promise<number> {
   return (await adjustReceivedDetailed(companyId, code, delta, extra)).quantity
 }
@@ -198,7 +218,7 @@ export async function adjustReceived(
 export async function undoReceived(companyId: string, historyId: string): Promise<number> {
   const r = await undoReceivedChange(companyId, historyId)
   if ((r.scope ?? '') === getActiveScope(companyId).id) {
-    const key = receivedKey(r.productCode)
+    const key = receivedKey(r.productCode, r.rowKey ?? '')
     const next = new Map(map)
     if (r.quantity > 0) {
       const prev = next.get(key)

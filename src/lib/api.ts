@@ -542,6 +542,8 @@ export interface ReceivedProduct {
   trackingCode?: string
   /** Unidades marcadas (compartidas por la empresa). 0 = desmarcado. */
   quantity: number
+  /** Fila concreta cuando el código se repite en la tabla ('' = el código). */
+  rowKey?: string
   sheetId?: string
 }
 
@@ -553,7 +555,7 @@ export async function adjustProductReceived(
   companyId: string,
   productCode: string,
   delta: number,
-  extra: { trackingCode?: string; sheetId?: string; scope?: string } = {},
+  extra: { trackingCode?: string; sheetId?: string; scope?: string; rowKey?: string } = {},
 ): Promise<ReceivedProduct & { historyId?: string }> {
   const r = await apiRequest<{ received: ReceivedProduct; historyId?: string }>(`/received`, {
     method: 'POST',
@@ -588,16 +590,17 @@ export interface ReceivedHistoryEntry {
   undoOf?: string
 }
 
-export async function getReceivedHistory(companyId: string, scope: string, productCode?: string, limit = 20): Promise<ReceivedHistoryEntry[]> {
+export async function getReceivedHistory(companyId: string, scope: string, productCode?: string, limit = 20, rowKey = ''): Promise<ReceivedHistoryEntry[]> {
   const qs = new URLSearchParams({ companyId, scope, limit: String(limit) })
   if (productCode) qs.set('productCode', productCode)
+  if (rowKey) qs.set('rowKey', rowKey)
   const r = await apiRequest<{ history: ReceivedHistoryEntry[] }>(`/received/history?${qs.toString()}`)
   return r.history ?? []
 }
 
 /** Deshace un cambio de marca (una sola vez). Devuelve la cantidad resultante. */
-export async function undoReceivedChange(companyId: string, historyId: string): Promise<{ productCode: string; scope: string; quantity: number }> {
-  const r = await apiRequest<{ received: { productCode: string; scope: string; quantity: number } }>(`/received/undo`, {
+export async function undoReceivedChange(companyId: string, historyId: string): Promise<{ productCode: string; scope: string; rowKey?: string; quantity: number }> {
+  const r = await apiRequest<{ received: { productCode: string; scope: string; rowKey?: string; quantity: number } }>(`/received/undo`, {
     method: 'POST',
     body: { companyId, historyId },
   })

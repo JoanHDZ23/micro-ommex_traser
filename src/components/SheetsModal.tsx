@@ -14,7 +14,8 @@ import { ActionMenu, type ActionMenuItem } from './ActionMenu'
 import { DbProductSearch } from './DbProductSearch'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
-import { adjustReceived, getReceived, receivedKey, refreshReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
+import { adjustReceived, flushReceived, getReceived, receivedKey, refreshReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
+import { rowMarkKeys, type RowMark } from '../lib/mark-keys'
 import { ReceptionPicker } from './ReceptionPicker'
 import { NotFoundCodesPanel } from './NotFoundCodesPanel'
 import { OfflineDataStatus } from './OfflineDataStatus'
@@ -216,7 +217,13 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
   const serverMarks = Boolean(companyId && sheetId && typeof codeColumn === 'number' && codeColumn >= 0)
   const receivedMap = useReceivedMap(serverMarks ? companyId! : '')
   const [markError, setMarkError] = useState<string | null>(null)
-  const codeOfRow = (row: string[]) => (serverMarks ? String(row[codeColumn!] ?? '').trim() : '')
+  // Clave de marca de CADA fila: el código, o el código + su fila si el código
+  // se repite en la tabla (así marcar una fila no marca las demás).
+  const rowMarks = useMemo(
+    () => (serverMarks ? rowMarkKeys(rows, codeColumn!, sheetId!) : []),
+    [serverMarks, rows, codeColumn, sheetId],
+  )
+  const markOf = (gIdx: number) => rowMarks[gIdx] ?? { code: '', rowKey: '' }
 
   // Migración única: las marcas antiguas (locales, por número de fila) se pasan
   // al servidor por código y se borran del dispositivo. Solo se suben los
@@ -229,10 +236,11 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
     if (oldMarked.size === 0) return
     const oldQty = loadMarkedQty(markKey)
     void refreshReceived(companyId!).then(async () => {
+      const keys = rowMarkKeys(rows, codeColumn!, sheetId!)
       for (const idx of oldMarked) {
-        const code = String(rows[idx]?.[codeColumn!] ?? '').trim()
-        if (!code || getReceived(code)) continue
-        try { await adjustReceived(companyId!, code, Math.max(1, oldQty[idx] ?? 1), { sheetId }) } catch { /* se reintenta en otra apertura */ return }
+        const m = keys[idx]
+        if (!m?.code || getReceived(m.code, m.rowKey)) continue
+        try { await adjustReceived(companyId!, m.code, Math.max(1, oldQty[idx] ?? 1), { sheetId, rowKey: m.rowKey }) } catch { /* se reintenta en otra apertura */ return }
       }
       try {
         localStorage.removeItem(`ommex_marked_${markKey}`)
@@ -241,38 +249,39 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
     })
   }, [serverMarks, markKey, rows, companyId, codeColumn, sheetId])
 
-  const isRowMarked = (row: string[], gIdx: number): boolean => {
+  const isRowMarked = (_row: string[], gIdx: number): boolean => {
     if (!serverMarks) return marked.has(gIdx)
-    const code = codeOfRow(row)
-    return Boolean(code && receivedMap.has(receivedKey(code)))
+    const m = markOf(gIdx)
+    return Boolean(m.code && receivedMap.has(receivedKey(m.code, m.rowKey)))
   }
-  const rowQty = (row: string[], gIdx: number): number => {
+  const rowQty = (_row: string[], gIdx: number): number => {
     if (!serverMarks) return markedQty[gIdx] ?? 1
-    return receivedMap.get(receivedKey(codeOfRow(row)))?.quantity ?? 0
+    const m = markOf(gIdx)
+    return m.code ? receivedMap.get(receivedKey(m.code, m.rowKey))?.quantity ?? 0 : 0
   }
-  const changeServer = (code: string, delta: number) => {
-    if (!code || !delta) return
+  const changeServer = (gIdx: number, delta: number) => {
+    const m = markOf(gIdx)
+    if (!m.code || !delta) return
     setMarkError(null)
-    void adjustReceived(companyId!, code, delta, { sheetId })
-      .catch(() => setMarkError('No se pudo guardar la marca. Revisa la conexión.'))
+    void adjustReceived(companyId!, m.code, delta, { sheetId, rowKey: m.rowKey })
+      .catch((e) => setMarkError(e instanceof Error && e.message ? e.message : 'No se pudo guardar la marca. Revisa la conexión.'))
   }
   const toggleMarkRow = (row: string[], gIdx: number) => {
     if (!serverMarks) { toggleMark(gIdx); return }
-    const code = codeOfRow(row)
-    if (!code) { setMarkError('Esta fila no tiene código: no se puede marcar.'); return }
+    if (!markOf(gIdx).code) { setMarkError('Esta fila no tiene código: no se puede marcar.'); return }
     const current = rowQty(row, gIdx)
-    changeServer(code, current > 0 ? -current : 1)
+    changeServer(gIdx, current > 0 ? -current : 1)
   }
   const bumpQtyRow = (row: string[], gIdx: number, delta: number) => {
     if (!serverMarks) { bumpQty(gIdx, delta); return }
     // Mínimo 1 con −/+: para quitar la marca se usa el botón de marcar.
     if (delta < 0 && rowQty(row, gIdx) <= 1) return
-    changeServer(codeOfRow(row), delta)
+    changeServer(gIdx, delta)
   }
   const setQtyRow = (row: string[], gIdx: number, qty: number) => {
     if (!serverMarks) { setQty(gIdx, qty); return }
     const q = Math.max(1, Math.floor(qty || 1))
-    changeServer(codeOfRow(row), q - rowQty(row, gIdx))
+    changeServer(gIdx, q - rowQty(row, gIdx))
   }
 
   // Totales: items marcados y suma de cantidades encontradas (en ESTA tabla).
@@ -285,14 +294,15 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
     }
     const seen = new Set<string>()
     let qty = 0
-    for (const row of rows) {
-      const k = receivedKey(String(row[codeColumn!] ?? ''))
-      if (!k || seen.has(k)) continue
+    for (const m of rowMarks) {
+      if (!m.code) continue
+      const k = receivedKey(m.code, m.rowKey)
+      if (seen.has(k)) continue
       const info = receivedMap.get(k)
       if (info) { seen.add(k); qty += info.quantity }
     }
     return { totalFoundItems: seen.size, totalFoundQty: qty }
-  }, [serverMarks, marked, markedQty, rows, codeColumn, receivedMap])
+  }, [serverMarks, marked, markedQty, rowMarks, receivedMap])
 
   // ── Conteo contra lo ESPERADO (columna configurada en "Columnas") ──
   const hasExpected = typeof expectedColumn === 'number' && expectedColumn >= 0
@@ -1399,18 +1409,25 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     headers: string[],
     rows: string[][],
     mode: DownloadMode = 'all',
+    /** Tabla completa cuando `rows` es solo una parte (lo filtrado). */
+    fullRowsForKeys?: string[][],
   ): Promise<number> => {
     // Filas MARCADAS en la recepción activa (compartidas por la empresa, por código).
-    await refreshReceived(companyId)
+    await flushReceived(companyId)
     const cols = getSheetColumns(companyId, meta.id)
     const codeCol = cols.codeColumn
+    // Clave de marca por fila calculada sobre la TABLA COMPLETA (misma regla que
+    // la pantalla), aunque se exporte solo una parte (filtrado/pendientes).
+    const fullRows = fullRowsForKeys ?? rows
+    const keyByRow = new Map<string[], RowMark>()
+    rowMarkKeys(fullRows, codeCol, meta.id).forEach((m, i) => keyByRow.set(fullRows[i], m))
     const expCol = typeof cols.expectedColumn === 'number' ? cols.expectedColumn : -1
     let width = Math.max(headers.length, 1)
     for (const r of rows) if (r.length > width) width = r.length
 
     const enriched = rows.map((row) => {
-      const code = codeCol >= 0 ? String(row[codeCol] ?? '').trim() : ''
-      const q = code ? (getReceived(code)?.quantity ?? 0) : 0
+      const m = keyByRow.get(row) ?? { code: codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '', rowKey: '' }
+      const q = m.code ? (getReceived(m.code, m.rowKey)?.quantity ?? 0) : 0
       const expected = expCol >= 0 ? parseExpectedQty(row[expCol]) : null
       return { row, q, expected, status: countStatus(q, expected) }
     })
@@ -1507,7 +1524,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     setDownloadingId(viewing.id); setError(null); setSuccess(null)
     try {
       const source = mode === 'filtered' ? (viewFilteredRef.current ?? viewing.rows ?? []) : (viewing.rows ?? [])
-      const n = await exportTableXlsx(viewing, viewing.headers ?? [], source, mode)
+      const n = await exportTableXlsx(viewing, viewing.headers ?? [], source, mode, viewing.rows ?? [])
       if (n === 0) setSuccess(`No hay filas ${DOWNLOAD_MODE_LABEL[mode].toLowerCase()}: se descargó el archivo solo con el encabezado.`)
       if (viewing.rowsTruncated) {
         setError(`Se descargaron las ${viewing.rows.length} filas que guarda la app: la tabla original es más grande.`)
@@ -1812,7 +1829,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   markKey={`${companyId}_${viewing.id}`}
                   companyId={companyId}
                   sheetId={viewing.id}
-                  codeColumn={getSheetColumns(companyId, viewing.id).codeColumn}
+                  codeColumn={codeCol}
                   expectedColumn={getSheetColumns(companyId, viewing.id).expectedColumn}
                   filteredRowsRef={viewFilteredRef}
                   initialFilter={viewFilter ?? initialFilter}
