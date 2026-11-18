@@ -11,6 +11,7 @@ import { apiRequest, fileToBase64, type CompanySheet, type Operation, type Parse
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { ActionMenu, type ActionMenuItem } from './ActionMenu'
+import { DbProductSearch } from './DbProductSearch'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
 import { adjustReceived, getReceived, receivedKey, refreshReceived, useReceivedMap } from '../lib/received-store'
@@ -768,6 +769,8 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
 
   // Visor de una hoja importada (verificación dentro de la app)
   const [viewing, setViewing] = useState<SheetData | null>(null)
+  // Filtro con el que se abre el visor (p. ej. desde el buscador de la DATA principal).
+  const [viewFilter, setViewFilter] = useState<string | undefined>(undefined)
   const [loadingView, setLoadingView] = useState(false)
 
   // ── DATA principal de la empresa (tabla donde se busca por defecto) ──
@@ -1153,8 +1156,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     }
   }
 
-  const handleView = async (sheet: CompanySheet) => {
+  const handleView = async (sheet: CompanySheet, filter?: string) => {
     if (!companyId) return
+    setViewFilter(filter)
     setLoadingView(true); setError(null); setEditing(false)
     // Si la tabla está guardada localmente (modo prueba), ábrela de inmediato
     const local = getLocalTable(companyId, sheet.id)
@@ -1260,11 +1264,44 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     }
   }
 
-  // ── Descargar la tabla ACTUALIZADA como Excel (.xlsx) ──
-  // Tabla local → sus filas del navegador. Tabla del servidor → se pide en vivo
-  // a Google Sheets (source=sheet); si no responde, el backend devuelve la
-  // última copia guardada.
+  // ── Descargar la tabla MODIFICADA como Excel (.xlsx) ──
+  // Se descarga lo mismo que la app muestra y busca: las filas guardadas con
+  // TODOS los cambios hechos en la app (ediciones, filas nuevas o borradas) y
+  // las filas marcadas en verde con su cantidad. Antes se pedía en vivo a
+  // Google Sheets: si la sincronización con Sheets había fallado al guardar,
+  // el archivo salía SIN los cambios hechos en la app.
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
+
+  /** Arma el .xlsx (filas marcadas en verde + "Cantidad marcada") y lo descarga. */
+  const exportTableXlsx = async (meta: { id: string; sheetName: string }, headers: string[], rows: string[][]) => {
+    // Filas MARCADAS (compartidas por la empresa, por código de producto).
+    await refreshReceived(companyId)
+    const codeCol = getSheetColumns(companyId, meta.id).codeColumn
+    let width = Math.max(headers.length, 1)
+    for (const r of rows) if (r.length > width) width = r.length
+    const markedRows = new Set<number>()
+    const qtyByRow: number[] = rows.map((row, i) => {
+      const code = codeCol >= 0 ? String(row[codeCol] ?? '').trim() : ''
+      const q = code ? (getReceived(code)?.quantity ?? 0) : 0
+      if (q > 0) markedRows.add(i)
+      return q
+    })
+    const outHeaders = [...Array.from({ length: width }, (_, c) => headers[c] ?? `Columna ${c + 1}`), 'Cantidad marcada']
+    const outRows = rows.map((row, i) => [
+      ...Array.from({ length: width }, (_, c) => row[c] ?? ''),
+      qtyByRow[i] > 0 ? String(qtyByRow[i]) : '',
+    ])
+    const blob = buildStyledXlsx({
+      headers: outHeaders, rows: outRows, markedRows, boldMarkedColumn: width,
+      // Números como números (igual que en el Excel original); el código, como texto.
+      numbers: true,
+      textColumns: codeCol >= 0 ? new Set([codeCol]) : undefined,
+    })
+    const safeName = (meta.sheetName || 'data').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'data'
+    const stamp = new Date().toISOString().slice(0, 10)
+    downloadBlob(blob, `${safeName}_${stamp}.xlsx`)
+  }
+
   const handleDownload = async (sheet: CompanySheet) => {
     if (!companyId) return
     setDownloadingId(sheet.id); setError(null)
@@ -1272,45 +1309,52 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       let headers: string[] = []
       let rows: string[][] = []
       let truncated = false
-      let fromStoredCopy = false
       const local = getLocalTable(companyId, sheet.id)
       if (local) {
         headers = local.headers ?? []
         rows = local.rows ?? []
       } else {
+        // Copia guardada en la app (incluye las ediciones hechas aquí).
         const data = await apiRequest<SheetData & { source?: string; rowsTruncated?: boolean }>(
-          `/sheets/${encodeURIComponent(sheet.id)}?companyId=${encodeURIComponent(companyId)}&source=sheet`,
+          `/sheets/${encodeURIComponent(sheet.id)}?companyId=${encodeURIComponent(companyId)}`,
         )
         headers = data.headers ?? []
         rows = data.rows ?? []
         truncated = data.rowsTruncated === true
-        fromStoredCopy = Boolean(sheet.sheetUrl) && data.source !== 'sheet'
+        // Tabla más grande que lo que guarda la app: se intenta la versión
+        // completa de Google Sheets (si está vinculada).
+        if (truncated && sheet.sheetUrl) {
+          try {
+            const live = await apiRequest<SheetData & { source?: string; rowsTruncated?: boolean }>(
+              `/sheets/${encodeURIComponent(sheet.id)}?companyId=${encodeURIComponent(companyId)}&source=sheet`,
+            )
+            if (live.source === 'sheet' && (live.rows?.length ?? 0) > rows.length) {
+              headers = live.headers ?? headers
+              rows = live.rows ?? rows
+              truncated = live.rowsTruncated === true
+            }
+          } catch { /* se queda la copia guardada */ }
+        }
       }
-      // Filas MARCADAS (compartidas por la empresa, por código de producto):
-      // se pintan en VERDE y se añade la columna "Cantidad marcada".
-      await refreshReceived(companyId)
-      const codeCol = getSheetColumns(companyId, sheet.id).codeColumn
-      const width = Math.max(headers.length, rows.reduce((w, r) => Math.max(w, r.length), 0))
-      const markedRows = new Set<number>()
-      const qtyByRow: number[] = rows.map((row, i) => {
-        const code = codeCol >= 0 ? String(row[codeCol] ?? '').trim() : ''
-        const q = code ? (getReceived(code)?.quantity ?? 0) : 0
-        if (q > 0) markedRows.add(i)
-        return q
-      })
-      const outHeaders = [...Array.from({ length: width }, (_, c) => headers[c] ?? `Columna ${c + 1}`), 'Cantidad marcada']
-      const outRows = rows.map((row, i) => [
-        ...Array.from({ length: width }, (_, c) => row[c] ?? ''),
-        qtyByRow[i] > 0 ? String(qtyByRow[i]) : '',
-      ])
-      const blob = buildStyledXlsx({ headers: outHeaders, rows: outRows, markedRows, boldMarkedColumn: width })
-      const safeName = (sheet.sheetName || 'data').replace(/[\\/:*?"<>|]+/g, '_').trim() || 'data'
-      const stamp = new Date().toISOString().slice(0, 10)
-      downloadBlob(blob, `${safeName}_${stamp}.xlsx`)
+      await exportTableXlsx(sheet, headers, rows)
       if (truncated) {
         setError(`Se descargaron las primeras ${rows.length} filas: la tabla supera el máximo que guarda la app.`)
-      } else if (fromStoredCopy) {
-        setError('Google Sheets no respondió: se descargó la última copia guardada en la app.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo descargar la tabla.')
+    } finally {
+      setDownloadingId(null)
+    }
+  }
+
+  // Descarga desde el visor: exactamente lo que se ve en pantalla (ya guardado).
+  const downloadViewing = async () => {
+    if (!viewing || !companyId) return
+    setDownloadingId(viewing.id); setError(null)
+    try {
+      await exportTableXlsx(viewing, viewing.headers ?? [], viewing.rows ?? [])
+      if (viewing.rowsTruncated) {
+        setError(`Se descargaron las ${viewing.rows.length} filas que guarda la app: la tabla original es más grande.`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo descargar la tabla.')
@@ -1349,6 +1393,18 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       s.sheetName.toLowerCase().includes(q) || (s.sourceFileName ?? '').toLowerCase().includes(q),
     )
   }, [sheets, sheetSearch])
+
+  // DATA principal ⭐: su buscador recibe lo que lee el escáner en esta vista.
+  const primarySheet = primarySheetId ? sheets.find((s) => s.id === primarySheetId) : undefined
+  // Sin DATA principal: un código escaneado aquí no debe abrir el modal global
+  // de búsqueda; se avisa qué falta configurar.
+  // Lo mismo mientras se editan filas (el filtro de la tabla no está visible).
+  useHardwareScanner((code) => {
+    setSuccess(null)
+    setError(editing
+      ? `Escaneaste "${code}". Guarda o cancela la edición para buscarlo en la tabla.`
+      : `Escaneaste "${code}". Marca una tabla como DATA principal ⭐ para buscarlo aquí.`)
+  }, { enabled: open && (viewing ? editing : !primarySheet), priority: SCAN_PRIORITY.modal })
 
   if (!open) return null
 
@@ -1449,7 +1505,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                 message={error}
                 onRetry={() => {
                   const sheet = sheets.find((s) => s.id === viewing.id)
-                  if (sheet) void handleView(sheet)
+                  if (sheet) void handleView(sheet, viewFilter)
                 }}
               />
             )}
@@ -1529,6 +1585,11 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                     leftIcon={<Pencil className="w-4 h-4" />}>
                     Editar datos
                   </Button>
+                  {/* Descarga el Excel con los cambios guardados y las filas marcadas en verde */}
+                  <Button variant="secondary" onClick={() => void downloadViewing()} loading={downloadingId === viewing.id}
+                    leftIcon={<Download className="w-4 h-4" />}>
+                    Descargar Excel
+                  </Button>
                   {viewing.sheetUrl && (
                     <Button variant="secondary" onClick={() => void refreshFromSheet()} loading={loadingView}
                       leftIcon={<RefreshCw className="w-4 h-4" />}>
@@ -1557,7 +1618,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   companyId={companyId}
                   sheetId={viewing.id}
                   codeColumn={getSheetColumns(companyId, viewing.id).codeColumn}
-                  initialFilter={initialFilter}
+                  initialFilter={viewFilter ?? initialFilter}
                   actions={{
                     codeCol, descCol, extraCols,
                     onCodeColChange: handleCodeColChange,
@@ -1602,6 +1663,34 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                 </div>
               </section>
             )}
+
+            {/* ── Buscar en la DATA principal ⭐ (aquí cae lo que lee el escáner de la PDA) ── */}
+            {primarySheet ? (
+              <section className="space-y-2 p-3.5 rounded-[var(--radius-lg)] border border-amber-200 bg-amber-50/40">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5 min-w-0">
+                    <Star className="w-4 h-4 fill-amber-500 text-amber-500 flex-shrink-0" />
+                    <span className="truncate">Buscar en {primarySheet.sheetName}</span>
+                  </p>
+                  <span className="text-[10px] text-[var(--color-text-3)] flex-shrink-0">DATA principal</span>
+                </div>
+                <DbProductSearch
+                  key={primarySheet.id}
+                  sheetId={primarySheet.id}
+                  sheetName={primarySheet.sheetName}
+                  codeColumn={getSheetColumns(companyId, primarySheet.id).codeColumn}
+                  descColumn={getSheetColumns(companyId, primarySheet.id).descColumn}
+                  autoFocus={false}
+                  // "Usar" abre la tabla filtrada por ese código.
+                  onSelect={(item) => void handleView(primarySheet, item.code || undefined)}
+                />
+              </section>
+            ) : sheets.length > 0 ? (
+              <p className="text-[11px] text-[var(--color-text-3)] flex items-center gap-1.5 px-1">
+                <Star className="w-3.5 h-3.5 text-amber-500" />
+                Marca una tabla como DATA principal (menú ⋮ → Hacer principal) para buscar y escanear aquí.
+              </p>
+            ) : null}
 
             {/* ── Subida ── */}
             <section className="space-y-3">

@@ -169,13 +169,27 @@ export interface StyledSheetInput {
   /** Índice de una columna que, en filas marcadas, va además en negrita. */
   boldMarkedColumn?: number
   sheetName?: string
+  /**
+   * Escribe como NÚMERO las celdas que son números simples (p. ej. "12",
+   * "3.5", "-4"), para que Excel pueda sumarlas/ordenarlas como en el archivo
+   * original. Se respetan como texto los valores con ceros a la izquierda
+   * ("00123"), los muy largos (códigos de barras: Excel los mostraría como
+   * 7,5E+12) y las columnas de `textColumns`.
+   */
+  numbers?: boolean
+  /** Columnas que SIEMPRE van como texto (p. ej. la columna de código). */
+  textColumns?: Set<number>
 }
 
-function cell(ref: string, value: unknown, style: number): string {
+/** Número "simple" que se puede escribir como número sin perder información. */
+const PLAIN_NUMBER = /^-?(0|[1-9]\d{0,10})(\.\d{1,6})?$/
+
+function cell(ref: string, value: unknown, style: number, asNumber = false): string {
   const s = style ? ` s="${style}"` : ''
   const text = String(value ?? '')
   // Celda vacía con estilo: se escribe igualmente para que el verde cubra la fila.
   if (!text) return style ? `<c r="${ref}"${s}/>` : ''
+  if (asNumber && PLAIN_NUMBER.test(text)) return `<c r="${ref}"${s}><v>${text}</v></c>`
   return `<c r="${ref}" t="inlineStr"${s}><is><t xml:space="preserve">${xmlText(text)}</t></is></c>`
 }
 
@@ -186,7 +200,7 @@ function tableWidth(headers: string[], rows: string[][]): number {
   return w
 }
 
-function buildSheetXml({ headers, rows, markedRows, boldMarkedColumn }: StyledSheetInput): string {
+function buildSheetXml({ headers, rows, markedRows, boldMarkedColumn, numbers = false, textColumns }: StyledSheetInput): string {
   const width = tableWidth(headers, rows)
   const parts: string[] = []
   parts.push(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`)
@@ -212,7 +226,7 @@ function buildSheetXml({ headers, rows, markedRows, boldMarkedColumn }: StyledSh
     parts.push(`<row r="${r}">`)
     for (let c = 0; c < width; c++) {
       const style = marked ? (c === boldMarkedColumn ? STYLE_MARKED_BOLD : STYLE_MARKED) : 0
-      parts.push(cell(`${colName(c)}${r}`, row[c] ?? '', style))
+      parts.push(cell(`${colName(c)}${r}`, row[c] ?? '', style, numbers && !textColumns?.has(c)))
     }
     parts.push('</row>')
   })

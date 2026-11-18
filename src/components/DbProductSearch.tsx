@@ -3,7 +3,7 @@
  *
  * Comportamiento solicitado:
  *  - Al escribir o escanear un código/nombre, busca en la tabla fijada.
- *  - 1 resultado  → lo entrega automáticamente (onResolved con el item).
+ *  - 1 resultado  → lo muestra; el usuario lo elige con "Usar" (no se elige solo).
  *  - varios       → muestra la lista para validar y seleccionar el correcto.
  *  - ninguno      → muestra "No se encontró".
  *
@@ -11,7 +11,7 @@
  * bandeja de fotos (escanear/catálogo). No crea nada por sí mismo: delega la
  * acción final en `onSelect`.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Database, Loader2, Package, QrCode, Search, WifiOff } from 'lucide-react'
 import { NetworkError, searchInSheet, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
@@ -61,17 +61,11 @@ export function DbProductSearch({
   // sin esto, un fallo de red se mostraba como si el producto no existiera.
   const [searchError, setSearchError] = useState<string | null>(null)
   const [scannerOpen, setScannerOpen] = useState(false)
-  // Evita volver a auto-resolver el mismo término (cuando hay 1 resultado).
-  const autoResolvedFor = useRef<string | null>(null)
 
-  // Ref estable a `onSelect`: el padre lo pasa como arrow inline (nueva en cada
-  // render) y, con el polling del wizard cada 5 s, eso recreaba `runSearch` y
-  // RE-DISPARABA la búsqueda sin que el usuario tecleara. Con una DATA grande,
-  // cada búsqueda filtra toda la tabla en el hilo principal → la app se
-  // congelaba/cerraba. Usando un ref, `runSearch` ya NO depende de `onSelect`.
-  const onSelectRef = useRef(onSelect)
-  useEffect(() => { onSelectRef.current = onSelect }, [onSelect])
-
+  // `runSearch` NO depende de `onSelect` (el padre lo pasa como arrow inline,
+  // nueva en cada render): si dependiera, el polling del wizard cada 5 s la
+  // recrearía y re-dispararía la búsqueda sin que el usuario tecleara.
+  // Tampoco elige ningún resultado por sí sola: el usuario toca "Usar".
   const runSearch = useCallback(async (raw: string) => {
     const q = raw.trim()
     const companyId = getCompanyId()
@@ -87,11 +81,6 @@ export function DbProductSearch({
       setHeaders(r.headers ?? [])
       setTotal(r.total)
       setSearched(true)
-      // Un único resultado → resolver automáticamente (una sola vez por término).
-      if (r.results.length === 1 && autoResolvedFor.current !== q.toLowerCase()) {
-        autoResolvedFor.current = q.toLowerCase()
-        onSelectRef.current(r.results[0], r.headers ?? [])
-      }
     } catch (err) {
       // NO marcar como "no encontrado": es un fallo de consulta, no un vacío.
       setResults([]); setHeaders([]); setTotal(0); setSearched(true)
@@ -101,16 +90,12 @@ export function DbProductSearch({
     } finally {
       setLoading(false)
     }
-    // `onSelect` NO va en deps: se invoca vía onSelectRef, que siempre apunta
-    // a la versión actual. Así `runSearch` solo cambia si cambia la tabla o las
-    // columnas (primitivos), evitando re-disparos por render del padre.
   }, [sheetId, codeColumn, descColumn])
 
   // Debounce de la búsqueda mientras se escribe. Depende SOLO de `value`
   // (runSearch ya es estable), por lo que el polling del wizard no reinicia el
   // temporizador ni relanza búsquedas en vano.
   useEffect(() => {
-    autoResolvedFor.current = null
     const t = setTimeout(() => { void runSearch(value) }, 350)
     return () => clearTimeout(t)
   }, [value, runSearch])
@@ -135,7 +120,6 @@ export function DbProductSearch({
   const onScan = (code: string) => {
     setScannerOpen(false)
     const clean = codeType === 'numeric' ? code.replace(/[^0-9]/g, '') : code.trim()
-    autoResolvedFor.current = null
     setValue(clean)
     void runSearch(clean)
   }
@@ -187,7 +171,7 @@ export function DbProductSearch({
               <p>{searchError}</p>
               <button
                 type="button"
-                onClick={() => { autoResolvedFor.current = null; void runSearch(value) }}
+                onClick={() => { void runSearch(value) }}
                 className="mt-1.5 text-[11px] font-semibold text-amber-900 underline"
               >
                 Reintentar
@@ -205,7 +189,7 @@ export function DbProductSearch({
             No se encontró “{value.trim()}” en {sheetName ?? 'la base de datos'}.
           </div>
         ) : total === 1 ? (
-          /* Único: se autoselecciona; se muestra confirmación tappable */
+          /* Único: se muestra; el usuario decide si lo usa o lo marca (nada automático) */
           <div className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg bg-emerald-50 border border-emerald-200">
             <button
               type="button"

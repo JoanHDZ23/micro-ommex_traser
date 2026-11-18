@@ -2414,16 +2414,15 @@ export function WizardPage() {
     }
   }
 
-  // Lector físico de código de barras (pistola USB/Bluetooth) en el registro:
+  // Lector físico de código de barras (PDA / pistola) en el registro:
   //  - Con la bandeja de fotos abierta → vincula las fotos a ese producto
   //    (igual que "Escanear código" de la bandeja).
-  //  - Si no → abre la confirmación del producto escaneado (igual que la cámara).
+  //  - En el resto del registro lo atiende el modal global (ScanLookupModal):
+  //    busca en la DATA principal y permite marcar con cantidad.
   // Mientras la cámara de fotos está abierta no actúa (la cámara multi tiene el suyo).
   useHardwareScanner((code) => {
-    if (showCaptureTray) { applyScannedProductToTray(code); return }
-    setShowAddProductModal(false)
-    void handleScanResult(code)
-  }, { enabled: !showCamera, priority: SCAN_PRIORITY.page })
+    applyScannedProductToTray(code)
+  }, { enabled: showCaptureTray && !showCamera, priority: SCAN_PRIORITY.page })
 
   // Captura foto y escribe TODO el texto detectado en el campo indicado.
   // target: 'scan' → nombre en el modal de escaneo · 'code' → campo del modal de agregar producto

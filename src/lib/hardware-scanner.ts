@@ -80,12 +80,21 @@ function isEditable(el: EventTarget | null): boolean {
   return !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color'].includes(type)
 }
 
+function hasScanCapture(el: EventTarget | null): boolean {
+  const node = el as HTMLElement | null
+  return !!node && typeof node.hasAttribute === 'function' && node.hasAttribute('data-scan-capture')
+}
+
 /** Procesa una tecla. Exportado para poder probar la detección sin navegador. */
 export function handleScanKey(e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'target' | 'timeStamp'> & { preventDefault?: () => void; stopPropagation?: () => void; isComposing?: boolean }): boolean {
   if (entries.length === 0) return false
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) { reset(); return false }
-  // En un campo de texto el lector escribe como teclado normal.
-  if (isEditable(e.target ?? null) || isEditable(typeof document !== 'undefined' ? document.activeElement : null)) { reset(); return false }
+  // En un campo de texto el lector escribe como teclado normal, salvo en los
+  // campos marcados con `data-scan-capture` (p. ej. la cantidad del modal de
+  // lectura): ahí una lectura del lector se toma como código, no como texto.
+  const active = typeof document !== 'undefined' ? document.activeElement : null
+  const capture = hasScanCapture(e.target ?? null) || hasScanCapture(active)
+  if (!capture && (isEditable(e.target ?? null) || isEditable(active))) { reset(); return false }
 
   const now = e.timeStamp || Date.now()
   const key = e.key
@@ -161,6 +170,8 @@ export function useHardwareScanner(handler: ScanHandler, opts: { enabled?: boole
 
 /** Prioridades usadas en la app (mayor = recibe el código primero). */
 export const SCAN_PRIORITY = {
+  /** Respaldo global: buscar lo leído en la DATA principal y mostrarlo en un modal. */
+  global: -10,
   page: 0,
   modal: 20,
   table: 30,
