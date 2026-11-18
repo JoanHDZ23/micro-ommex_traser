@@ -639,6 +639,7 @@ export function WizardPage() {
       channel: 'whatsapp',
       label: `Registro ${tc}`,
       key: `wa:matrix:${tc}:${[...matrixSel].sort().join(',')}`,
+      chats: jobs.map((j) => j.to),
       run: () => sendMany(jobs, async ({ to, part }) => {
         if (part.kind === 'header') {
           await apiRequest('/whatsapp-web/send-operation', { method: 'POST', body: { trackingCode: tc, to, headerFields: fields, headerOnly: true } })
@@ -2237,6 +2238,7 @@ export function WizardPage() {
       channel: 'whatsapp',
       label: `${codes.length} producto(s) de ${tc}`,
       key: `wa:selected:${tc}:${codes.join(',')}:${targets.join(',')}`,
+      chats: targets,
       run: () => sendMany(jobs, async ({ to, code }) => {
         await apiRequest('/whatsapp-web/send-product', { method: 'POST', body: { trackingCode: tc, productCode: code, ...(to ? { to } : {}) } })
       }, (ok) => `${ok} envío(s)`),

@@ -17,6 +17,7 @@ export function sendOperationWhatsAppInBackground(trackingCode: string, tos: str
     channel: 'whatsapp',
     label: `Registro ${trackingCode}`,
     key: `wa:op:${trackingCode}:${targets.join(',')}`,
+    chats: targets,
     run: () => sendMany(
       targets,
       async (to) => {

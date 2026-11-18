@@ -171,6 +171,7 @@ export function WhatsAppSendButton({
       label,
       key: `wa:${t.trackingCode}:${targetKey(t)}:${targets.join(',')}`,
       run: () => sendMany(targets, (to) => sendOne(to, t), (ok) => `${ok} chat(s)`),
+      chats: targets,
       // El resultado se muestra en la notificación flotante; los callbacks
       // quedan para quien necesite reaccionar (no se repite el mensaje).
       onDone: (o) => {

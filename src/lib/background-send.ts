@@ -109,6 +109,11 @@ export function notifyToast(
   push({ kind, title, detail, channel, action })
 }
 
+/** Avisos actuales (lectura fuera de React; útil para pruebas). */
+export function peekToasts(): SendToast[] {
+  return toasts
+}
+
 export function useSendToasts(): SendToast[] {
   return useSyncExternalStore(subscribe, () => toasts, () => toasts)
 }
@@ -140,6 +145,55 @@ export interface BackgroundSendOptions {
   run: () => Promise<SendOutcome>
   /** Se llama al terminar (para refrescar la pantalla, si sigue montada). */
   onDone?: (outcome: SendOutcome) => void
+  /**
+   * Chats a los que va el envío (null = chat por defecto). El servidor envía a
+   * cada chat uno detrás de otro; aquí se muestra "En cola (N.º)" mientras
+   * otro envío de este equipo al mismo chat no ha terminado.
+   */
+  chats?: Array<string | null | undefined>
+}
+
+// ── Posición en la cola por chat (envíos de este equipo) ──────────────────
+const chatLines = new Map<string, number[]>() // chat → ids de aviso, en orden de envío
+const chatsOfToast = new Map<number, string[]>()
+
+function chatNorm(c: string | null | undefined): string {
+  const d = String(c ?? '').replace(/[^\dA-Za-z@.\-_]/g, '').toLowerCase()
+  return d || '__default__'
+}
+
+/** Posición (1 = se está enviando) del aviso `id` considerando todos sus chats. */
+function queuePosition(id: number): number {
+  let pos = 1
+  for (const c of chatsOfToast.get(id) ?? []) {
+    const line = chatLines.get(c) ?? []
+    const i = line.indexOf(id)
+    if (i >= 0) pos = Math.max(pos, i + 1)
+  }
+  return pos
+}
+
+function pendingTitle(via: string, pos: number): string {
+  return pos > 1 ? `En cola por ${via} (${pos}.º)…` : `Enviando por ${via}…`
+}
+
+/** Al terminar un envío, los que esperaban detrás avanzan en la cola. */
+function leaveQueue(id: number): void {
+  const chats = chatsOfToast.get(id) ?? []
+  chatsOfToast.delete(id)
+  const affected = new Set<number>()
+  for (const c of chats) {
+    const line = (chatLines.get(c) ?? []).filter((x) => x !== id)
+    if (line.length) chatLines.set(c, line); else chatLines.delete(c)
+    line.forEach((x) => affected.add(x))
+  }
+  for (const other of affected) {
+    const t = toasts.find((x) => x.id === other)
+    if (t && t.kind === 'pending') {
+      const via = t.channel ? CHANNEL_LABEL[t.channel] : 'WhatsApp'
+      update(other, { title: pendingTitle(via, queuePosition(other)) })
+    }
+  }
 }
 
 /**
@@ -157,6 +211,13 @@ export function runSendInBackground(opts: BackgroundSendOptions): boolean {
   pendingKeys.add(pendingKey)
   syncUnloadGuard()
   const id = push({ kind: 'pending', channel, title: `Enviando por ${via}…`, detail: label })
+  if (opts.chats && opts.chats.length) {
+    const cs = [...new Set(opts.chats.map(chatNorm))].map((c) => `${channel}:${c}`)
+    chatsOfToast.set(id, cs)
+    for (const c of cs) chatLines.set(c, [...(chatLines.get(c) ?? []), id])
+    const pos = queuePosition(id)
+    if (pos > 1) update(id, { title: pendingTitle(via, pos) })
+  }
 
   void (async () => {
     let outcome: SendOutcome
@@ -167,13 +228,13 @@ export function runSendInBackground(opts: BackgroundSendOptions): boolean {
       outcome = { status: 'error', message }
       // Sin red: la cola de sincronización lo envía al reconectar.
       if (isNetworkError(err) && /se guardó|se enviará/i.test(message)) {
-        pendingKeys.delete(pendingKey); syncUnloadGuard()
+        pendingKeys.delete(pendingKey); leaveQueue(id); syncUnloadGuard()
         update(id, { kind: 'info', title: 'Envío en espera', detail: `${label}: ${message}` })
         onDone?.(outcome)
         return
       }
     }
-    pendingKeys.delete(pendingKey)
+    pendingKeys.delete(pendingKey); leaveQueue(id)
     syncUnloadGuard()
     if (outcome.status === 'success') {
       update(id, { kind: 'success', title: `Enviado por ${via}`, detail: `${label} · ${outcome.message}` })
