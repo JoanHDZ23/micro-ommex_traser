@@ -13,6 +13,8 @@ export interface SheetColumnSettings {
   extraColumns: number[]
   /** Columna con la cantidad ESPERADA del producto (−1 = ninguna). */
   expectedColumn?: number
+  /** Qué es la cantidad marcada: piezas (indicativo, por defecto) o unidades contra lo esperado. */
+  qtyMode?: 'pieces' | 'expected'
 }
 
 /** Forma completa guardada por compañía. */

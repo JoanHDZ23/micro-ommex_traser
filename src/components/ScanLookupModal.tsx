@@ -25,7 +25,7 @@ import { Modal } from './ui'
 import { ReceptionPicker } from './ReceptionPicker'
 import { NetworkError, apiRequest, searchInSheet, type Operation, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
-import { countStatus, getDbSettings, getSheetColumns, parseExpectedQty, type CountStatus } from '../lib/db-settings'
+import { countStatus, effectiveQtyMode, getDbSettings, getSheetColumns, parseExpectedQty, type CountStatus } from '../lib/db-settings'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { adjustReceivedDetailed, getActiveScope, receivedKey, undoReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { notifyToast } from '../lib/background-send'
@@ -103,11 +103,13 @@ export function ScanLookupModal() {
   const scope = useActiveScope(companyId)
 
   // Cantidad ESPERADA de la fila (columna "Cantidad esperada" de la DATA).
+  // Modo piezas (por defecto): el número es indicativo, no se compara.
+  const pieces = effectiveQtyMode(db?.qtyMode) === 'pieces'
   const expected = useMemo(() => {
     const col = db?.expectedColumn
-    if (!selected || typeof col !== 'number' || col < 0) return null
+    if (pieces || !selected || typeof col !== 'number' || col < 0) return null
     return parseExpectedQty(selected.row?.[col])
-  }, [selected, db])
+  }, [selected, db, pieces])
 
   // Últimos cambios de este producto (quién marcó cuánto y cuándo).
   const [history, setHistory] = useState<ReceivedHistoryEntry[]>([])
@@ -242,7 +244,7 @@ export function ScanLookupModal() {
       const historyId = r.historyId
       notifyToast('success',
         target > 0 ? `Marcado: ${code}` : `Desmarcado: ${code}`,
-        `${target > 0 ? `Cantidad: ${target}${exp}` : 'Quitado del conteo'}${scope.id ? ` · ${scope.name}` : ''}`,
+        `${target > 0 ? `${pieces ? 'Piezas' : 'Cantidad'}: ${target}${exp}` : 'Quitado del conteo'}${scope.id ? ` · ${scope.name}` : ''}`,
         undefined,
         historyId
           ? {
@@ -568,8 +570,8 @@ export function ScanLookupModal() {
               })() : (
                 <p>
                   {currentQty > 0
-                    ? <span className="text-emerald-700 font-medium">✓ Ya marcado: {currentQty} unidad(es)</span>
-                    : <span className="text-gray-500">Sin marcar</span>}
+                    ? <span className="text-emerald-700 font-medium">✓ Recibido · {currentQty} {pieces ? (currentQty === 1 ? 'pieza' : 'piezas') : 'unidad(es)'}</span>
+                    : <span className="text-gray-500">Pendiente · sin marcar</span>}
                 </p>
               )}
             </div>
@@ -611,7 +613,7 @@ export function ScanLookupModal() {
 
             {selected.code ? (
               <div>
-                <label className="text-[11px] font-semibold text-gray-500 uppercase">Cantidad que trae</label>
+                <label className="text-[11px] font-semibold text-gray-500 uppercase">{pieces ? 'Piezas que trae' : 'Cantidad que trae'}</label>
                 <div className="mt-1 flex items-center gap-2">
                   <button type="button" onClick={() => changeQty(qty - 1)} aria-label="Restar una unidad"
                     className="w-11 h-11 rounded-xl border border-gray-200 flex items-center justify-center active:scale-95">

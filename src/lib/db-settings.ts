@@ -31,7 +31,7 @@ export const DEFAULT_SHEET_COLUMNS: SheetColumnSettings = {
   expectedColumn: -1,
 }
 
-export { countStatus, parseExpectedQty, type CountStatus } from './count-status'
+export { countStatus, effectiveQtyMode, parseExpectedQty, rowStatus, type CountStatus, type QtyMode } from './count-status'
 
 /** Ajustes efectivos de la DATA de la empresa (tabla principal + columnas de esa tabla). */
 export interface DbSettings extends SheetColumnSettings {

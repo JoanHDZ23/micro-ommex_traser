@@ -6,7 +6,7 @@ import {
   Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
   Star, LayoutGrid, List, Package, SlidersHorizontal, ScanLine,
 } from 'lucide-react'
-import { countStatus, getPrimarySheetId, getSheetColumns, hasSheetColumns, parseExpectedQty, setPrimarySheet, setSheetColumns, type CountStatus } from '../lib/db-settings'
+import { effectiveQtyMode, getPrimarySheetId, getSheetColumns, hasSheetColumns, parseExpectedQty, rowStatus, setPrimarySheet, setSheetColumns, type CountStatus, type QtyMode } from '../lib/db-settings'
 import { apiRequest, fileToBase64, syncSheetToGoogle, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
@@ -84,6 +84,8 @@ interface DataTableProps {
   initialFilter?: string
   /** Columna con la cantidad ESPERADA (−1/undefined = sin conteo contra lo esperado). */
   expectedColumn?: number
+  /** Qué es la cantidad marcada: piezas (indicativo, por defecto) o unidades contra lo esperado. */
+  qtyMode?: QtyMode
   /** Recibe las filas que quedan tras los filtros (para descargar "lo filtrado"). */
   filteredRowsRef?: MutableRefObject<string[][] | null>
   /** Si se definen, habilita las acciones por fila / selección múltiple (modo registros). */
@@ -151,9 +153,19 @@ function CountBadge({ marked, expected, status }: { marked: number; expected: nu
   )
 }
 
+/** Piezas marcadas de un producto (indicativo, sin comparar). */
+function PiecesBadge({ pieces }: { pieces: number }) {
+  return (
+    <span title="Piezas en que llega el producto"
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-bold whitespace-nowrap bg-emerald-100 text-emerald-800 border-emerald-300">
+      {pieces} {pieces === 1 ? 'pieza' : 'piezas'}
+    </span>
+  )
+}
+
 type StatusFilter = 'all' | 'pending' | 'partial' | 'over' | 'complete'
 
-function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, sheetId, codeColumn, expectedColumn, filteredRowsRef }: DataTableProps) {
+function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, sheetId, codeColumn, expectedColumn, qtyMode, filteredRowsRef }: DataTableProps) {
   const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas (filtro global)
   const [filterText, setFilterText] = useState(initialFilter ?? '')
   // Filtros por columna (estilo Excel): { [colIndex]: texto }. Se aplican con AND.
@@ -304,14 +316,21 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
   }, [serverMarks, marked, markedQty, rowMarks, receivedMap])
 
   // ── Conteo contra lo ESPERADO (columna configurada en "Columnas") ──
-  const hasExpected = typeof expectedColumn === 'number' && expectedColumn >= 0
+  // Modo PIEZAS (por defecto): el número es indicativo (en cuántas piezas llega
+  // el producto) y marcar = recibido. Modo UNIDADES: se compara con la columna
+  // esperada (incompleto / completo / sobrante).
+  const mode = effectiveQtyMode(qtyMode)
+  const pieces = mode === 'pieces'
+  const hasExpected = !pieces && typeof expectedColumn === 'number' && expectedColumn >= 0
+  // Los filtros por estado están siempre en piezas; en unidades, si hay columna esperada.
+  const showStatus = pieces || hasExpected
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const expectedOf = (row: string[]): number | null => (hasExpected ? parseExpectedQty(row[expectedColumn!]) : null)
   const markedOf = (row: string[], gIdx: number): number => (isRowMarked(row, gIdx) ? rowQty(row, gIdx) : 0)
-  const statusOf = (row: string[], gIdx: number): CountStatus => countStatus(markedOf(row, gIdx), expectedOf(row))
+  const statusOf = (row: string[], gIdx: number): CountStatus => rowStatus(markedOf(row, gIdx), expectedOf(row), mode)
   const statusCounts = useMemo(() => {
     const c = { pending: 0, partial: 0, complete: 0, over: 0 }
-    if (!hasExpected) return c
+    if (!showStatus) return c
     rows.forEach((row, i) => {
       const s = statusOf(row, i)
       if (s !== 'none') c[s]++
@@ -319,7 +338,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
     return c
     // statusOf depende de las marcas (receivedMap / marked) y de la columna esperada.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, hasExpected, expectedColumn, receivedMap, marked, markedQty, serverMarks, codeColumn])
+  }, [rows, showStatus, mode, hasExpected, expectedColumn, receivedMap, marked, markedQty, serverMarks, codeColumn])
 
   // Lista de filtros de columna activos (con texto no vacío).
   const activeColumnFilters = useMemo(
@@ -331,7 +350,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
 
   const filtered = useMemo(() => {
     const q = filterText.trim().toLowerCase()
-    const byStatus = hasExpected && statusFilter !== 'all'
+    const byStatus = showStatus && statusFilter !== 'all'
     // Sin ningún filtro activo → todas las filas
     if (!q && activeColumnFilters.length === 0 && !byStatus) return rows
     return rows.filter((row, idx) => {
@@ -349,7 +368,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
       return true
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, filterText, filterCol, activeColumnFilters, hasExpected, statusFilter, statusCounts])
+  }, [rows, filterText, filterCol, activeColumnFilters, showStatus, statusFilter, statusCounts])
 
   // Lo filtrado en pantalla queda disponible para "Descargar → lo filtrado".
   useEffect(() => {
@@ -547,16 +566,22 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
         </div>
       )}
 
-      {/* ── Resumen del conteo contra lo esperado (toca para filtrar) ── */}
-      {hasExpected && (
-        <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filtrar por estado del conteo">
-          {([
-            ['all', `Todos (${rows.length})`, 'bg-[var(--color-surface)] text-[var(--color-text-2)] border-[var(--color-border)]'],
-            ['pending', `Pendientes (${statusCounts.pending})`, COUNT_STYLE.pending.badge],
-            ['partial', `Incompletos (${statusCounts.partial})`, COUNT_STYLE.partial.badge],
-            ['over', `Sobrantes (${statusCounts.over})`, COUNT_STYLE.over.badge],
-            ['complete', `Completos (${statusCounts.complete})`, COUNT_STYLE.complete.badge],
-          ] as Array<[StatusFilter, string, string]>).map(([key, label, cls]) => (
+      {/* ── Resumen del estado (toca para filtrar) ── */}
+      {showStatus && (
+        <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filtrar por estado">
+          {((pieces
+            ? [
+              ['all', `Todos (${rows.length})`, 'bg-[var(--color-surface)] text-[var(--color-text-2)] border-[var(--color-border)]'],
+              ['pending', `Pendientes (${statusCounts.pending})`, COUNT_STYLE.pending.badge],
+              ['complete', `Recibidos (${statusCounts.complete})`, COUNT_STYLE.complete.badge],
+            ]
+            : [
+              ['all', `Todos (${rows.length})`, 'bg-[var(--color-surface)] text-[var(--color-text-2)] border-[var(--color-border)]'],
+              ['pending', `Pendientes (${statusCounts.pending})`, COUNT_STYLE.pending.badge],
+              ['partial', `Incompletos (${statusCounts.partial})`, COUNT_STYLE.partial.badge],
+              ['over', `Sobrantes (${statusCounts.over})`, COUNT_STYLE.over.badge],
+              ['complete', `Completos (${statusCounts.complete})`, COUNT_STYLE.complete.badge],
+            ]) as Array<[StatusFilter, string, string]>).map(([key, label, cls]) => (
             <button key={key} type="button" onClick={() => setStatusFilter(key)}
               aria-pressed={statusFilter === key}
               className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold transition-shadow ${cls} ${statusFilter === key ? 'ring-2 ring-[var(--color-primary)]/50' : 'opacity-80'}`}>
@@ -577,7 +602,9 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
             {totalFoundItems > 0 && (
               <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                {totalFoundItems} item(s) · {totalFoundQty} encontrada(s)
+                {pieces
+                  ? `${totalFoundItems} producto(s) recibido(s) · ${totalFoundQty} pieza(s)`
+                  : `${totalFoundItems} item(s) · ${totalFoundQty} encontrada(s)`}
               </span>
             )}
           </div>
@@ -647,6 +674,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                         {expected !== null && (
                           <CountBadge marked={markedOf(row, gIdx)} expected={expected} status={status} />
                         )}
+                        {pieces && isMarked && <PiecesBadge pieces={markedOf(row, gIdx)} />}
                         {isMarked && (
                           <div className="flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-1 py-0.5">
                             <button onClick={() => bumpQtyRow(row, gIdx, -1)}
@@ -793,6 +821,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                         {expected !== null && (
                           <CountBadge marked={markedOf(row, gIdx)} expected={expected} status={status} />
                         )}
+                        {pieces && isMarked && <PiecesBadge pieces={markedOf(row, gIdx)} />}
                         {isMarked && (
                           <div className="flex items-center gap-0.5">
                             <button onClick={() => bumpQtyRow(row, gIdx, -1)} aria-label="Menos"
@@ -905,6 +934,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     descCol: number
     extraCols: number[]
     expectedCol: number
+    qtyMode: QtyMode
     loading: boolean
   } | null>(null)
   // Sube cuando cambian las columnas guardadas (para que el visor y el buscador se actualicen).
@@ -913,7 +943,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   // Abre el modal de columnas para una tabla: carga sus encabezados y la
   // configuración guardada (o la adivina por el nombre de la columna).
   const openColumnConfig = async (sheet: CompanySheet) => {
-    setColCfg({ sheet, headers: [], codeCol: 0, descCol: -1, extraCols: [], expectedCol: -1, loading: true })
+    setColCfg({ sheet, headers: [], codeCol: 0, descCol: -1, extraCols: [], expectedCol: -1, qtyMode: 'pieces', loading: true })
     let headers: string[] = []
     const local = getLocalTable(companyId, sheet.id)
     if (local) {
@@ -944,7 +974,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       const ge = headers.findIndex((h) => /cant|qty|esperad|unidades|stock/i.test(h || ''))
       expectedCol = ge >= 0 && ge !== codeCol ? ge : -1
     }
-    setColCfg({ sheet, headers, codeCol, descCol, extraCols, expectedCol, loading: false })
+    setColCfg({ sheet, headers, codeCol, descCol, extraCols, expectedCol, qtyMode: effectiveQtyMode(saved.qtyMode), loading: false })
   }
 
   // Guarda la configuración de columnas de la tabla (global, se aplica siempre).
@@ -955,6 +985,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       descColumn: colCfg.descCol,
       extraColumns: colCfg.extraCols,
       expectedColumn: colCfg.expectedCol,
+      qtyMode: colCfg.qtyMode,
     })
     setColsVersion((v) => v + 1)
     setSuccess(`✓ Columnas de "${colCfg.sheet.sheetName}" guardadas. Se aplicarán al traer productos.`)
@@ -1016,7 +1047,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     const code = `Código: ${name(c.codeColumn)}`
     const desc = c.descColumn >= 0 ? `Descripción: ${name(c.descColumn)}` : 'Sin descripción'
     const extra = c.extraColumns.length ? `+${c.extraColumns.length} adicional(es)` : ''
-    const exp = typeof c.expectedColumn === 'number' && c.expectedColumn >= 0 ? `Esperada: ${name(c.expectedColumn)}` : ''
+    const exp = effectiveQtyMode(c.qtyMode) === 'pieces'
+      ? 'Cantidad: piezas'
+      : typeof c.expectedColumn === 'number' && c.expectedColumn >= 0 ? `Esperada: ${name(c.expectedColumn)}` : 'Unidades sin columna esperada'
     const parts = [code, desc, extra, exp].filter(Boolean)
     return { ok: true, text: parts.join(' · '), short: parts.slice(0, 2).join(' · ') }
   }
@@ -1460,7 +1493,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     const fullRows = fullRowsForKeys ?? rows
     const keyByRow = new Map<string[], RowMark>()
     rowMarkKeys(fullRows, codeCol, meta.id).forEach((m, i) => keyByRow.set(fullRows[i], m))
-    const expCol = typeof cols.expectedColumn === 'number' ? cols.expectedColumn : -1
+    const qtyMode = effectiveQtyMode(cols.qtyMode)
+    const piecesMode = qtyMode === 'pieces'
+    const expCol = !piecesMode && typeof cols.expectedColumn === 'number' ? cols.expectedColumn : -1
     let width = Math.max(headers.length, 1)
     for (const r of rows) if (r.length > width) width = r.length
 
@@ -1468,7 +1503,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       const m = keyByRow.get(row) ?? { code: codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '', rowKey: '' }
       const q = m.code ? (getReceived(m.code, m.rowKey)?.quantity ?? 0) : 0
       const expected = expCol >= 0 ? parseExpectedQty(row[expCol]) : null
-      return { row, q, expected, status: countStatus(q, expected) }
+      return { row, q, expected, status: rowStatus(q, expected, qtyMode) }
     })
     const picked = enriched.filter((e) => {
       if (mode === 'marked') return e.q > 0
@@ -1480,8 +1515,8 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     const STATUS_LABEL: Record<CountStatus, string> = { none: '', pending: 'Pendiente', partial: 'Incompleto', complete: 'Completo', over: 'Sobrante' }
     const outHeaders = [
       ...Array.from({ length: width }, (_, c) => headers[c] ?? `Columna ${c + 1}`),
-      'Cantidad marcada',
-      ...(withStatus ? ['Diferencia', 'Estado'] : []),
+      piecesMode ? 'Piezas' : 'Cantidad marcada',
+      ...(piecesMode ? ['Estado'] : withStatus ? ['Diferencia', 'Estado'] : []),
     ]
     const markedRows = new Set<number>()
     const outRows = picked.map((e, i) => {
@@ -1489,9 +1524,11 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       return [
         ...Array.from({ length: width }, (_, c) => e.row[c] ?? ''),
         e.q > 0 ? String(e.q) : '',
-        ...(withStatus
-          ? [e.expected !== null ? String(e.q - e.expected) : '', STATUS_LABEL[e.status]]
-          : []),
+        ...(piecesMode
+          ? [e.q > 0 ? 'Recibido' : 'Pendiente']
+          : withStatus
+            ? [e.expected !== null ? String(e.q - e.expected) : '', STATUS_LABEL[e.status]]
+            : []),
       ]
     })
     const blob = buildStyledXlsx({
@@ -1870,6 +1907,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   sheetId={viewing.id}
                   codeColumn={codeCol}
                   expectedColumn={getSheetColumns(companyId, viewing.id).expectedColumn}
+                  qtyMode={getSheetColumns(companyId, viewing.id).qtyMode}
                   filteredRowsRef={viewFilteredRef}
                   initialFilter={viewFilter ?? initialFilter}
                   actions={{
@@ -2463,9 +2501,31 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                     </select>
                   </label>
 
-                  {/* Columna de cantidad esperada (conteo contra lo esperado) */}
+                  {/* Qué significa el número que se marca en cada producto */}
+                  <div className="space-y-1.5" role="radiogroup" aria-label="Qué significa la cantidad marcada">
+                    <span className="text-xs font-semibold text-[var(--color-text-2)]">El número que marcas en cada producto es…</span>
+                    {([
+                      ['pieces', 'Piezas que trae el producto', 'Indicativo: en cuántas piezas o bultos llega. Marcado = recibido. Filtros: Pendientes / Recibidos.'],
+                      ['expected', 'Unidades a contar', 'Se compara con una columna de la DATA: incompleto, completo o sobrante.'],
+                    ] as Array<[QtyMode, string, string]>).map(([value, title, hint]) => (
+                      <button key={value} type="button" role="radio" aria-checked={colCfg.qtyMode === value}
+                        onClick={() => setColCfg((p) => p && ({ ...p, qtyMode: value }))}
+                        className={`w-full flex items-start gap-2.5 p-2.5 rounded-xl border text-left transition-colors ${colCfg.qtyMode === value
+                          ? 'border-[var(--color-primary)] bg-[var(--color-primary-bg)]'
+                          : 'border-[var(--color-border)] bg-[var(--color-surface)]'}`}>
+                        <span className={`mt-0.5 w-4 h-4 rounded-full border-2 flex-shrink-0 ${colCfg.qtyMode === value ? 'border-[var(--color-primary)] bg-[var(--color-primary)] shadow-[inset_0_0_0_3px_white]' : 'border-[var(--color-border)]'}`} />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold text-[var(--color-text)]">{title}</span>
+                          <span className="block text-[10px] text-[var(--color-text-3)]">{hint}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Columna de cantidad esperada: solo cuando se cuentan unidades */}
+                  {colCfg.qtyMode === 'expected' && (
                   <label className="space-y-1.5 block">
-                    <span className="text-xs font-semibold text-[var(--color-text-2)]">Cantidad esperada</span>
+                    <span className="text-xs font-semibold text-[var(--color-text-2)]">Columna con la cantidad esperada</span>
                     <select value={colCfg.expectedCol}
                       onChange={(e) => { const v = Number(e.target.value); setColCfg((p) => p && ({ ...p, expectedCol: v })) }}
                       className="w-full rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2.5 text-sm">
@@ -2473,9 +2533,10 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                       {colCfg.headers.map((h, i) => <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>)}
                     </select>
                     <span className="block text-[10px] text-[var(--color-text-3)]">
-                      Si la eliges, cada producto muestra "marcado X de Y" en verde (completo), amarillo (incompleto) o rojo (sobrante).
+                      Cada producto muestra "marcado X de Y" en verde (completo), amarillo (incompleto) o rojo (sobrante).
                     </span>
                   </label>
+                  )}
 
                   {/* Columnas adicionales */}
                   <div className="space-y-1.5">
