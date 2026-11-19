@@ -21,6 +21,7 @@ import { runSendInBackground, sendMany } from '../lib/background-send'
 import { sendOperationEmailInBackground, sendOperationWhatsAppInBackground } from '../lib/operation-share'
 import type { PhotoRecord } from '../lib/api'
 import { useTracerFeatures } from '../lib/tracer-features'
+import { OPERATION_UPDATED_EVENT } from '../lib/scan-lookup'
 import { getCompanyId } from '../lib/context'
 import { touchActivity } from '../lib/auth'
 import { getRecordSettings, setRecordSettings, DEFAULT_RECORD_SETTINGS, type RecordSettings } from '../lib/record-settings'
@@ -1576,6 +1577,19 @@ export function WizardPage() {
   const loadOperation = useCallback(async () => {
     await live.refreshNow()
   }, [live])
+
+  // El modal del lector (gatillo SCAN) trajo un producto a ESTE registro:
+  // se refresca al instante y queda activo para tomarle fotos.
+  useEffect(() => {
+    const onUpdated = (e: Event) => {
+      const d = (e as CustomEvent<{ trackingCode?: string; productCode?: string }>).detail
+      if (!d || d.trackingCode !== trackingCode) return
+      if (d.productCode) setActiveLbProduct(d.productCode)
+      void loadOperation()
+    }
+    window.addEventListener(OPERATION_UPDATED_EVENT, onUpdated)
+    return () => window.removeEventListener(OPERATION_UPDATED_EVENT, onUpdated)
+  }, [trackingCode, loadOperation])
 
   // ── Local photo cache ──
   const [localPhotos, setLocalPhotos] = useState<CachedPhoto[]>([])

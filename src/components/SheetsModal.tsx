@@ -4,14 +4,14 @@ import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2, Download,
   Search, CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
   Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
-  Star, LayoutGrid, List, Package, SlidersHorizontal,
+  Star, LayoutGrid, List, Package, SlidersHorizontal, ScanLine,
 } from 'lucide-react'
 import { countStatus, getPrimarySheetId, getSheetColumns, parseExpectedQty, setPrimarySheet, setSheetColumns, type CountStatus } from '../lib/db-settings'
 import { apiRequest, fileToBase64, syncSheetToGoogle, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { ActionMenu, type ActionMenuItem } from './ActionMenu'
-import { DbProductSearch } from './DbProductSearch'
+import { openScanLookup } from '../lib/scan-lookup'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
 import { adjustReceived, flushReceived, getReceived, receivedKey, refreshReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
@@ -1890,17 +1890,31 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                 </div>
                 {/* Recepción en la que se cuenta (cada carga con su propio conteo) */}
                 <ReceptionPicker companyId={companyId} />
-                <DbProductSearch
-                  key={`${primarySheet.id}:${colsVersion}:${scope.id}`}
-                  sheetId={primarySheet.id}
-                  sheetName={primarySheet.sheetName}
-                  codeColumn={getSheetColumns(companyId, primarySheet.id).codeColumn}
-                  descColumn={getSheetColumns(companyId, primarySheet.id).descColumn}
-                  autoFocus={false}
-                  // "Usar" abre la tabla filtrada por ese código.
-                  onSelect={(item) => void handleView(primarySheet, item.code || undefined)}
-                />
-                <OfflineDataStatus companyId={companyId} sheetId={primarySheet.id} version={colsVersion} />
+                {/* La búsqueda se hace en un modal: lo abre el gatillo SCAN de la PDA
+                    (en cualquier pantalla) o este botón para buscar a mano. */}
+                <button
+                  type="button"
+                  onClick={() => openScanLookup()}
+                  className="w-full flex items-center gap-3 p-3 rounded-[var(--radius-lg)] border border-amber-200 bg-[var(--color-surface)] text-left hover:border-amber-400 hover:bg-amber-50/60 transition-colors"
+                >
+                  <span className="w-11 h-11 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0">
+                    <ScanLine className="w-5 h-5" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-semibold text-[var(--color-text)]">Escanea con el gatillo SCAN</span>
+                    <span className="block text-[11px] text-[var(--color-text-3)]">
+                      El resultado se abre en una ventana con toda la información, para marcar o traer a un registro. Toca aquí para buscar a mano.
+                    </span>
+                  </span>
+                  <Search className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
+                </button>
+                <div className="flex items-center justify-between gap-2">
+                  <OfflineDataStatus companyId={companyId} sheetId={primarySheet.id} version={colsVersion} />
+                  <button type="button" onClick={() => void handleView(primarySheet)}
+                    className="text-[11px] font-semibold text-[var(--color-primary)] flex-shrink-0">
+                    Ver tabla completa
+                  </button>
+                </div>
               </section>
             ) : sheets.length > 0 ? (
               <p className="text-[11px] text-[var(--color-text-3)] flex items-center gap-1.5 px-1">

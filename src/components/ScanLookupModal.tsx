@@ -1,28 +1,42 @@
 /**
- * ScanLookupModal — lo que lee el escáner (PDA o pistola) en CUALQUIER vista
- * que no tenga su propio uso para el código (fuera de la base de datos, de los
- * buscadores y de la bandeja de fotos).
+ * ScanLookupModal — se abre con cada lectura del gatillo SCAN de la PDA (o de
+ * una pistola) en cualquier vista que no tenga su propio uso para el código,
+ * y también a mano desde "Buscar en la DATA" (Base de datos).
  *
- * Busca el código en la DATA principal ⭐ y muestra un modal con la información
- * de la fila y las opciones para MARCAR el producto e indicar la CANTIDAD que
- * trae. Nada se marca solo: el usuario confirma con "Marcar".
+ * Busca el código en la DATA principal ⭐, SUENA según el resultado
+ * (bip-bip = encontrado, tono grave = no está) y muestra TODA la información
+ * de la fila con dos acciones:
+ *  - MARCAR el producto con la cantidad que trae (en la recepción activa).
+ *  - TRAER A UN REGISTRO: lo agrega a la operación abierta (o a la que estás
+ *    viendo) con su descripción de la DATA.
+ * Nada se hace solo: el usuario confirma cada acción.
  *
  * Con el modal abierto se puede seguir escaneando:
  *  - el MISMO código suma 1 a la cantidad (contar unidades leyendo cada una);
  *  - un código distinto busca ese otro producto.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Loader2, Minus, Package, Plus, ScanLine, Star, WifiOff } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import {
+  AlertTriangle, CheckCircle2, ClipboardList, FolderInput, Loader2, Minus, Package, Plus, ScanLine, Search,
+  Star, Volume2, VolumeX, WifiOff,
+} from 'lucide-react'
 import { Modal } from './ui'
-import { NetworkError, searchInSheet, type SheetSearchItem } from '../lib/api'
+import { ReceptionPicker } from './ReceptionPicker'
+import { NetworkError, apiRequest, searchInSheet, type Operation, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
-import { countStatus, getDbSettings, parseExpectedQty, type CountStatus } from '../lib/db-settings'
+import { countStatus, getDbSettings, getSheetColumns, parseExpectedQty, type CountStatus } from '../lib/db-settings'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { adjustReceivedDetailed, getActiveScope, receivedKey, undoReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { notifyToast } from '../lib/background-send'
 import { getReceivedHistory, reportNotFoundCode, warmSheetCache, type ReceivedHistoryEntry } from '../lib/api'
 import { normCode, searchResultMarkKeys, type RowMark } from '../lib/mark-keys'
 import { getOfflineSheetData } from '../lib/local-tables'
+import { isScanSoundOn, playScanSound, setScanSoundOn } from '../lib/scan-sound'
+import {
+  OPERATION_UPDATED_EVENT, SCAN_LOOKUP_EVENT, composeDbDescription, getLastScanOperation, setLastScanOperation,
+} from '../lib/scan-lookup'
+import { useTracerFeatures } from '../lib/tracer-features'
 
 type Status = 'idle' | 'loading' | 'done' | 'error' | 'no-data'
 
@@ -45,9 +59,12 @@ const STATUS_TEXT: Record<CountStatus, { cls: string; label: string }> = {
   over: { cls: 'text-red-700', label: 'Sobrante' },
 }
 
+type OpenOp = Pick<Operation, 'trackingCode' | 'operationType' | 'operatorName' | 'vehiclePlate' | 'locationName' | 'createdAt' | 'lineaBlanca'>
+
 export function ScanLookupModal() {
   const [open, setOpen] = useState(false)
   const [code, setCode] = useState('')
+  const [manual, setManual] = useState('')
   const [status, setStatus] = useState<Status>('idle')
   const [errorMsg, setErrorMsg] = useState('')
   const [results, setResults] = useState<SheetSearchItem[]>([])
@@ -56,7 +73,20 @@ export function ScanLookupModal() {
   const [qty, setQty] = useState(1)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [soundOn, setSoundOn] = useState(isScanSoundOn)
   const searchSeq = useRef(0)
+  const manualRef = useRef<HTMLInputElement | null>(null)
+
+  // Registro (operación) al que traer el producto.
+  const location = useLocation()
+  const navigate = useNavigate()
+  const features = useTracerFeatures()
+  const currentOp = useMemo(() => location.pathname.match(/^\/wizard\/([^/?#]+)/)?.[1] ?? null, [location.pathname])
+  const [pickOp, setPickOp] = useState(false)
+  const [ops, setOps] = useState<OpenOp[]>([])
+  const [opsLoading, setOpsLoading] = useState(false)
+  const [opsError, setOpsError] = useState<string | null>(null)
+  const [adding, setAdding] = useState<string | null>(null)
 
   const companyId = getCompanyId()
   const receivedMap = useReceivedMap(companyId)
@@ -116,17 +146,21 @@ export function ScanLookupModal() {
     setSelected(item)
     setSaveError(null)
     setQtyTouched(false)
+    setPickOp(false)
   }
 
-  const runLookup = async (raw: string) => {
+  const runLookup = useCallback(async (raw: string) => {
     const q = raw.trim()
+    if (!q) return
     const seq = ++searchSeq.current
     setCode(q)
+    setManual('')
     setSelected(null)
     setResults([])
     setSaveError(null)
+    setPickOp(false)
     const cfg = getDbSettings(companyId)
-    if (!companyId || !cfg.primarySheetId) { setStatus('no-data'); return }
+    if (!companyId || !cfg.primarySheetId) { setStatus('no-data'); playScanSound('notfound'); return }
     setStatus('loading')
     try {
       const r = await searchInSheet({
@@ -140,13 +174,19 @@ export function ScanLookupModal() {
       setHeaders(r.headers ?? [])
       setStatus('done')
       // No está en la DATA → se registra en "Códigos no encontrados" (una vez por sesión).
-      if (r.results.length === 0) reportMissing(companyId, q, cfg.primarySheetId, getActiveScope(companyId).id)
+      if (r.results.length === 0) {
+        playScanSound('notfound')
+        reportMissing(companyId, q, cfg.primarySheetId, getActiveScope(companyId).id)
+        return
+      }
       // Coincidencia EXACTA de código → se muestra directamente (no se marca).
       // Si el código está en VARIAS filas, se pide elegir cuál (no se adivina).
       const exact = r.results.filter((it) => normCode(it.code) === normCode(q))
       const only = exact.length === 1 ? exact[0] : exact.length === 0 && r.results.length === 1 ? r.results[0] : undefined
-      if (only) pick(only)
-      else if (exact.length > 1) setResults(exact)
+      if (only) { pick(only); playScanSound('found') } else {
+        if (exact.length > 1) setResults(exact)
+        playScanSound(exact.length > 0 ? 'found' : 'multiple')
+      }
     } catch (err) {
       if (seq !== searchSeq.current) return
       setStatus('error')
@@ -154,7 +194,7 @@ export function ScanLookupModal() {
         ? 'No se pudo consultar la DATA: conexión lenta o sin señal.'
         : 'No se pudo consultar la DATA en este momento.')
     }
-  }
+  }, [companyId])
 
   // Lectura del escáner: respaldo global (cerrado) o, con el modal abierto,
   // por encima de la página para seguir escaneando aquí.
@@ -163,13 +203,29 @@ export function ScanLookupModal() {
     if (!clean) return
     if (open && selected && selected.code.trim().toLowerCase() === clean.toLowerCase()) {
       changeQty(qty + 1) // mismo producto: una unidad más
+      playScanSound('found')
       return
     }
     setOpen(true)
     void runLookup(clean)
   }, { priority: open ? SCAN_PRIORITY.modal : SCAN_PRIORITY.global })
 
-  useEffect(() => { if (!open) { searchSeq.current++; setSaving(false) } }, [open])
+  // Apertura a mano (botón "Buscar" de la Base de datos), con o sin código.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const c = (e as CustomEvent<{ code?: string }>).detail?.code ?? ''
+      setOpen(true)
+      if (c.trim()) { void runLookup(c) } else {
+        searchSeq.current++
+        setStatus('idle'); setCode(''); setSelected(null); setResults([]); setPickOp(false)
+        setTimeout(() => manualRef.current?.focus(), 60)
+      }
+    }
+    window.addEventListener(SCAN_LOOKUP_EVENT, onOpen)
+    return () => window.removeEventListener(SCAN_LOOKUP_EVENT, onOpen)
+  }, [runLookup])
+
+  useEffect(() => { if (!open) { searchSeq.current++; setSaving(false); setAdding(null); setPickOp(false) } }, [open])
 
   const close = () => setOpen(false)
 
@@ -206,6 +262,60 @@ export function ScanLookupModal() {
     }
   }
 
+  // ── Traer a un registro ──────────────────────────────────────────────────
+  const loadOpenOps = async () => {
+    setOpsLoading(true); setOpsError(null)
+    try {
+      const params = new URLSearchParams({ companyId, status: 'EN_PROCESO', limit: '15', page: '1' })
+      const r = await apiRequest<{ operations: OpenOp[] }>(`/operations?${params.toString()}`)
+      const last = getLastScanOperation()
+      const list = [...(r.operations ?? [])].sort((a, b) =>
+        Number(b.trackingCode === last) - Number(a.trackingCode === last))
+      setOps(list)
+    } catch (err) {
+      setOpsError(err instanceof NetworkError ? 'Sin conexión: no se pudieron cargar los registros.' : 'No se pudieron cargar los registros abiertos.')
+    } finally {
+      setOpsLoading(false)
+    }
+  }
+
+  const addToOperation = async (trackingCode: string) => {
+    if (!selected?.code) return
+    const productCode = selected.code.trim()
+    setAdding(trackingCode); setSaveError(null)
+    const cols = db?.primarySheetId ? getSheetColumns(companyId, db.primarySheetId) : { codeColumn: 0, descColumn: -1, extraColumns: [] }
+    const descripcion = composeDbDescription(selected, headers, cols)
+    try {
+      await apiRequest(`/operations/${encodeURIComponent(trackingCode)}/linea-blanca`, {
+        method: 'POST',
+        body: { productCode, labelData: descripcion ? { descripcion } : undefined, isLineaBlanca: false },
+      })
+      done(trackingCode, productCode, `Agregado al registro ${trackingCode}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : ''
+      // Ya estaba en ese registro: no es un error para quien escanea.
+      if (/ya est[aá] registrado/i.test(msg)) { done(trackingCode, productCode, `Ya estaba en el registro ${trackingCode}`); return }
+      setSaveError(msg || 'No se pudo agregar al registro.')
+    } finally {
+      setAdding(null)
+    }
+  }
+
+  const done = (trackingCode: string, productCode: string, title: string) => {
+    setLastScanOperation(trackingCode)
+    window.dispatchEvent(new CustomEvent(OPERATION_UPDATED_EVENT, { detail: { trackingCode, productCode } }))
+    const here = currentOp === trackingCode
+    notifyToast('success', title, here ? 'Ya puedes añadirle fotos.' : productCode, undefined,
+      here ? undefined : { label: 'Abrir registro', run: () => navigate(`/wizard/${trackingCode}`) })
+    close()
+  }
+
+  const onBringToRecord = () => {
+    if (currentOp) { void addToOperation(currentOp); return }
+    setPickOp(true)
+    void loadOpenOps()
+  }
+
   // Campos de la fila (encabezado → valor), sin las celdas vacías.
   const fields = useMemo(() => {
     if (!selected) return [] as Array<{ label: string; value: string }>
@@ -219,41 +329,101 @@ export function ScanLookupModal() {
     return out
   }, [selected, headers])
 
+  const toggleSound = () => {
+    const next = !soundOn
+    setSoundOn(next); setScanSoundOn(next)
+    if (next) playScanSound('found')
+  }
+
+  const canBring = features.addProduct !== false
+  const busy = saving || adding !== null
+
   return (
     <Modal
       open={open}
       onClose={close}
       z={1200}
-      title="Producto escaneado"
+      size="lg"
+      title={selected ? 'Producto encontrado' : 'Lector de la PDA'}
       icon={<ScanLine className="w-4 h-4 text-amber-600" />}
-      footer={selected?.code ? (
+      footer={selected?.code && !pickOp ? (
         <div className="space-y-2">
           {saveError && <p role="alert" className="text-xs text-red-600">{saveError}</p>}
           <div className="flex items-center gap-2">
             {currentQty > 0 && (
-              <button type="button" onClick={() => void save(0)} disabled={saving}
+              <button type="button" onClick={() => void save(0)} disabled={busy}
                 className="px-3 py-2.5 rounded-xl border border-red-200 text-red-600 text-sm font-medium disabled:opacity-50">
                 Desmarcar
               </button>
             )}
-            <button type="button" onClick={() => void save(qty)} disabled={saving || qty < 1}
+            <button type="button" onClick={() => void save(qty)} disabled={busy || qty < 1}
               className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
               {currentQty > 0 ? `Guardar cantidad (${qty})` : `Marcar (${qty})`}
             </button>
           </div>
+          {canBring && (
+            <button type="button" onClick={onBringToRecord} disabled={busy}
+              className="w-full py-2.5 rounded-xl border border-[var(--color-primary)] text-[var(--color-primary)] text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+              {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderInput className="w-4 h-4" />}
+              {currentOp ? 'Traer a este registro' : 'Traer a un registro…'}
+            </button>
+          )}
         </div>
       ) : undefined}
     >
       <div className="space-y-3">
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          <span className="font-mono text-sm font-semibold text-gray-800 bg-gray-100 px-2 py-1 rounded break-all">{code}</span>
-          {db?.primarySheetName && (
-            <span className="inline-flex items-center gap-1 truncate">
-              <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> {db.primarySheetName}
-            </span>
-          )}
-        </div>
+        {/* Buscar a mano (también recibe la lectura de la PDA) + sonido */}
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => { e.preventDefault(); void runLookup(manual) }}
+        >
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              ref={manualRef}
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              // Una lectura del gatillo aquí se toma como código escaneado.
+              data-scan-capture=""
+              enterKeyHint="search"
+              placeholder="Escanea con SCAN o escribe código / nombre"
+              aria-label="Código o nombre a buscar"
+              className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+            />
+          </div>
+          <button type="submit" disabled={!manual.trim()}
+            className="px-3 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold disabled:opacity-40">
+            Buscar
+          </button>
+          <button type="button" onClick={toggleSound}
+            aria-label={soundOn ? 'Silenciar sonido del escáner' : 'Activar sonido del escáner'}
+            title={soundOn ? 'Sonido activado' : 'Sonido silenciado'}
+            className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center text-gray-600 flex-shrink-0">
+            {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          </button>
+        </form>
+
+        {code && (
+          <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+            <span className="font-mono text-sm font-semibold text-gray-800 bg-gray-100 px-2 py-1 rounded break-all">{code}</span>
+            {db?.primarySheetName && (
+              <span className="inline-flex items-center gap-1 truncate">
+                <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> {db.primarySheetName}
+              </span>
+            )}
+          </div>
+        )}
+
+        {status === 'idle' && (
+          <div className="flex flex-col items-center gap-2 py-6 text-center text-gray-500">
+            <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center">
+              <ScanLine className="w-7 h-7 text-amber-600" />
+            </div>
+            <p className="text-sm font-semibold text-gray-700">Apunta y presiona el gatillo SCAN</p>
+            <p className="text-xs max-w-xs">El producto se busca en la DATA principal{db?.primarySheetName ? ` (${db.primarySheetName})` : ''} y suena al encontrarlo.</p>
+          </div>
+        )}
 
         {status === 'no-data' && (
           <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
@@ -313,19 +483,74 @@ export function ScanLookupModal() {
           </div>
         )}
 
-        {/* Producto elegido: información + cantidad */}
-        {selected && (
-          <div className="space-y-3">
-            <div className="rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-3 py-2 bg-emerald-50 border-b border-emerald-100">
-                <p className="text-sm font-bold text-emerald-900 break-all">{selected.code || '(sin código)'}</p>
-                {selected.descripcion && <p className="text-xs text-emerald-800">{selected.descripcion}</p>}
+        {/* Elegir el registro al que traer el producto */}
+        {selected && pickOp && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-gray-700 flex items-center gap-1.5">
+                <ClipboardList className="w-4 h-4 text-[var(--color-primary)]" /> ¿A qué registro traer {selected.code}?
+              </p>
+              <button type="button" onClick={() => setPickOp(false)} className="text-[11px] font-semibold text-gray-500 underline">Volver</button>
+            </div>
+            {saveError && <p role="alert" className="text-xs text-red-600">{saveError}</p>}
+            {opsLoading && (
+              <div className="flex items-center gap-2 text-xs text-gray-500 py-3 justify-center">
+                <Loader2 className="w-4 h-4 animate-spin" /> Cargando registros abiertos…
               </div>
-              <dl className="divide-y divide-gray-100 max-h-56 overflow-y-auto">
+            )}
+            {opsError && (
+              <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                {opsError} <button type="button" onClick={() => void loadOpenOps()} className="font-semibold underline">Reintentar</button>
+              </div>
+            )}
+            {!opsLoading && !opsError && ops.length === 0 && (
+              <p className="text-xs text-gray-500 p-3 rounded-lg bg-gray-50">No hay registros en proceso. Crea uno desde Inicio y vuelve a escanear.</p>
+            )}
+            <div className="space-y-1.5 max-h-72 overflow-y-auto">
+              {ops.map((op) => {
+                const already = (op.lineaBlanca ?? []).some((p) => p.productCode.toLowerCase() === selected.code.trim().toLowerCase())
+                const last = op.trackingCode === getLastScanOperation()
+                return (
+                  <button key={op.trackingCode} type="button" disabled={adding !== null}
+                    onClick={() => void addToOperation(op.trackingCode)}
+                    className="w-full flex items-center gap-2.5 p-2.5 rounded-xl border border-gray-200 hover:border-[var(--color-primary)] hover:bg-[var(--color-primary)]/5 text-left disabled:opacity-60">
+                    <ClipboardList className="w-4 h-4 text-[var(--color-primary)] flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-800 truncate">
+                        {op.operationType} · {op.trackingCode}
+                        {last && <span className="ml-1.5 text-[10px] font-semibold text-[var(--color-primary)]">último usado</span>}
+                      </p>
+                      <p className="text-[11px] text-gray-500 truncate">
+                        {[op.operatorName, op.vehiclePlate, op.locationName, `${(op.lineaBlanca ?? []).length} producto(s)`].filter(Boolean).join(' · ')}
+                      </p>
+                    </div>
+                    {adding === op.trackingCode ? <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                      : already ? <span className="text-[10px] font-bold text-emerald-700 flex-shrink-0">✓ ya está</span>
+                      : <span className="text-[10px] font-semibold text-[var(--color-primary)] flex-shrink-0">Traer</span>}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Producto elegido: información + cantidad */}
+        {selected && !pickOp && (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-emerald-200 overflow-hidden">
+              <div className="px-3 py-2.5 bg-emerald-50 border-b border-emerald-100 flex items-start gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-base font-bold text-emerald-900 break-all">{selected.code || '(sin código)'}</p>
+                  {selected.descripcion && <p className="text-xs text-emerald-800">{selected.descripcion}</p>}
+                  <p className="text-[10px] text-emerald-700/80 mt-0.5">Fila {selected.rowIndex + 1} · {fields.length} dato(s)</p>
+                </div>
+              </div>
+              <dl className="divide-y divide-gray-100 max-h-[40vh] overflow-y-auto">
                 {fields.map((f, i) => (
                   <div key={i} className="grid grid-cols-[40%_60%] gap-2 px-3 py-1.5 text-xs">
-                    <dt className="text-gray-500 truncate">{f.label}</dt>
-                    <dd className="text-gray-800 break-words">{f.value}</dd>
+                    <dt className="text-gray-500 truncate" title={f.label}>{f.label}</dt>
+                    <dd className="text-gray-800 break-words font-medium">{f.value}</dd>
                   </div>
                 ))}
               </dl>
@@ -347,8 +572,10 @@ export function ScanLookupModal() {
                     : <span className="text-gray-500">Sin marcar</span>}
                 </p>
               )}
-              <p className="text-[11px] text-gray-500">Recepción: <span className="font-medium text-gray-700">{scope.name}</span></p>
             </div>
+
+            {/* Recepción en la que se cuenta (cada carga con su propio conteo) */}
+            <ReceptionPicker companyId={companyId} />
 
             {/* Últimos cambios de este producto */}
             {history.length > 0 && (
@@ -409,7 +636,7 @@ export function ScanLookupModal() {
                 <p className="text-[10px] text-gray-400 mt-1">Escanear de nuevo el mismo código suma 1.</p>
               </div>
             ) : (
-              <p className="text-xs text-red-600">Esta fila no tiene código: no se puede marcar.</p>
+              <p className="text-xs text-red-600">Esta fila no tiene código: no se puede marcar ni traer a un registro.</p>
             )}
           </div>
         )}
