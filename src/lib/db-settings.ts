@@ -17,18 +17,12 @@
  *    en la base de datos y sincronizada entre dispositivos.
  */
 import { apiRequest } from './api'
+import {
+  applyPendingDbOps, removeSentDbOps,
+  type CompanyDbSettings, type PendingDbOps, type SheetColumnSettings,
+} from './db-settings-merge'
 
-/** Configuración de columnas de UNA tabla (sheet). */
-export interface SheetColumnSettings {
-  /** Columna que contiene el código del producto. */
-  codeColumn: number
-  /** Columna de descripción (−1 = ninguna). */
-  descColumn: number
-  /** Columnas adicionales que se traen de la DATA (en orden). */
-  extraColumns: number[]
-  /** Columna con la cantidad ESPERADA del producto (−1 = ninguna). */
-  expectedColumn?: number
-}
+export type { SheetColumnSettings } from './db-settings-merge'
 
 export const DEFAULT_SHEET_COLUMNS: SheetColumnSettings = {
   codeColumn: 0,
@@ -51,12 +45,6 @@ export const DEFAULT_DB_SETTINGS: DbSettings = {
   ...DEFAULT_SHEET_COLUMNS,
 }
 
-/** Forma completa guardada por compañía. */
-interface CompanyDbSettings {
-  primarySheetId?: string
-  primarySheetName?: string
-  columns: Record<string, SheetColumnSettings>
-}
 
 // Caché en memoria por compañía (fuente de verdad para las lecturas síncronas).
 const cache = new Map<string, CompanyDbSettings>()
@@ -97,15 +85,68 @@ function getCompany(companyId: string): CompanyDbSettings {
   return data
 }
 
-/** Persiste en el backend (fire-and-forget) y en el respaldo local. */
-function persist(companyId: string): void {
+// ── Cambios pendientes de enviar ─────────────────────────────────────────
+// Antes cada guardado enviaba TODA la configuración del dispositivo y el
+// servidor la reemplazaba: una PDA sin los ajustes cargados borraba las
+// columnas de las otras tablas. Ahora se envía solo lo que cambió (por tabla),
+// queda en cola si no hay señal y se reintenta; al recargar del servidor, lo
+// pendiente se aplica encima para no "deshacer" el cambio del usuario.
+const PENDING_KEY = 'ommex_db_settings_pending:'
+
+function readPending(companyId: string): PendingDbOps {
+  try {
+    const raw = localStorage.getItem(PENDING_KEY + companyId)
+    if (raw) {
+      const p = JSON.parse(raw) as Partial<PendingDbOps>
+      return { columns: p.columns && typeof p.columns === 'object' ? p.columns : {}, primary: p.primary }
+    }
+  } catch { /* ignore */ }
+  return { columns: {} }
+}
+
+function writePending(companyId: string, p: PendingDbOps): void {
+  try {
+    if (Object.keys(p.columns).length === 0 && !p.primary) localStorage.removeItem(PENDING_KEY + companyId)
+    else localStorage.setItem(PENDING_KEY + companyId, JSON.stringify(p))
+  } catch { /* cuota */ }
+}
+
+const flushing = new Set<string>()
+const flushAgain = new Set<string>()
+
+async function flushPending(companyId: string): Promise<void> {
   if (!companyId) return
-  const data = getCompany(companyId)
-  writeLocal(companyId, data)
-  void apiRequest('/settings/db', {
-    method: 'PUT',
-    body: { companyId, ...data },
-  }).catch(() => { /* se reintenta en la próxima escritura; el caché local conserva el valor */ })
+  if (flushing.has(companyId)) { flushAgain.add(companyId); return }
+  const sent = readPending(companyId)
+  if (Object.keys(sent.columns).length === 0 && !sent.primary) return
+  flushing.add(companyId)
+  try {
+    await apiRequest('/settings/db', {
+      method: 'PUT',
+      body: { companyId, columns: sent.columns, ...(sent.primary ? { primary: sent.primary } : {}) },
+    })
+    writePending(companyId, removeSentDbOps(readPending(companyId), sent))
+  } catch { /* sin señal: queda en cola y se reintenta al reconectar o al volver a la app */ }
+  finally {
+    flushing.delete(companyId)
+    if (flushAgain.delete(companyId)) void flushPending(companyId)
+  }
+}
+
+/** Guarda en el dispositivo y envía solo el cambio indicado. */
+function persistChange(companyId: string, change: Partial<PendingDbOps>): void {
+  if (!companyId) return
+  writeLocal(companyId, getCompany(companyId))
+  const p = readPending(companyId)
+  if (change.columns) Object.assign(p.columns, change.columns)
+  if (change.primary) p.primary = change.primary
+  writePending(companyId, p)
+  void flushPending(companyId)
+}
+
+if (typeof window !== 'undefined') {
+  // Al recuperar la señal se envían los cambios que quedaron en cola.
+  window.addEventListener('online', () => { for (const id of cache.keys()) void flushPending(id) })
 }
 
 /**
@@ -116,14 +157,23 @@ export async function hydrateDbSettings(companyId: string): Promise<void> {
   if (!companyId) return
   try {
     const r = await apiRequest<CompanyDbSettings>(`/settings/db?companyId=${encodeURIComponent(companyId)}`)
-    const data: CompanyDbSettings = {
+    const server: CompanyDbSettings = {
       primarySheetId: r?.primarySheetId,
       primarySheetName: r?.primarySheetName,
       columns: r?.columns ?? {},
     }
+    const pending = readPending(companyId)
+    const data = applyPendingDbOps(server, pending)
     cache.set(companyId, data)
     writeLocal(companyId, data)
+    void flushPending(companyId)
   } catch { /* conserva el respaldo local si falla la red */ }
+}
+
+/** true si la tabla tiene columnas GUARDADAS (aunque sean código=0 y sin descripción). */
+export function hasSheetColumns(companyId: string, sheetId: string): boolean {
+  if (!companyId || !sheetId) return false
+  return Boolean(getCompany(companyId).columns[sheetId])
 }
 
 /** Lee la configuración de columnas de una tabla concreta (síncrono, desde caché). */
@@ -138,9 +188,12 @@ export function setSheetColumns(companyId: string, sheetId: string, cols: SheetC
   if (!companyId || !sheetId) return
   const data = getCompany(companyId)
   // Se combina con lo guardado: quien no envía `expectedColumn` no la borra.
-  data.columns[sheetId] = { ...DEFAULT_SHEET_COLUMNS, ...data.columns[sheetId], ...cols }
+  const next = { ...DEFAULT_SHEET_COLUMNS, ...data.columns[sheetId], ...cols }
+  // Sin cambios reales: no se envía nada (evita escrituras al solo abrir la tabla).
+  if (JSON.stringify(data.columns[sheetId]) === JSON.stringify(next)) return
+  data.columns[sheetId] = next
   cache.set(companyId, data)
-  persist(companyId)
+  persistChange(companyId, { columns: { [sheetId]: next } })
 }
 
 /** Marca (o desmarca con undefined) la tabla principal de la empresa (caché + backend). */
@@ -150,7 +203,7 @@ export function setPrimarySheet(companyId: string, sheetId?: string, sheetName?:
   data.primarySheetId = sheetId
   data.primarySheetName = sheetName
   cache.set(companyId, data)
-  persist(companyId)
+  persistChange(companyId, { primary: { id: sheetId ?? null, name: sheetName } })
 }
 
 /** Id de la tabla principal de la empresa (si hay). */

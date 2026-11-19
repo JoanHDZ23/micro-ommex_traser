@@ -6,12 +6,11 @@ import {
   Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
   Star, LayoutGrid, List, Package, SlidersHorizontal, ScanLine,
 } from 'lucide-react'
-import { countStatus, getPrimarySheetId, getSheetColumns, parseExpectedQty, setPrimarySheet, setSheetColumns, type CountStatus } from '../lib/db-settings'
+import { countStatus, getPrimarySheetId, getSheetColumns, hasSheetColumns, parseExpectedQty, setPrimarySheet, setSheetColumns, type CountStatus } from '../lib/db-settings'
 import { apiRequest, fileToBase64, syncSheetToGoogle, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { ActionMenu, type ActionMenuItem } from './ActionMenu'
-import { openScanLookup } from '../lib/scan-lookup'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
 import { adjustReceived, flushReceived, getReceived, receivedKey, refreshReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
@@ -930,7 +929,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     let codeCol = saved.codeColumn
     let descCol = saved.descColumn
     let extraCols = saved.extraColumns.filter((c) => c >= 0 && c < numCols)
-    const configured = extraCols.length > 0 || descCol >= 0 || codeCol > 0
+    const configured = hasSheetColumns(companyId, sheet.id) || extraCols.length > 0 || descCol >= 0 || codeCol > 0
     if (!configured || codeCol < 0 || codeCol >= numCols) {
       const hs = headers.map((h) => (h || '').toLowerCase())
       const gc = hs.findIndex((h) => /sku|c[oó]digo|code|ref|producto/.test(h))
@@ -999,15 +998,50 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   const [bringPlate, setBringPlate] = useState('')
   // Modal de selección de columnas adicionales (mobile-friendly)
   const [extraColsModalOpen, setExtraColsModalOpen] = useState(false)
+  // Pestaña de la vista principal: tus tablas o importar un documento.
+  const [listTab, setListTab] = useState<'tablas' | 'importar'>('tablas')
+  // Al elegir un archivo se pasa a la pestaña de importar (para revisarlo).
+  useEffect(() => { if (preview || parsing) setListTab('importar') }, [preview, parsing])
+
+  /**
+   * Resumen legible de las columnas GUARDADAS de una tabla (código, descripción,
+   * adicionales, cantidad esperada). Sin configuración guardada se avisa en rojo.
+   */
+  const columnSummary = (s: CompanySheet): { ok: boolean; text: string; short: string } => {
+    if (!hasSheetColumns(companyId, s.id)) {
+      return { ok: false, text: 'Columnas sin configurar: el escáner puede no encontrar los códigos. Toca "Configurar columnas".', short: 'Columnas sin configurar' }
+    }
+    const c = getSheetColumns(companyId, s.id)
+    const name = (i: number) => s.columns[i] || `Columna ${i + 1}`
+    const code = `Código: ${name(c.codeColumn)}`
+    const desc = c.descColumn >= 0 ? `Descripción: ${name(c.descColumn)}` : 'Sin descripción'
+    const extra = c.extraColumns.length ? `+${c.extraColumns.length} adicional(es)` : ''
+    const exp = typeof c.expectedColumn === 'number' && c.expectedColumn >= 0 ? `Esperada: ${name(c.expectedColumn)}` : ''
+    const parts = [code, desc, extra, exp].filter(Boolean)
+    return { ok: true, text: parts.join(' · '), short: parts.slice(0, 2).join(' · ') }
+  }
+
+  // true SOLO cuando el usuario cambia una columna. Antes se guardaba en cada
+  // cambio de estado, incluso al ABRIR una tabla: en ese primer render el estado
+  // aún tenía las columnas de la tabla anterior (o 0/−1) y se escribían sobre
+  // la configuración de la tabla recién abierta → "se desconfiguraba".
+  const colsDirtyRef = useRef(false)
 
   const handleCodeColChange = (col: number) => {
+    colsDirtyRef.current = true
     setCodeCol(col)
     setExtraCols((prev) => prev.filter((c) => c !== col))
   }
 
   const handleDescColChange = (col: number) => {
+    colsDirtyRef.current = true
     setDescCol(col)
     if (col >= 0) setExtraCols((prev) => prev.filter((c) => c !== col))
+  }
+
+  const handleExtraColsChange = (cols: number[] | ((prev: number[]) => number[])) => {
+    colsDirtyRef.current = true
+    setExtraCols(cols)
   }
 
   // Al abrir el visor: carga la configuración de columnas GUARDADA PARA ESA
@@ -1015,6 +1049,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   // válidos, adivina por el nombre del encabezado.
   useEffect(() => {
     if (!viewing) return
+    colsDirtyRef.current = false // cargar NO es un cambio del usuario: no se guarda
     const numCols = viewing.headers.length
     // Configuración de columnas propia de esta tabla.
     const cols = companyId ? getSheetColumns(companyId, viewing.id) : null
@@ -1022,8 +1057,10 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
       cols.codeColumn >= 0 && cols.codeColumn < numCols &&
       cols.descColumn >= -1 && cols.descColumn < numCols &&
       Array.isArray(cols.extraColumns) && cols.extraColumns.every((c) => c >= 0 && c < numCols)) {
-      // Solo si hay algo realmente configurado (extra o desc); si no, adivina.
-      if (cols.extraColumns.length > 0 || cols.descColumn >= 0 || cols.codeColumn > 0) {
+      // Guardada (aunque sea código=columna 1 y sin descripción) → se respeta.
+      // Antes "código en la 1.ª columna y sin descripción" se tomaba como "sin
+      // configurar" y se reemplazaba por una adivinanza.
+      if (hasSheetColumns(companyId, viewing.id) || cols.extraColumns.length > 0 || cols.descColumn >= 0 || cols.codeColumn > 0) {
         setCodeCol(cols.codeColumn)
         setDescCol(cols.descColumn)
         setExtraCols(cols.extraColumns.filter((c) => c !== cols.codeColumn && c !== cols.descColumn))
@@ -1038,9 +1075,11 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     setExtraCols([])
   }, [viewing, companyId])
 
-  // Persistir la selección de columnas PARA ESTA TABLA cuando cambie.
+  // Persistir la selección de columnas PARA ESTA TABLA solo cuando el usuario
+  // la cambió (no al abrirla ni al refrescar sus filas).
   useEffect(() => {
-    if (!viewing || !companyId) return
+    if (!viewing || !companyId || !colsDirtyRef.current) return
+    colsDirtyRef.current = false
     setSheetColumns(companyId, viewing.id, { codeColumn: codeCol, descColumn: descCol, extraColumns: extraCols })
   }, [codeCol, descCol, extraCols, viewing, companyId])
 
@@ -1837,7 +1876,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                     codeCol, descCol, extraCols,
                     onCodeColChange: handleCodeColChange,
                     onDescColChange: handleDescColChange,
-                    onExtraColsChange: setExtraCols,
+                    onExtraColsChange: handleExtraColsChange,
                     onOpenExtraColsModal: () => setExtraColsModalOpen(true),
                     onCreateRecord: (row) => void handleCreateRecordFromRow(row),
                     onCreateProduct: (row) => void handleCreateProductFromRow(row),
@@ -1878,54 +1917,89 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
               </section>
             )}
 
-            {/* ── Buscar en la DATA principal ⭐ (aquí cae lo que lee el escáner de la PDA) ── */}
-            {primarySheet ? (
-              <section className="space-y-2 p-3.5 rounded-[var(--radius-lg)] border border-amber-200 bg-amber-50/40">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-[var(--color-text)] flex items-center gap-1.5 min-w-0">
-                    <Star className="w-4 h-4 fill-amber-500 text-amber-500 flex-shrink-0" />
-                    <span className="truncate">Buscar en {primarySheet.sheetName}</span>
-                  </p>
-                  <span className="text-[10px] text-[var(--color-text-3)] flex-shrink-0">DATA principal</span>
-                </div>
-                {/* Recepción en la que se cuenta (cada carga con su propio conteo) */}
-                <ReceptionPicker companyId={companyId} />
-                {/* La búsqueda se hace en un modal: lo abre el gatillo SCAN de la PDA
-                    (en cualquier pantalla) o este botón para buscar a mano. */}
-                <button
-                  type="button"
-                  onClick={() => openScanLookup()}
-                  className="w-full flex items-center gap-3 p-3 rounded-[var(--radius-lg)] border border-amber-200 bg-[var(--color-surface)] text-left hover:border-amber-400 hover:bg-amber-50/60 transition-colors"
-                >
-                  <span className="w-11 h-11 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0">
-                    <ScanLine className="w-5 h-5" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-sm font-semibold text-[var(--color-text)]">Escanea con el gatillo SCAN</span>
-                    <span className="block text-[11px] text-[var(--color-text-3)]">
-                      El resultado se abre en una ventana con toda la información, para marcar o traer a un registro. Toca aquí para buscar a mano.
-                    </span>
-                  </span>
-                  <Search className="w-4 h-4 text-[var(--color-text-3)] flex-shrink-0" />
+            {/* Mensajes (visibles en cualquier pestaña) */}
+            {error && <ErrorState message={error} onRetry={() => void loadSheets()} />}
+            {success && (
+              <div className="flex items-start gap-2 p-3 rounded-[var(--radius-lg)] bg-emerald-50 text-emerald-700 text-sm border border-emerald-100">
+                <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <span className="flex-1">{success}</span>
+                <button type="button" onClick={() => setSuccess(null)} aria-label="Cerrar aviso" className="text-emerald-700/70">
+                  <X className="w-4 h-4" />
                 </button>
-                <div className="flex items-center justify-between gap-2">
+              </div>
+            )}
+
+            {/* ── DATA principal ⭐: donde busca el gatillo SCAN de la PDA ── */}
+            {primarySheet ? (() => {
+              const summary = columnSummary(primarySheet)
+              return (
+                <section className="rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50/80 to-[var(--color-surface)] p-4 space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-11 h-11 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0">
+                      <Star className="w-5 h-5 fill-amber-500 text-amber-500" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700">DATA principal</p>
+                      <p className="text-base font-bold text-[var(--color-text)] truncate">{primarySheet.sheetName}</p>
+                      <p className="text-[11px] text-[var(--color-text-3)]">{primarySheet.rowCount} filas · {primarySheet.columns.length} columnas</p>
+                    </div>
+                  </div>
+
+                  {/* Columnas configuradas: así se ve al instante si algo cambió */}
+                  <div className={`flex items-start gap-2 p-2.5 rounded-xl text-[11px] ${summary.ok ? 'bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-2)]' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                    <SlidersHorizontal className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    <span className="flex-1">{summary.text}</span>
+                  </div>
+
+                  <p className="text-[11px] text-[var(--color-text-3)] flex items-start gap-1.5">
+                    <ScanLine className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-amber-600" />
+                    El gatillo SCAN de la PDA busca en esta tabla desde cualquier pantalla y muestra el resultado en una ventana.
+                  </p>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button variant="secondary" size="sm" leftIcon={<Eye className="w-4 h-4" />} onClick={() => void handleView(primarySheet)}>
+                      Abrir tabla
+                    </Button>
+                    <Button variant={summary.ok ? 'secondary' : 'primary'} size="sm" leftIcon={<SlidersHorizontal className="w-4 h-4" />}
+                      onClick={() => void openColumnConfig(primarySheet)}>
+                      {summary.ok ? 'Columnas' : 'Configurar columnas'}
+                    </Button>
+                  </div>
                   <OfflineDataStatus companyId={companyId} sheetId={primarySheet.id} version={colsVersion} />
-                  <button type="button" onClick={() => void handleView(primarySheet)}
-                    className="text-[11px] font-semibold text-[var(--color-primary)] flex-shrink-0">
-                    Ver tabla completa
-                  </button>
+                </section>
+              )
+            })() : sheets.length > 0 ? (
+              <section className="rounded-2xl border-2 border-dashed border-amber-300 p-4 flex items-start gap-3">
+                <Star className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-[var(--color-text)]">Elige tu DATA principal</p>
+                  <p className="text-[11px] text-[var(--color-text-3)] mt-0.5">
+                    Es la tabla donde busca el gatillo SCAN de la PDA. Toca la ⭐ de una de tus tablas.
+                  </p>
                 </div>
               </section>
-            ) : sheets.length > 0 ? (
-              <p className="text-[11px] text-[var(--color-text-3)] flex items-center gap-1.5 px-1">
-                <Star className="w-3.5 h-3.5 text-amber-500" />
-                Marca una tabla como DATA principal (menú ⋮ → Hacer principal) para buscar y escanear aquí.
-              </p>
             ) : null}
 
-            {/* Códigos escaneados que no estaban en la DATA */}
+            {/* Códigos escaneados que no estaban en la DATA (se oculta si no hay) */}
             <NotFoundCodesPanel companyId={companyId} />
 
+            {/* ── Pestañas: tus tablas / importar un documento ── */}
+            <div role="tablist" aria-label="Base de datos" className="grid grid-cols-2 gap-1 p-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
+              {([
+                { id: 'tablas', label: `Mis tablas${sheets.length ? ` (${sheets.length})` : ''}`, icon: <Table2 className="w-4 h-4" /> },
+                { id: 'importar', label: preview ? 'Importar · revisar' : 'Importar documento', icon: <Upload className="w-4 h-4" /> },
+              ] as const).map((t) => (
+                <button key={t.id} type="button" role="tab" aria-selected={listTab === t.id}
+                  onClick={() => setListTab(t.id)}
+                  className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-sm font-semibold transition-colors ${listTab === t.id
+                    ? 'bg-[var(--color-surface)] text-[var(--color-primary)] shadow-sm'
+                    : 'text-[var(--color-text-3)] hover:text-[var(--color-text)]'}`}>
+                  {t.icon} {t.label}
+                </button>
+              ))}
+            </div>
+
+            {listTab === 'importar' && (<>
             {/* ── Subida ── */}
             <section className="space-y-3">
               <SectionHeader eyebrow="Paso 1" title="Subir documento" />
@@ -1948,17 +2022,6 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
               </label>
 
               {parsing && <LoadingState label="Leyendo el documento…" />}
-
-              {error && (
-                <ErrorState message={error} onRetry={() => void loadSheets()} />
-              )}
-
-              {success && (
-                <div className="flex items-start gap-2 p-3 rounded-[var(--radius-lg)] bg-emerald-50 text-emerald-700 text-sm border border-emerald-100">
-                  <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>{success}</span>
-                </div>
-              )}
             </section>
 
             {/* ── Vista previa + filtro ── */}
@@ -2007,7 +2070,10 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
               </section>
             )}
 
+            </>)}
+
             {/* ── Hojas existentes ── */}
+            {listTab === 'tablas' && (
             <section className="space-y-3 pt-1">
               <SectionHeader
                 eyebrow="Tus tablas"
@@ -2036,11 +2102,16 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
               )}
 
               {!loadingList && sheets.length === 0 && (
-                <EmptyState
-                  icon={<FileText className="w-8 h-8 mx-auto" />}
-                  title="Aún no hay tablas importadas"
-                  description="Importa un documento para verlo y usarlo aquí."
-                />
+                <div className="space-y-3">
+                  <EmptyState
+                    icon={<FileText className="w-8 h-8 mx-auto" />}
+                    title="Aún no hay tablas importadas"
+                    description="Importa un CSV, Excel o PDF para consultarlo, marcar productos y traerlos a tus registros."
+                  />
+                  <Button variant="primary" fullWidth leftIcon={<Upload className="w-4 h-4" />} onClick={() => setListTab('importar')}>
+                    Importar mi primer documento
+                  </Button>
+                </div>
               )}
 
               {/* Sin coincidencias de búsqueda (pero sí hay tablas) */}
@@ -2051,8 +2122,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
               )}
 
               <div className="space-y-2.5">
-                {filteredSheets.map((s) => {
+                {[...filteredSheets].sort((a, b) => Number(b.id === primarySheetId) - Number(a.id === primarySheetId)).map((s) => {
                   const isPrimary = primarySheetId === s.id
+                  const summary = columnSummary(s)
                   const menuItems: ActionMenuItem[] = [
                     { key: 'view', label: 'Ver / Editar', icon: <Eye className="w-4 h-4 text-[var(--color-primary)]" />, onSelect: () => void handleView(s) },
                     { key: 'cols', label: 'Columnas', icon: <SlidersHorizontal className="w-4 h-4 text-[var(--color-primary)]" />, onSelect: () => void openColumnConfig(s) },
@@ -2148,7 +2220,18 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                             {new Date(s.createdAt).toLocaleDateString()}
                           </span>
                         </div>
+                        <p className={`mt-1 text-[10px] truncate ${summary.ok ? 'text-[var(--color-text-3)]' : 'text-red-600 font-semibold'}`}>
+                          {summary.short}
+                        </p>
                       </div>
+                    </button>
+
+                    {/* ⭐ directa: hacer / quitar DATA principal sin abrir el menú */}
+                    <button type="button" onClick={() => togglePrimarySheet(s)}
+                      aria-label={isPrimary ? `Quitar ${s.sheetName} como DATA principal` : `Hacer ${s.sheetName} la DATA principal`}
+                      title={isPrimary ? 'Quitar como principal' : 'Hacer principal'}
+                      className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 hover:bg-amber-50">
+                      <Star className={`w-5 h-5 ${isPrimary ? 'fill-amber-500 text-amber-500' : 'text-[var(--color-text-3)]'}`} />
                     </button>
 
                     {/* Menú de opciones (⋮): reemplaza la fila de botones que se veía apretada en móvil */}
@@ -2163,6 +2246,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                 })}
               </div>
             </section>
+            )}
           </div>
         )}
     </>
@@ -2292,7 +2376,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                     key={i}
                     type="button"
                     onClick={() => {
-                      setExtraCols((prev) =>
+                      handleExtraColsChange((prev) =>
                         prev.includes(i) ? prev.filter((c) => c !== i) : [...prev, i]
                       )
                     }}
