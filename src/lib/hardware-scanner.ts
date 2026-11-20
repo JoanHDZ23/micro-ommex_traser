@@ -17,10 +17,17 @@ import { markHardwareScannerSeen } from './scanner-device'
 
 export type ScanHandler = (code: string) => void
 
-/** Máxima pausa entre teclas de un mismo código (lectores Bluetooth ≈ 10-40 ms). */
-const MAX_GAP_MS = 60
-/** Promedio máximo entre teclas para considerarlo lector y no persona. */
-const MAX_AVG_MS = 45
+/** Máxima pausa entre teclas de un mismo código. Lectores USB ≈ 5-30 ms;
+ *  Bluetooth y algunas PDAs industriales llegan a 60-90 ms, por eso no se
+ *  corta el código tan pronto. */
+const MAX_GAP_MS = 100
+/** Promedio máximo entre teclas para considerarlo lector y no persona
+ *  (tecleo humano sostenido > ~150 ms). */
+const MAX_AVG_MS = 80
+/** Escáneres Bluetooth/PDA más lentos: si el código es largo, admiten un avg
+ *  mayor. Una persona no teclea 8+ caracteres seguidos a < 140 ms en el body. */
+const MAX_AVG_MS_LENIENT = 140
+const LENIENT_MIN_LEN = 8
 /** Largo mínimo de un código terminado en Enter/Tab. */
 const MIN_LEN = 3
 /** Sin sufijo: largo mínimo y pausa tras la última tecla para darlo por leído. */
@@ -52,7 +59,11 @@ function reset(): void {
 function looksLikeScanner(): boolean {
   if (times.length < 2) return false
   const span = times[times.length - 1] - times[0]
-  return span / (times.length - 1) <= MAX_AVG_MS
+  const avg = span / (times.length - 1)
+  // Códigos largos admiten escáneres Bluetooth/PDA lentos; los cortos siguen
+  // exigiendo rapidez para no confundirlos con tecleo humano en el body.
+  const threshold = buffer.trim().length >= LENIENT_MIN_LEN ? MAX_AVG_MS_LENIENT : MAX_AVG_MS
+  return avg <= threshold
 }
 
 function deliver(): boolean {

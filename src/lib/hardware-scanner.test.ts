@@ -86,3 +86,29 @@ test('sin Enter (PDA sin sufijo) también se entrega tras una pausa corta', asyn
   assert.deepEqual(modal.got, ['7709876543210'])
   off()
 })
+
+test('PDA Bluetooth lenta (avg ~70 ms) con código largo llega al modal', () => {
+  const modal = handler()
+  const off = registerScanHandler(modal.ref, SCAN_PRIORITY.global)
+  assert.equal(scan('7701234567890', { gapMs: 70 }), true)
+  assert.deepEqual(modal.got, ['7701234567890'])
+  off()
+})
+
+test('PDA lenta sin Enter (sufijo desactivado) se entrega tras la pausa', async () => {
+  const modal = handler()
+  const off = registerScanHandler(modal.ref, SCAN_PRIORITY.global)
+  scan('7701234567890', { gapMs: 70, enter: false })
+  await new Promise((r) => setTimeout(r, 200))
+  assert.deepEqual(modal.got, ['7701234567890'])
+  off()
+})
+
+test('código corto a velocidad media NO se toma como lectura (antifalsos)', () => {
+  const modal = handler()
+  const off = registerScanHandler(modal.ref, SCAN_PRIORITY.global)
+  // 5 teclas a 90 ms (rápido para humano) pero código corto: exige avg ≤ 80.
+  assert.equal(scan('12345', { gapMs: 90 }), false)
+  assert.deepEqual(modal.got, [])
+  off()
+})
