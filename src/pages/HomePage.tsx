@@ -9,6 +9,7 @@ import { Card, EmptyState, LoadingState, SectionHeader } from '../components/ui'
 import { apiRequest, readCachedOperationTypes } from '../lib/api'
 import { getCompanyId, isAdmin } from '../lib/context'
 import { useTracerFeatures } from '../lib/tracer-features'
+import { RecentActivity } from '../components/RecentActivity'
 
 const TYPE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   PRODUCTOS_ENTRANTES: ArrowDown,
@@ -61,9 +62,6 @@ export function HomePage() {
   const [stats, setStats] = useState<{ entrantes: number; salientes: number; productos: number; byType: Record<string, number> }>({ entrantes: 0, salientes: 0, productos: 0, byType: {} })
   const [loadingStats, setLoadingStats] = useState(true)
 
-  // Registro de actividades
-  const [activity, setActivity] = useState<Array<{ _id: string; action: string; detail: string; createdAt: string }>>([])
-  const [loadingActivity, setLoadingActivity] = useState(true)
 
   // Tipos de operación de la empresa. Se SIEMBRA el estado inicial desde el
   // caché local (lazy init), así en los arranques siguientes el PRIMER render
@@ -100,7 +98,6 @@ export function HomePage() {
     const companyId = getCompanyId()
     if (!companyId) {
       setLoadingStats(false)
-      setLoadingActivity(false)
       return
     }
 
@@ -122,21 +119,6 @@ export function HomePage() {
       .catch(() => {})
       .finally(() => setLoadingStats(false))
   }, [])
-
-  useEffect(() => {
-    const companyId = getCompanyId()
-    if (!companyId || !features.activityLog) {
-      setLoadingActivity(false)
-      return
-    }
-    setLoadingActivity(true)
-    void apiRequest<{ entries: Array<{ _id: string; action: string; detail: string; createdAt: string }> }>(
-      `/operations/activity?companyId=${encodeURIComponent(companyId)}&limit=10`
-    )
-      .then((r) => setActivity(r.entries ?? []))
-      .catch(() => {})
-      .finally(() => setLoadingActivity(false))
-  }, [features.activityLog])
 
   const secondaryLinks: { icon: React.ComponentType<{ className?: string }>; label: string; to: string }[] = [
     { icon: ClipboardList, label: 'Ver historial de operaciones', to: '/history' },
@@ -323,34 +305,7 @@ export function HomePage() {
       </section>
 
       {/* ── Actividad reciente (solo si está habilitado) ── */}
-      {features.activityLog && (
-        <section className="space-y-3">
-          <SectionHeader eyebrow="Registro" title="Actividad reciente" />
-          {loadingActivity ? (
-            <LoadingState label="Cargando actividad…" />
-          ) : activity.length === 0 ? (
-            <Card>
-              <p className="text-sm text-[var(--color-text-2)] text-center py-4">Aún no hay actividad registrada.</p>
-            </Card>
-          ) : (
-            <div className="space-y-2">
-              {activity.map((entry) => (
-                <div key={entry._id} className="flex items-start gap-3 p-3 rounded-xl bg-[var(--color-surface)] border border-[var(--color-border)]">
-                  <div className="w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center flex-shrink-0">
-                    <Activity className="w-4 h-4" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-[var(--color-text)]">{entry.detail}</p>
-                    <p className="text-[11px] text-[var(--color-text-3)] mt-0.5">
-                      {new Date(entry.createdAt).toLocaleString('es-CO', { timeZone: 'America/Bogota' })}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+      {features.activityLog && <RecentActivity />}
     </div>
   )
 }
