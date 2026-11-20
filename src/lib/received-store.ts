@@ -39,18 +39,17 @@ function emit(): void {
 const SCOPE_KEY = 'ommex_reception_scope:'
 const scopeCache = new Map<string, { id: string; name: string }>()
 
+/**
+ * Recepción activa. El selector de recepciones se quitó: todos los equipos
+ * cuentan en "General". Se borra la recepción que un equipo tuviera guardada
+ * (p. ej. "034") para que no siga marcando en un conteo que ya no se ve.
+ */
 export function getActiveScope(companyId: string): { id: string; name: string } {
-  if (!companyId) return { id: '', name: 'General' }
+  const v = { id: '', name: 'General' }
+  if (!companyId) return v
   const c = scopeCache.get(companyId)
   if (c) return c
-  let v = { id: '', name: 'General' }
-  try {
-    const raw = localStorage.getItem(SCOPE_KEY + companyId)
-    if (raw) {
-      const p = JSON.parse(raw) as { id?: string; name?: string }
-      if (typeof p.id === 'string') v = { id: p.id, name: p.name || (p.id ? p.id : 'General') }
-    }
-  } catch { /* ignore */ }
+  try { localStorage.removeItem(SCOPE_KEY + companyId) } catch { /* ignore */ }
   scopeCache.set(companyId, v)
   return v
 }

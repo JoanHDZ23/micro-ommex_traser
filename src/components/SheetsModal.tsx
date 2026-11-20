@@ -15,7 +15,6 @@ import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
 import { adjustReceived, flushReceived, getReceived, receivedKey, refreshReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { rowMarkKeys, type RowMark } from '../lib/mark-keys'
-import { ReceptionPicker } from './ReceptionPicker'
 import { NotFoundCodesPanel } from './NotFoundCodesPanel'
 import { OfflineDataStatus } from './OfflineDataStatus'
 import { buildStyledXlsx, downloadBlob } from '../lib/xlsx-styled'
@@ -1898,7 +1897,6 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                     Usar como DATA
                   </Button>
                 </div>
-                <ReceptionPicker companyId={companyId} />
                 <DataTable
                   headers={viewing.headers}
                   rows={viewing.rows}

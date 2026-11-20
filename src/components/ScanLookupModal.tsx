@@ -22,7 +22,6 @@ import {
   Star, Volume2, VolumeX, WifiOff,
 } from 'lucide-react'
 import { Modal } from './ui'
-import { ReceptionPicker } from './ReceptionPicker'
 import { NetworkError, apiRequest, searchInSheet, type Operation, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { countStatus, effectiveQtyMode, getDbSettings, getSheetColumns, parseExpectedQty, type CountStatus } from '../lib/db-settings'
@@ -576,8 +575,6 @@ export function ScanLookupModal() {
               )}
             </div>
 
-            {/* Recepción en la que se cuenta (cada carga con su propio conteo) */}
-            <ReceptionPicker companyId={companyId} />
 
             {/* Últimos cambios de este producto */}
             {history.length > 0 && (
