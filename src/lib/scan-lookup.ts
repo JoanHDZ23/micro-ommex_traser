@@ -10,8 +10,12 @@ export const SCAN_LOOKUP_EVENT = 'ommex:scan-lookup'
 /** Se emite cuando el modal agrega un producto a un registro. */
 export const OPERATION_UPDATED_EVENT = 'ommex:operation-updated'
 
-export function openScanLookup(code?: string): void {
-  window.dispatchEvent(new CustomEvent(SCAN_LOOKUP_EVENT, { detail: { code: code ?? '' } }))
+/**
+ * Abre el modal del lector. `camera: true` abre además la cámara para escanear;
+ * sin código ni cámara, el modal queda esperando el gatillo SCAN.
+ */
+export function openScanLookup(code?: string, opts: { camera?: boolean } = {}): void {
+  window.dispatchEvent(new CustomEvent(SCAN_LOOKUP_EVENT, { detail: { code: code ?? '', camera: opts.camera === true } }))
 }
 
 /**

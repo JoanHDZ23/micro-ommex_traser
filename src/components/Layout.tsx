@@ -1,10 +1,17 @@
 import { useEffect } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation } from 'react-router-dom'
+import { ScanLine } from 'lucide-react'
 import { invalidateTracerFeaturesCache } from '../lib/tracer-features'
+import { openScanLookup } from '../lib/scan-lookup'
+import { resolveScanMethod } from '../lib/scan-method'
 import { OfflineBanner } from './OfflineBanner'
 import { ScanLookupModal } from './ScanLookupModal'
 
 export function Layout() {
+  const location = useLocation()
+  // El registro (wizard) tiene una barra fija abajo: el botón sube para no taparla.
+  const inWizard = location.pathname.startsWith('/wizard')
+
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type === 'trazabilidad:refresh') {
@@ -22,6 +29,17 @@ export function Layout() {
       <main className="app-main flex-1 min-h-0 overflow-y-auto">
         <Outlet />
       </main>
+      {/* Escanear desde cualquier vista: gatillo SCAN o cámara según el equipo */}
+      <button
+        type="button"
+        onClick={() => openScanLookup(undefined, { camera: resolveScanMethod() === 'camera' })}
+        aria-label="Escanear producto"
+        title="Escanear producto"
+        className={`fixed right-4 z-[900] w-14 h-14 rounded-full bg-amber-600 text-white shadow-lg shadow-amber-900/20 flex items-center justify-center active:scale-95 transition ${inWizard ? 'bottom-24' : 'bottom-5'}`}
+        style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        <ScanLine className="w-6 h-6" />
+      </button>
       {/* Lo que lee el escáner fuera de la base de datos: buscar y marcar */}
       <ScanLookupModal />
     </div>

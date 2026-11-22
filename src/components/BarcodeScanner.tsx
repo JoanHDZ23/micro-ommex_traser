@@ -15,7 +15,12 @@ import { detectHardwareScanner, hardwareScannerKnown, markHardwareScannerSeen } 
  * cierre con `Escape` y `aria-label` en cada control. Mientras el escáner se
  * inicializa se muestra `LoadingState`; si la cámara falla/deniega, `ErrorState`.
  */
-export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string) => void; onClose: () => void }) {
+export function BarcodeScanner({ onResult, onClose, forceCamera = false }: {
+  onResult: (code: string) => void
+  onClose: () => void
+  /** true = abre la cámara directamente aunque el equipo tenga lector (PDA). */
+  forceCamera?: boolean
+}) {
   const [error, setError] = useState<string | null>(null)
   const [initializing, setInitializing] = useState(true)
   const [scanning, setScanning] = useState(true)
@@ -30,7 +35,7 @@ export function BarcodeScanner({ onResult, onClose }: { onResult: (code: string)
   // Primera opción: el lector integrado del PDA (Honeywell, Zebra…). Si el
   // equipo no tiene lector, se usa la cámara. 'detecting' dura < 1 s (consulta
   // del modelo en Chrome Android) y no enciende la cámara mientras tanto.
-  const [mode, setMode] = useState<'detecting' | 'pda' | 'camera'>(() => (hardwareScannerKnown() ? 'pda' : 'detecting'))
+  const [mode, setMode] = useState<'detecting' | 'pda' | 'camera'>(() => (forceCamera ? 'camera' : hardwareScannerKnown() ? 'pda' : 'detecting'))
   useEffect(() => {
     if (mode !== 'detecting') return
     let alive = true

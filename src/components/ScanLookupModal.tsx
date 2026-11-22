@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, CheckCircle2, ClipboardList, FolderInput, Loader2, Minus, Package, Plus, ScanLine, Search,
+  AlertTriangle, Camera, CheckCircle2, ClipboardList, FolderInput, Loader2, Minus, Package, Plus, ScanLine, Search,
   Star, Volume2, VolumeX, WifiOff,
 } from 'lucide-react'
 import { Modal } from './ui'
@@ -32,6 +32,8 @@ import { getReceivedHistory, reportNotFoundCode, warmSheetCache, type ReceivedHi
 import { normCode, searchResultMarkKeys, type RowMark } from '../lib/mark-keys'
 import { getOfflineSheetData } from '../lib/local-tables'
 import { isScanSoundOn, playScanSound, setScanSoundOn } from '../lib/scan-sound'
+import { resolveScanMethod, setScanMethod, useScanMethod, type ScanMethod } from '../lib/scan-method'
+import { BarcodeScanner } from './BarcodeScanner'
 import {
   OPERATION_UPDATED_EVENT, SCAN_LOOKUP_EVENT, composeDbDescription, getLastScanOperation, setLastScanOperation,
 } from '../lib/scan-lookup'
@@ -73,6 +75,10 @@ export function ScanLookupModal() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [soundOn, setSoundOn] = useState(isScanSoundOn)
+  // Cámara abierta para escanear (el modal se oculta mientras tanto).
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const scanMethod = useScanMethod()
+  const effectiveMethod = resolveScanMethod(scanMethod)
   const searchSeq = useRef(0)
   const manualRef = useRef<HTMLInputElement | null>(null)
 
@@ -211,22 +217,37 @@ export function ScanLookupModal() {
     void runLookup(clean)
   }, { priority: open ? SCAN_PRIORITY.modal : SCAN_PRIORITY.global })
 
-  // Apertura a mano (botón "Buscar" de la Base de datos), con o sin código.
+  // Apertura a mano (botón flotante "Escanear" o desde otra vista), con o sin código.
   useEffect(() => {
     const onOpen = (e: Event) => {
-      const c = (e as CustomEvent<{ code?: string }>).detail?.code ?? ''
+      const d = (e as CustomEvent<{ code?: string; camera?: boolean }>).detail
+      const c = d?.code ?? ''
       setOpen(true)
-      if (c.trim()) { void runLookup(c) } else {
-        searchSeq.current++
-        setStatus('idle'); setCode(''); setSelected(null); setResults([]); setPickOp(false)
-        setTimeout(() => manualRef.current?.focus(), 60)
-      }
+      if (c.trim()) { void runLookup(c); return }
+      searchSeq.current++
+      setStatus('idle'); setCode(''); setSelected(null); setResults([]); setPickOp(false)
+      if (d?.camera) { setCameraOpen(true); return }
+      // Con el gatillo SCAN no se enfoca el campo (abriría el teclado en la PDA).
+      if (resolveScanMethod() !== 'pda') setTimeout(() => manualRef.current?.focus(), 60)
     }
     window.addEventListener(SCAN_LOOKUP_EVENT, onOpen)
     return () => window.removeEventListener(SCAN_LOOKUP_EVENT, onOpen)
   }, [runLookup])
 
-  useEffect(() => { if (!open) { searchSeq.current++; setSaving(false); setAdding(null); setPickOp(false) } }, [open])
+  useEffect(() => { if (!open) { searchSeq.current++; setSaving(false); setAdding(null); setPickOp(false); setCameraOpen(false) } }, [open])
+
+  // Lectura con la cámara: se busca igual que una del gatillo SCAN.
+  const onCameraResult = (scanned: string) => {
+    setCameraOpen(false)
+    const clean = scanned.trim()
+    if (!clean) return
+    if (selected && selected.code.trim().toLowerCase() === clean.toLowerCase()) {
+      changeQty(qty + 1)
+      playScanSound('found')
+      return
+    }
+    void runLookup(clean)
+  }
 
   const close = () => setOpen(false)
 
@@ -339,9 +360,19 @@ export function ScanLookupModal() {
   const canBring = features.addProduct !== false
   const busy = saving || adding !== null
 
+  const METHODS: Array<{ id: ScanMethod; label: string }> = [
+    { id: 'pda', label: 'Gatillo SCAN' },
+    { id: 'camera', label: 'Cámara' },
+    { id: 'auto', label: 'Auto' },
+  ]
+
   return (
+    <>
+    {open && cameraOpen && (
+      <BarcodeScanner forceCamera onResult={onCameraResult} onClose={() => setCameraOpen(false)} />
+    )}
     <Modal
-      open={open}
+      open={open && !cameraOpen}
       onClose={close}
       z={1200}
       size="lg"
@@ -397,6 +428,11 @@ export function ScanLookupModal() {
             className="px-3 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold disabled:opacity-40">
             Buscar
           </button>
+          <button type="button" onClick={() => setCameraOpen(true)}
+            aria-label="Escanear con la cámara" title="Escanear con la cámara"
+            className="w-10 h-10 rounded-xl border border-gray-200 flex items-center justify-center text-gray-600 flex-shrink-0">
+            <Camera className="w-4 h-4" />
+          </button>
           <button type="button" onClick={toggleSound}
             aria-label={soundOn ? 'Silenciar sonido del escáner' : 'Activar sonido del escáner'}
             title={soundOn ? 'Sonido activado' : 'Sonido silenciado'}
@@ -421,8 +457,34 @@ export function ScanLookupModal() {
             <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center">
               <ScanLine className="w-7 h-7 text-amber-600" />
             </div>
-            <p className="text-sm font-semibold text-gray-700">Apunta y presiona el gatillo SCAN</p>
+            <p className="text-sm font-semibold text-gray-700">
+              {effectiveMethod === 'camera' ? 'Escanea con la cámara' : 'Apunta y presiona el gatillo SCAN'}
+            </p>
             <p className="text-xs max-w-xs">El producto se busca en la DATA principal{db?.primarySheetName ? ` (${db.primarySheetName})` : ''} y suena al encontrarlo.</p>
+            {effectiveMethod === 'camera' && (
+              <button type="button" onClick={() => setCameraOpen(true)}
+                className="mt-1 px-4 py-2 rounded-xl bg-amber-600 text-white text-sm font-semibold inline-flex items-center gap-2">
+                <Camera className="w-4 h-4" /> Abrir cámara
+              </button>
+            )}
+            {/* Cómo escanea el botón "Escanear" en este dispositivo */}
+            <div className="mt-3 w-full max-w-xs">
+              <p className="text-[10px] font-semibold uppercase text-gray-400 mb-1">Botón Escanear usa</p>
+              <div role="radiogroup" aria-label="Método de escaneo" className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-gray-100">
+                {METHODS.map((m) => (
+                  <button key={m.id} type="button" role="radio" aria-checked={scanMethod === m.id}
+                    onClick={() => setScanMethod(m.id)}
+                    className={`py-1.5 rounded-lg text-[11px] font-semibold ${scanMethod === m.id ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+              {scanMethod === 'auto' && (
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Auto: {effectiveMethod === 'pda' ? 'se detectó el gatillo SCAN' : 'cámara (no se detectó gatillo SCAN)'}.
+                </p>
+              )}
+            </div>
           </div>
         )}
 
@@ -641,5 +703,6 @@ export function ScanLookupModal() {
         )}
       </div>
     </Modal>
+    </>
   )
 }

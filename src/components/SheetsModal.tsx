@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom'
 import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2, Download,
   Search, CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
-  Pencil, Save, Plus, Database, RefreshCw, QrCode, FilePlus, PackagePlus, Filter,
-  Star, LayoutGrid, List, Package, SlidersHorizontal, ScanLine,
+  Pencil, Save, Plus, Database, RefreshCw, FilePlus, PackagePlus, Filter,
+  Star, LayoutGrid, List, Package, SlidersHorizontal, ScanLine, Lock, Camera,
 } from 'lucide-react'
 import { effectiveQtyMode, getPrimarySheetId, getSheetColumns, hasSheetColumns, parseExpectedQty, rowStatus, setPrimarySheet, setSheetColumns, type CountStatus, type QtyMode } from '../lib/db-settings'
-import { apiRequest, fileToBase64, syncSheetToGoogle, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
+import { apiRequest, fileToBase64, syncSheetToGoogle, warmSheetCache, type CompanySheet, type Operation, type ParsedTable, type SheetData } from '../lib/api'
 import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { ActionMenu, type ActionMenuItem } from './ActionMenu'
@@ -15,6 +15,9 @@ import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
 import { adjustReceived, flushReceived, getReceived, receivedKey, refreshReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { rowMarkKeys, type RowMark } from '../lib/mark-keys'
+import { isSearchActive, markBlockReason } from '../lib/mark-guard'
+import { resolveScanMethod } from '../lib/scan-method'
+import { appendRows, columnMatch } from '../lib/append-rows'
 import { NotFoundCodesPanel } from './NotFoundCodesPanel'
 import { OfflineDataStatus } from './OfflineDataStatus'
 import { buildStyledXlsx, downloadBlob } from '../lib/xlsx-styled'
@@ -171,11 +174,24 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
   const [columnFilters, setColumnFilters] = useState<Record<number, string>>({})
   const [showColumnFilters, setShowColumnFilters] = useState(false)
   const [scanning, setScanning] = useState(false)
+  // Aviso "presiona el gatillo SCAN" cuando el método del equipo es la PDA.
+  const [scanHint, setScanHint] = useState(false)
   // Lector físico: un código leído filtra la tabla (igual que el escáner de cámara).
-  useHardwareScanner((code) => setFilterText(code.trim()), { priority: SCAN_PRIORITY.table })
+  useHardwareScanner((code) => { setScanHint(false); setFilterText(code.trim()) }, { priority: SCAN_PRIORITY.table })
+  const onScanClick = () => {
+    if (resolveScanMethod() === 'camera') { setScanning(true); return }
+    setScanHint(true)
+  }
+  useEffect(() => {
+    if (!scanHint) return
+    const t = setTimeout(() => setScanHint(false), 8000)
+    return () => clearTimeout(t)
+  }, [scanHint])
   const [selected, setSelected] = useState<Set<number>>(new Set())
-  // Vista de los datos: 'cards' (items, por defecto) o 'table' (tabla clásica).
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards')
+  // Vista de los datos: tarjetas en el celular, tabla en pantallas anchas.
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>(() => {
+    try { return window.matchMedia('(min-width: 768px)').matches ? 'table' : 'cards' } catch { return 'cards' }
+  })
   // Filas "marcadas" (producto ya cogido/listo) → se pintan de color. Persistente.
   const [marked, setMarked] = useState<Set<number>>(() => loadMarked(markKey))
   // Cantidad encontrada por fila (para saber cuántas se han encontrado). Persistente.
@@ -276,19 +292,31 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
     void adjustReceived(companyId!, m.code, delta, { sheetId, rowKey: m.rowKey })
       .catch((e) => setMarkError(e instanceof Error && e.message ? e.message : 'No se pudo guardar la marca. Revisa la conexión.'))
   }
+  // Solo se marca lo que se escaneó o buscó (y, con marcas del servidor, si la fila tiene código).
+  const searchActive = isSearchActive(filterText, columnFilters)
+  const blockReason = (gIdx: number) =>
+    markBlockReason({ searchActive, serverMarks, hasCode: Boolean(markOf(gIdx).code) })
+  const guard = (gIdx: number): boolean => {
+    const reason = blockReason(gIdx)
+    if (reason) { setMarkError(reason); return false }
+    return true
+  }
+  useEffect(() => { setMarkError(null) }, [filterText, columnFilters])
   const toggleMarkRow = (row: string[], gIdx: number) => {
+    if (!guard(gIdx)) return
     if (!serverMarks) { toggleMark(gIdx); return }
-    if (!markOf(gIdx).code) { setMarkError('Esta fila no tiene código: no se puede marcar.'); return }
     const current = rowQty(row, gIdx)
     changeServer(gIdx, current > 0 ? -current : 1)
   }
   const bumpQtyRow = (row: string[], gIdx: number, delta: number) => {
+    if (!guard(gIdx)) return
     if (!serverMarks) { bumpQty(gIdx, delta); return }
     // Mínimo 1 con −/+: para quitar la marca se usa el botón de marcar.
     if (delta < 0 && rowQty(row, gIdx) <= 1) return
     changeServer(gIdx, delta)
   }
   const setQtyRow = (row: string[], gIdx: number, qty: number) => {
+    if (!guard(gIdx)) return
     if (!serverMarks) { setQty(gIdx, qty); return }
     const q = Math.max(1, Math.floor(qty || 1))
     changeServer(gIdx, q - rowQty(row, gIdx))
@@ -434,19 +462,10 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
           </div>
         </div>
       )}
-      {/* Filtro */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <select
-          value={filterCol}
-          onChange={(e) => setFilterCol(Number(e.target.value))}
-          className="min-w-[150px] rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
-        >
-          <option value={-1}>Todas las columnas</option>
-          {headers.map((h, i) => (
-            <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>
-          ))}
-        </select>
-        <div className="relative flex-1 min-w-[180px]">
+      {/* Filtro: en el celular, búsqueda arriba a lo ancho y el resto debajo */}
+      <div className="flex flex-col md:flex-row md:items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className="relative flex-1 min-w-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-3)]" />
           <input
             value={filterText}
@@ -461,6 +480,25 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
             </button>
           )}
         </div>
+        {/* Escanear para filtrar: cámara o gatillo SCAN según el equipo */}
+        <Button variant="secondary" size="md" onClick={onScanClick} title="Escanear un código para buscarlo"
+          leftIcon={resolveScanMethod() === 'camera' ? <Camera className="w-4 h-4" /> : <ScanLine className="w-4 h-4" />}
+          className="flex-shrink-0">
+          <span className="hidden sm:inline">Escanear</span>
+        </Button>
+        </div>
+        <div className="flex items-center gap-2">
+        <select
+          value={filterCol}
+          onChange={(e) => setFilterCol(Number(e.target.value))}
+          aria-label="Columna donde buscar"
+          className="flex-1 md:flex-none md:w-44 min-w-0 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
+        >
+          <option value={-1}>Todas las columnas</option>
+          {headers.map((h, i) => (
+            <option key={i} value={i}>{h || `Columna ${i + 1}`}</option>
+          ))}
+        </select>
         {/* Filtros por columna (estilo Excel) */}
         <Button
           variant={activeColumnFilters.length > 0 ? 'primary' : 'secondary'}
@@ -476,11 +514,6 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
               {activeColumnFilters.length}
             </span>
           )}
-        </Button>
-        {/* Filtrar al escanear un código (igual que al agregar producto en registros) */}
-        <Button variant="secondary" size="md" onClick={() => setScanning(true)} title="Filtrar escaneando un código"
-          leftIcon={<QrCode className="w-4 h-4" />} className="flex-shrink-0">
-          <span className="hidden sm:inline">Escanear</span>
         </Button>
         {/* Alternar vista: items (tarjetas) ↔ tabla */}
         <div className="flex-shrink-0 inline-flex rounded-[var(--radius)] border border-[var(--color-border)] overflow-hidden">
@@ -501,7 +534,24 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
             <List className="w-4 h-4" />
           </button>
         </div>
+        </div>
       </div>
+
+      {scanHint && (
+        <div role="status" className="flex items-center gap-2 p-2.5 rounded-[var(--radius-lg)] bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+          <ScanLine className="w-4 h-4 flex-shrink-0" />
+          <span className="flex-1">Presiona el gatillo SCAN: el código leído se busca en esta tabla.</span>
+          <button type="button" onClick={() => { setScanHint(false); setScanning(true) }}
+            className="font-semibold underline flex-shrink-0">Usar cámara</button>
+        </div>
+      )}
+
+      {/* Marcar exige escanear o buscar antes */}
+      {!searchActive && rows.length > 0 && (
+        <p className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-3)] px-1">
+          <Lock className="w-3 h-3 flex-shrink-0" /> Para marcar un producto, escanéalo o búscalo primero.
+        </p>
+      )}
 
       {/* Panel de filtros por columna — un input por cada columna (estilo Excel) */}
       {showColumnFilters && (
@@ -610,7 +660,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
           {visible.length === 0 ? (
             <div className="py-10 text-center text-sm text-[var(--color-text-3)]">Sin resultados.</div>
           ) : (
-            <div className="space-y-2">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 items-start">
               {visible.map((row, ri) => {
                 const gIdx = indexOfRow(row)
                 const isSel = selected.has(gIdx)
@@ -663,12 +713,13 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                       {/* Marcar como listo + contador de cantidad encontrada */}
                       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
                         <button onClick={() => toggleMarkRow(row, gIdx)}
-                          title={isMarked ? 'Quitar marca' : 'Marcar como encontrado'}
-                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
+                          title={blockReason(gIdx) ?? (isMarked ? 'Quitar marca' : 'Marcar como encontrado')}
+                          aria-disabled={blockReason(gIdx) !== null}
+                          className={`w-10 h-10 md:w-8 md:h-8 rounded-full flex items-center justify-center transition-all ${
                             isMarked ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
                               : 'bg-[var(--color-bg)] text-[var(--color-text-3)] hover:bg-[var(--color-border)]'
-                          }`}>
-                          <CheckCircle2 className="w-4 h-4" />
+                          } ${blockReason(gIdx) ? 'opacity-50' : ''}`}>
+                          {blockReason(gIdx) && !isMarked ? <Lock className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
                         </button>
                         {expected !== null && (
                           <CountBadge marked={markedOf(row, gIdx)} expected={expected} status={status} />
@@ -748,7 +799,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
             </span>
           </div>
         </div>
-        <div className="overflow-auto max-h-[46vh]">
+        <div className="overflow-auto max-h-[62vh] overscroll-contain">
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 z-10 bg-[var(--color-primary)] text-white shadow-[0_1px_0_var(--color-primary)]">
               <tr>
@@ -809,13 +860,14 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                     <td className="px-2 py-2.5 text-center border-r border-[var(--color-border)]">
                       <div className="flex flex-col items-center gap-1">
                         <button onClick={() => toggleMarkRow(row, gIdx)}
-                          title={isMarked ? 'Quitar marca' : 'Marcar como encontrado'}
+                          title={blockReason(gIdx) ?? (isMarked ? 'Quitar marca' : 'Marcar como encontrado')}
+                          aria-disabled={blockReason(gIdx) !== null}
                           className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
                             isMarked
                               ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
                               : 'bg-[var(--color-bg)] text-[var(--color-text-3)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]'
-                          }`}>
-                          <CheckCircle2 className="w-4 h-4" />
+                          } ${blockReason(gIdx) ? 'opacity-50' : ''}`}>
+                          {blockReason(gIdx) && !isMarked ? <Lock className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-4 h-4" />}
                         </button>
                         {expected !== null && (
                           <CountBadge marked={markedOf(row, gIdx)} expected={expected} status={status} />
@@ -893,6 +945,12 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
   const [importing, setImporting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  // Destino del documento: tabla nueva o agregar sus filas a una existente.
+  const [importMode, setImportMode] = useState<'new' | 'append'>('new')
+  const [appendTargetId, setAppendTargetId] = useState('')
+  const [appendSkipDup, setAppendSkipDup] = useState(true)
+  const [appendAddCols, setAppendAddCols] = useState(true)
+  const [appending, setAppending] = useState(false)
 
   // Listado de sheets existentes
   const [sheets, setSheets] = useState<CompanySheet[]>([])
@@ -1262,6 +1320,56 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
 
   const resetUpload = () => {
     setFile(null); setPreview(null); setSheetName(''); setError(null)
+    setImportMode('new'); setAppendTargetId('')
+  }
+
+  // Agrega las filas del documento a una tabla existente. Las columnas se
+  // emparejan por NOMBRE; las filas nuevas van al final (no cambian las marcas).
+  const handleAppend = async () => {
+    if (!preview) return
+    const target = sheets.find((s) => s.id === appendTargetId)
+    if (!target) { setError('Elige la tabla a la que agregar los datos.'); return }
+    if (!companyId) { setError('No se encontró el ID de empresa.'); return }
+    const codeColumn = getSheetColumns(companyId, target.id).codeColumn
+    const opts = { codeColumn, skipDuplicates: appendSkipDup, addNewColumns: appendAddCols }
+    const summary = (r: { added: number; skippedDuplicates: number; skippedEmpty: number; newColumns: string[]; ignoredColumns: string[] }) => [
+      `✓ ${r.added} fila(s) agregada(s) a "${target.sheetName}"`,
+      r.skippedDuplicates ? `${r.skippedDuplicates} repetida(s) omitida(s)` : '',
+      r.skippedEmpty ? `${r.skippedEmpty} vacía(s) omitida(s)` : '',
+      r.newColumns.length ? `columnas nuevas: ${r.newColumns.join(', ')}` : '',
+      r.ignoredColumns.length ? `columnas no agregadas: ${r.ignoredColumns.join(', ')}` : '',
+    ].filter(Boolean).join(' · ')
+    setAppending(true); setError(null); setSuccess(null)
+    try {
+      const local = getLocalTable(companyId, target.id)
+      if (local) {
+        // Tabla guardada solo en este dispositivo.
+        const r = appendRows(local.headers, local.rows, preview.headers, preview.rows, opts)
+        if (r.added === 0) { setError('No se agregó ninguna fila: todas estaban vacías o sus códigos ya existen en la tabla.'); return }
+        if (!updateLocalTableRows(companyId, target.id, r.rows, r.headers)) { setError('No se pudo guardar en este dispositivo.'); return }
+        setSheets((prev) => prev.map((s) => (s.id === target.id ? { ...s, rowCount: r.rows.length, columns: r.headers } : s)))
+        setSuccess(summary(r))
+      } else {
+        const r = await apiRequest<{
+          added: number; skippedDuplicates: number; skippedEmpty: number; newColumns: string[]; ignoredColumns: string[]
+          headers: string[]; rowCount: number; syncPending?: boolean
+        }>(`/sheets/${encodeURIComponent(target.id)}/append`, {
+          method: 'POST',
+          body: { companyId, headers: preview.headers, rows: preview.rows, ...opts },
+        })
+        setSheets((prev) => prev.map((s) => (s.id === target.id
+          ? { ...s, rowCount: r.rowCount, columns: r.headers, syncPending: r.syncPending } : s)))
+        // La copia sin conexión de esa tabla se actualiza con las filas nuevas.
+        void warmSheetCache(target.id, companyId, { force: true }).catch(() => undefined)
+        setSuccess(summary(r) + (r.syncPending ? ' · Google Sheets se actualizará luego' : ''))
+      }
+      resetUpload()
+      setListTab('tablas')
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : 'No se pudieron agregar los datos a la tabla.')
+    } finally {
+      setAppending(false)
+    }
   }
 
   const handleFile = async (f: File | null) => {
@@ -2064,15 +2172,86 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
             {preview && preview.headers.length > 0 && (
               <section className="space-y-3">
                 <SectionHeader eyebrow="Paso 2" title="Confirmar datos" />
-                <Input
-                  label="Nombre de la tabla"
-                  value={sheetName}
-                  onChange={(e) => setSheetName(e.target.value)}
-                  placeholder="Ej: Inventario octubre 2024"
-                />
+
+                {/* Destino: tabla nueva o agregar a una existente */}
+                <div role="radiogroup" aria-label="Destino de los datos" className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-[var(--color-bg)] border border-[var(--color-border)]">
+                  {([['new', 'Tabla nueva'], ['append', 'Agregar a una existente']] as const).map(([id, label]) => (
+                    <button key={id} type="button" role="radio" aria-checked={importMode === id}
+                      onClick={() => setImportMode(id)}
+                      disabled={id === 'append' && sheets.length === 0}
+                      className={`py-2 rounded-lg text-xs sm:text-sm font-semibold disabled:opacity-40 ${importMode === id ? 'bg-[var(--color-surface)] shadow text-[var(--color-text)]' : 'text-[var(--color-text-3)]'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {importMode === 'new' ? (
+                  <Input
+                    label="Nombre de la tabla"
+                    value={sheetName}
+                    onChange={(e) => setSheetName(e.target.value)}
+                    placeholder="Ej: Inventario octubre 2024"
+                  />
+                ) : (() => {
+                  const target = sheets.find((s) => s.id === appendTargetId)
+                  const match = target ? columnMatch(target.columns ?? [], preview.headers) : null
+                  return (
+                    <div className="space-y-2.5 p-3 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+                      <label className="block space-y-1">
+                        <span className="text-xs font-semibold text-[var(--color-text-2)]">Tabla a la que agregar las filas</span>
+                        <select value={appendTargetId} onChange={(e) => setAppendTargetId(e.target.value)}
+                          className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)]">
+                          <option value="">Elige una tabla…</option>
+                          {sheets.map((s) => (
+                            <option key={s.id} value={s.id}>{s.sheetName} · {s.rowCount} fila(s)</option>
+                          ))}
+                        </select>
+                      </label>
+                      {match && (
+                        <div className="text-[11px] space-y-1">
+                          <p className="text-emerald-700">
+                            <b>{match.matched.length}</b> columna(s) coinciden por nombre{match.matched.length ? `: ${match.matched.join(', ')}` : ''}.
+                          </p>
+                          {match.newColumns.length > 0 && (
+                            <p className="text-amber-700">
+                              <b>{match.newColumns.length}</b> columna(s) no existen en la tabla: {match.newColumns.join(', ')}.
+                            </p>
+                          )}
+                          {match.matched.length === 0 && (
+                            <p className="text-red-600">Ninguna columna coincide: revisa que el documento tenga los mismos encabezados.</p>
+                          )}
+                        </div>
+                      )}
+                      <label className="flex items-center gap-2 text-xs text-[var(--color-text-2)]">
+                        <input type="checkbox" checked={appendSkipDup} onChange={(e) => setAppendSkipDup(e.target.checked)} className="w-4 h-4" />
+                        No repetir códigos que ya están en la tabla
+                      </label>
+                      <label className="flex items-center gap-2 text-xs text-[var(--color-text-2)]">
+                        <input type="checkbox" checked={appendAddCols} onChange={(e) => setAppendAddCols(e.target.checked)} className="w-4 h-4" />
+                        Agregar las columnas nuevas al final
+                      </label>
+                      <p className="text-[10px] text-[var(--color-text-3)]">Las filas se agregan al final; las marcas que ya tiene la tabla no cambian.</p>
+                    </div>
+                  )
+                })()}
 
                 <DataTable headers={preview.headers} rows={preview.rows} />
 
+                {importMode === 'append' ? (
+                <div className="space-y-2">
+                  <Button variant="success" fullWidth
+                    onClick={() => void handleAppend()}
+                    loading={appending}
+                    disabled={!appendTargetId}
+                    leftIcon={<Plus className="w-4 h-4" />}>
+                    Agregar {preview.rows.length} fila(s) a la tabla
+                  </Button>
+                  <Button variant="ghost" size="sm" fullWidth onClick={resetUpload} disabled={appending}
+                    className="text-[var(--color-text-3)]">
+                    Cancelar
+                  </Button>
+                </div>
+                ) : (
                 <div className="space-y-2">
                   {/* Acción principal: importar y usar los datos dentro de la app */}
                   <Button variant="success" fullWidth
@@ -2099,10 +2278,13 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                     Cancelar
                   </Button>
                 </div>
+                )}
 
+                {importMode === 'new' && (
                 <p className="text-[11px] text-[var(--color-text-3)] text-center">
                   "Importar a la app" guarda los datos para verlos y editarlos aquí. La segunda opción además crea la hoja en Google Sheets.
                 </p>
+                )}
               </section>
             )}
 
