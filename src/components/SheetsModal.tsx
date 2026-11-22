@@ -1393,6 +1393,23 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     }
   }
 
+  // "Agregar Excel a esta tabla" desde el menú ⋮: elige el archivo, lo lee y
+  // abre la revisión ya apuntando a ESA tabla (modo "Agregar a una existente").
+  const appendFileRef = useRef<HTMLInputElement | null>(null)
+  const appendPickTargetRef = useRef<string>('')
+  const pickFileToAppend = (sheetId: string) => {
+    appendPickTargetRef.current = sheetId
+    appendFileRef.current?.click()
+  }
+  const onAppendFilePicked = async (f: File | null) => {
+    const target = appendPickTargetRef.current
+    if (!f || !target) return
+    setImportMode('append')
+    setAppendTargetId(target)
+    setListTab('importar')
+    await handleFile(f)
+  }
+
   const handleFile = async (f: File | null) => {
     setError(null); setSuccess(null); setPreview(null)
     if (!f) { setFile(null); return }
@@ -2360,6 +2377,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                 </div>
               )}
 
+              {/* Archivo para "Agregar Excel a esta tabla" (menú ⋮ de cada tabla) */}
+              <input ref={appendFileRef} type="file" accept={ACCEPTED} className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; void onAppendFilePicked(f) }} />
               <div className="space-y-2.5">
                 {[...filteredSheets].sort((a, b) => Number(b.id === primarySheetId) - Number(a.id === primarySheetId)).map((s) => {
                   const isPrimary = primarySheetId === s.id
@@ -2367,6 +2387,12 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                   const menuItems: ActionMenuItem[] = [
                     { key: 'view', label: 'Ver / Editar', icon: <Eye className="w-4 h-4 text-[var(--color-primary)]" />, onSelect: () => void handleView(s) },
                     { key: 'cols', label: 'Columnas', icon: <SlidersHorizontal className="w-4 h-4 text-[var(--color-primary)]" />, onSelect: () => void openColumnConfig(s) },
+                    {
+                      key: 'append',
+                      label: 'Agregar Excel a esta tabla',
+                      icon: <Upload className="w-4 h-4 text-emerald-600" />,
+                      onSelect: () => pickFileToAppend(s.id),
+                    },
                     {
                       key: 'primary',
                       label: isPrimary ? 'Quitar como principal' : 'Hacer principal',
