@@ -559,7 +559,7 @@ export function WizardPage() {
 
   // Campos de cabecera que se incluirán en el mensaje de WhatsApp al compartir
   // el registro completo. Por defecto, todos.
-  const ALL_HEADER_FIELDS = ['tipo', 'placa', 'operador', 'fecha'] as const
+  const ALL_HEADER_FIELDS = ['tipo', 'placa', 'operador', 'ruta', 'fecha', 'totales'] as const
   const [headerFields, setHeaderFields] = useState<Set<string>>(new Set(ALL_HEADER_FIELDS))
   const toggleHeaderField = (f: string) => {
     setHeaderFields((prev) => {
@@ -2710,7 +2710,9 @@ export function WizardPage() {
                   { key: 'tipo', label: 'Tipo' },
                   { key: 'placa', label: 'Placa/Detalle' },
                   { key: 'operador', label: 'Operador' },
+                  { key: 'ruta', label: 'Origen / Destino' },
                   { key: 'fecha', label: 'Fecha y hora' },
+                  { key: 'totales', label: 'Fotos y productos' },
                 ] as const).map((f) => {
                   const on = headerFields.has(f.key)
                   return (
