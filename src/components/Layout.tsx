@@ -1,9 +1,10 @@
-import { useEffect } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { ScanLine } from 'lucide-react'
 import { invalidateTracerFeaturesCache } from '../lib/tracer-features'
 import { openScanLookup } from '../lib/scan-lookup'
 import { resolveScanMethod } from '../lib/scan-method'
+import { getSinkMode, installScanSink, sinkEnabled, subscribeSinkMode } from '../lib/scan-sink'
 import { OfflineBanner } from './OfflineBanner'
 import { ScanLookupModal } from './ScanLookupModal'
 
@@ -11,6 +12,13 @@ export function Layout() {
   const location = useLocation()
   // El registro (wizard) tiene una barra fija abajo: el botón sube para no taparla.
   const inWizard = location.pathname.startsWith('/wizard')
+
+  // Captura invisible para PDAs que "escriben" el código (modo IME / llenar campo).
+  const sinkMode = useSyncExternalStore(subscribeSinkMode, getSinkMode, () => 'auto' as const)
+  useEffect(() => {
+    if (!sinkEnabled(sinkMode)) return
+    return installScanSink()
+  }, [sinkMode])
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {

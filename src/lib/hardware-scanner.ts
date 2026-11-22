@@ -66,23 +66,49 @@ function looksLikeScanner(): boolean {
   return avg <= threshold
 }
 
-function deliver(): boolean {
-  const code = buffer.trim()
-  const ok = code.length >= MIN_LEN && looksLikeScanner()
-  reset()
-  if (!ok) return false
+/** Se llama tras cada entrega (la captura invisible limpia lo que recibió). */
+const deliveredListeners = new Set<() => void>()
+export function onScanDelivered(fn: () => void): () => void {
+  deliveredListeners.add(fn)
+  return () => { deliveredListeners.delete(fn) }
+}
+
+/**
+ * Entrega un código leído al manejador activo de mayor prioridad. Lo usan la
+ * detección por teclado y la captura invisible (PDAs que "escriben" el texto
+ * en el campo en vez de enviar teclas). Devuelve false si nadie lo atiende.
+ */
+export function deliverScanCode(raw: string): boolean {
+  const code = raw.replace(/[\r\n\t]+/g, '').trim()
+  if (code.length < MIN_LEN) return false
   const target = topEntry()
   if (!target) return false
   // Este equipo tiene lector físico: desde ahora "Escanear" lo usa primero.
   markHardwareScannerSeen()
   try { navigator.vibrate?.(30) } catch { /* sin vibración */ }
+  for (const l of deliveredListeners) { try { l() } catch { /* noop */ } }
   target.ref.current(code)
   return true
+}
+
+function deliver(): boolean {
+  const code = buffer.trim()
+  const ok = code.length >= MIN_LEN && looksLikeScanner()
+  reset()
+  if (!ok) return false
+  return deliverScanCode(code)
+}
+
+/** La captura invisible de la PDA no cuenta como campo de texto del usuario. */
+function isScanSink(el: EventTarget | null): boolean {
+  const node = el as HTMLElement | null
+  return !!node && typeof node.hasAttribute === 'function' && node.hasAttribute('data-scan-sink')
 }
 
 function isEditable(el: EventTarget | null): boolean {
   const node = el as HTMLElement | null
   if (!node || !node.tagName) return false
+  if (isScanSink(node)) return false
   if (node.isContentEditable) return true
   const tag = node.tagName
   if (tag === 'TEXTAREA' || tag === 'SELECT') return true
@@ -99,12 +125,16 @@ function hasScanCapture(el: EventTarget | null): boolean {
 /** Procesa una tecla. Exportado para poder probar la detección sin navegador. */
 export function handleScanKey(e: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'target' | 'timeStamp'> & { preventDefault?: () => void; stopPropagation?: () => void; isComposing?: boolean }): boolean {
   if (entries.length === 0) return false
+  // PDAs con teclado "IME": las teclas llegan sin carácter (key 'Unidentified',
+  // keyCode 229). No se pueden leer aquí; las recoge la captura invisible.
+  if (e.key === 'Unidentified' || e.key === 'Process') return false
   if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) { reset(); return false }
   // En un campo de texto el lector escribe como teclado normal, salvo en los
   // campos marcados con `data-scan-capture` (p. ej. la cantidad del modal de
   // lectura): ahí una lectura del lector se toma como código, no como texto.
   const active = typeof document !== 'undefined' ? document.activeElement : null
   const capture = hasScanCapture(e.target ?? null) || hasScanCapture(active)
+    || isScanSink(e.target ?? null) || isScanSink(active)
   if (!capture && (isEditable(e.target ?? null) || isEditable(active))) { reset(); return false }
 
   const now = e.timeStamp || Date.now()

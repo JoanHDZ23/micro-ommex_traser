@@ -21,6 +21,8 @@ const PDA_MODEL = new RegExp(
     // Datalogic / Urovo / Newland / Unitech / Point Mobile / CipherLab
     'datalogic', 'memor', 'skorpio', 'urovo', '\\bDT[45]0\\b', '\\bRT40\\b', 'newland', '\\bNLS-', '\\bMT9\\d\\b',
     'unitech', '\\bEA[356]\\d{2}\\b', 'point ?mobile', '\\bPM(45|75|85|90)\\b', 'cipherlab', '\\bRS(3|5)\\d\\b',
+    // Handheld (Nautiz / Algiz) y PDAs genéricas que se anuncian como "handheld"
+    'handheld', 'nautiz', 'algiz',
   ].join('|'),
   'i',
 )

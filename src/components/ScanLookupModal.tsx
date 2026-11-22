@@ -15,7 +15,7 @@
  *  - el MISMO código suma 1 a la cantidad (contar unidades leyendo cada una);
  *  - un código distinto busca ese otro producto.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, Camera, CheckCircle2, ClipboardList, FolderInput, Loader2, Minus, Package, Plus, ScanLine, Search,
@@ -33,6 +33,7 @@ import { normCode, searchResultMarkKeys, type RowMark } from '../lib/mark-keys'
 import { getOfflineSheetData } from '../lib/local-tables'
 import { isScanSoundOn, playScanSound, setScanSoundOn } from '../lib/scan-sound'
 import { resolveScanMethod, setScanMethod, useScanMethod, type ScanMethod } from '../lib/scan-method'
+import { getSinkMode, setSinkMode, sinkEnabled, subscribeSinkMode, type SinkMode } from '../lib/scan-sink'
 import { BarcodeScanner } from './BarcodeScanner'
 import {
   OPERATION_UPDATED_EVENT, SCAN_LOOKUP_EVENT, composeDbDescription, getLastScanOperation, setLastScanOperation,
@@ -79,9 +80,34 @@ export function ScanLookupModal() {
   // Cámara abierta para escanear (el modal se oculta mientras tanto).
   const [cameraOpen, setCameraOpen] = useState(false)
   const scanMethod = useScanMethod()
+  const sinkMode = useSyncExternalStore(subscribeSinkMode, getSinkMode, () => 'auto' as SinkMode)
   const effectiveMethod = resolveScanMethod(scanMethod)
   const searchSeq = useRef(0)
   const manualRef = useRef<HTMLInputElement | null>(null)
+  // false = el campo no abre el teclado (espera el gatillo SCAN); se activa al tocarlo.
+  const [kbd, setKbd] = useState(false)
+  // Texto insertado de golpe en el campo (PDA en modo "llenar campo"/IME): se busca solo.
+  const bulkTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onManualChange = (next: string) => {
+    const grew = next.length - manual.length
+    setManual(next)
+    if (bulkTimer.current) { clearTimeout(bulkTimer.current); bulkTimer.current = null }
+    if (grew >= 3 || /[\r\n]/.test(next)) {
+      bulkTimer.current = setTimeout(() => {
+        bulkTimer.current = null
+        const v = (manualRef.current?.value ?? next).replace(/[\r\n\t]+/g, '').trim()
+        if (v.length < 3) return
+        // Igual que el gatillo: el mismo código suma una unidad.
+        if (selected && normCode(selected.code) === normCode(v)) {
+          setManual('')
+          changeQty(qty + 1)
+          playScanSound('found')
+          return
+        }
+        void runLookup(v)
+      }, 150)
+    }
+  }
 
   // Registro (operación) al que traer el producto.
   const location = useLocation()
@@ -228,8 +254,11 @@ export function ScanLookupModal() {
       searchSeq.current++
       setStatus('idle'); setCode(''); setSelected(null); setResults([]); setPickOp(false)
       if (d?.camera) { setCameraOpen(true); return }
-      // Con el gatillo SCAN no se enfoca el campo (abriría el teclado en la PDA).
-      if (resolveScanMethod() !== 'pda') setTimeout(() => manualRef.current?.focus(), 60)
+      // Se enfoca siempre para recibir la lectura de PDAs que "escriben" en el
+      // campo. Con el gatillo SCAN va sin teclado en pantalla (inputmode none)
+      // hasta que el usuario toca el campo para escribir.
+      setKbd(false)
+      setTimeout(() => manualRef.current?.focus(), 60)
     }
     window.addEventListener(SCAN_LOOKUP_EVENT, onOpen)
     return () => window.removeEventListener(SCAN_LOOKUP_EVENT, onOpen)
@@ -425,7 +454,9 @@ export function ScanLookupModal() {
             <input
               ref={manualRef}
               value={manual}
-              onChange={(e) => setManual(e.target.value)}
+              onChange={(e) => onManualChange(e.target.value)}
+              inputMode={effectiveMethod === 'pda' && !kbd ? 'none' : 'text'}
+              onPointerDown={() => setKbd(true)}
               // Una lectura del gatillo aquí se toma como código escaneado.
               data-scan-capture=""
               enterKeyHint="search"
@@ -494,6 +525,20 @@ export function ScanLookupModal() {
                   Auto: {effectiveMethod === 'pda' ? 'se detectó el gatillo SCAN' : 'cámara (no se detectó gatillo SCAN)'}.
                 </p>
               )}
+              {/* Captura invisible: para PDAs que escriben el código en el campo */}
+              <p className="text-[10px] font-semibold uppercase text-gray-400 mt-3 mb-1">Captura de PDA (cualquier lector)</p>
+              <div role="radiogroup" aria-label="Captura de PDA" className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-gray-100">
+                {([['auto', 'Auto'], ['on', 'Activada'], ['off', 'Apagada']] as Array<[SinkMode, string]>).map(([id, label]) => (
+                  <button key={id} type="button" role="radio" aria-checked={sinkMode === id}
+                    onClick={() => setSinkMode(id)}
+                    className={`py-1.5 rounded-lg text-[11px] font-semibold ${sinkMode === id ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">
+                {sinkEnabled(sinkMode) ? 'Activa: recibe el código aunque la PDA lo "escriba" en vez de enviar teclas.' : 'Apagada: solo se reciben lectores en modo teclado.'}
+              </p>
             </div>
           </div>
         )}

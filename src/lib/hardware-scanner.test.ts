@@ -8,7 +8,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { SCAN_PRIORITY, handleScanKey, registerScanHandler } from './hardware-scanner.ts'
+import { SCAN_PRIORITY, deliverScanCode, handleScanKey, registerScanHandler } from './hardware-scanner.ts'
 
 type Target = { tagName?: string; type?: string; isContentEditable?: boolean; hasAttribute?: (n: string) => boolean }
 
@@ -110,5 +110,24 @@ test('código corto a velocidad media NO se toma como lectura (antifalsos)', () 
   // 5 teclas a 90 ms (rápido para humano) pero código corto: exige avg ≤ 80.
   assert.equal(scan('12345', { gapMs: 90 }), false)
   assert.deepEqual(modal.got, [])
+  off()
+})
+
+test('con la captura invisible enfocada, la PDA en modo teclado sigue llegando al modal', () => {
+  const modal = handler()
+  const off = registerScanHandler(modal.ref, SCAN_PRIORITY.global)
+  const sink: Target = { tagName: 'INPUT', type: 'text', hasAttribute: (n) => n === 'data-scan-sink' }
+  assert.equal(scan('7701112223334', { target: sink }), true)
+  assert.deepEqual(modal.got, ['7701112223334'])
+  off()
+})
+
+test('teclas sin carácter (IME, keyCode 229) se ignoran; deliverScanCode entrega lo capturado', () => {
+  const modal = handler()
+  const off = registerScanHandler(modal.ref, SCAN_PRIORITY.global)
+  assert.equal(handleScanKey({ key: 'Unidentified', ctrlKey: false, metaKey: false, altKey: false, target: null, timeStamp: clock += 5 }), false)
+  assert.equal(deliverScanCode('  OC-99\n'), true)
+  assert.deepEqual(modal.got, ['OC-99'])
+  assert.equal(deliverScanCode('ab'), false)
   off()
 })
