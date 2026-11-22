@@ -38,6 +38,7 @@ import {
   OPERATION_UPDATED_EVENT, SCAN_LOOKUP_EVENT, composeDbDescription, getLastScanOperation, setLastScanOperation,
 } from '../lib/scan-lookup'
 import { useTracerFeatures } from '../lib/tracer-features'
+import { isSameDbProduct } from '../lib/product-variant'
 
 type Status = 'idle' | 'loading' | 'done' | 'error' | 'no-data'
 
@@ -308,11 +309,13 @@ export function ScanLookupModal() {
     const cols = db?.primarySheetId ? getSheetColumns(companyId, db.primarySheetId) : { codeColumn: 0, descColumn: -1, extraColumns: [] }
     const descripcion = composeDbDescription(selected, headers, cols)
     try {
-      await apiRequest(`/operations/${encodeURIComponent(trackingCode)}/linea-blanca`, {
+      // allowSameCode: si otro producto de la MISMA orden ya está en el registro,
+      // este se agrega como "CÓDIGO · DESCRIPCIÓN" en vez de rechazarse.
+      const r = await apiRequest<{ product?: { productCode?: string } }>(`/operations/${encodeURIComponent(trackingCode)}/linea-blanca`, {
         method: 'POST',
-        body: { productCode, labelData: descripcion ? { descripcion } : undefined, isLineaBlanca: false },
+        body: { productCode, labelData: descripcion ? { descripcion } : undefined, isLineaBlanca: false, allowSameCode: true },
       })
-      done(trackingCode, productCode, `Agregado al registro ${trackingCode}`)
+      done(trackingCode, r?.product?.productCode || productCode, `Agregado al registro ${trackingCode}`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : ''
       // Ya estaba en ese registro: no es un error para quien escanea.
@@ -337,6 +340,13 @@ export function ScanLookupModal() {
     setPickOp(true)
     void loadOpenOps()
   }
+
+  // Descripción con la que se guardaría en un registro (para saber si ya está).
+  const selectedDbDesc = useMemo(() => {
+    if (!selected) return ''
+    const cols = db?.primarySheetId ? getSheetColumns(companyId, db.primarySheetId) : { codeColumn: 0, descColumn: -1, extraColumns: [] }
+    return composeDbDescription(selected, headers, cols)
+  }, [selected, headers, db, companyId])
 
   // Campos de la fila (encabezado → valor), sin las celdas vacías.
   const fields = useMemo(() => {
@@ -582,7 +592,10 @@ export function ScanLookupModal() {
             )}
             <div className="space-y-1.5 max-h-72 overflow-y-auto">
               {ops.map((op) => {
-                const already = (op.lineaBlanca ?? []).some((p) => p.productCode.toLowerCase() === selected.code.trim().toLowerCase())
+                // Ya está = mismo código (u orden) y misma descripción; otro producto
+                // de la misma orden no cuenta.
+                const already = (op.lineaBlanca ?? []).some((p) =>
+                  isSameDbProduct(p, selected.code, selectedDbDesc))
                 const last = op.trackingCode === getLastScanOperation()
                 return (
                   <button key={op.trackingCode} type="button" disabled={adding !== null}

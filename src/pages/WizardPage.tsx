@@ -13,6 +13,7 @@ import { ImageEditor } from '../components/ImageEditor'
 import { Button, ErrorState, LoadingState, Modal, ModalSurface } from '../components/ui'
 import { cachePhoto, claimForegroundUpload, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, releaseForegroundUpload, resetPendingForRetry, uploadPendingInBackground, type CachedPhoto } from '../lib/photo-cache'
 import { PHOTOS_PER_REQUEST, uploadInChunks, withTimeout } from '../lib/upload-chunks'
+import { findDbProduct } from '../lib/product-variant'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { compressImageToBase64 } from '../lib/image-compress'
@@ -2152,27 +2153,32 @@ export function WizardPage() {
     if (!trackingCode) return
     const code = (item.code || '').trim()
     if (!code) { setFeedback('El producto encontrado no tiene código.'); return }
-    // Ya existe en esta operación → solo activarlo.
-    if (lbProducts.some((p) => p.productCode.toLowerCase() === code.toLowerCase())) {
-      setActiveLbProduct(code)
+    const descripcion = composeDbDescription(item, headers)
+    // Ya existe ESTE producto (mismo código y descripción) → solo activarlo.
+    // Otro producto de la misma orden sí se agrega aparte.
+    const existingProduct = findDbProduct(lbProducts, code, descripcion)
+    if (existingProduct) {
+      setActiveLbProduct(existingProduct.productCode)
       setShowAddProductModal(false)
       setLbProductCode(''); setLbLabelData(null)
-      setFeedback(`✓ ${code} ya está en el registro. Ya puedes añadir fotos.`)
+      setFeedback(`✓ ${existingProduct.productCode} ya está en el registro. Ya puedes añadir fotos.`)
       return
     }
     setLbAdding(true)
     setFeedback(null)
     try {
-      const descripcion = composeDbDescription(item, headers)
-      await apiRequest(`/operations/${trackingCode}/linea-blanca`, {
+      const r = await apiRequest<{ product?: { productCode?: string } }>(`/operations/${trackingCode}/linea-blanca`, {
         method: 'POST',
-        body: { productCode: code, labelData: descripcion ? { descripcion } : undefined, isLineaBlanca: false },
+        body: { productCode: code, labelData: descripcion ? { descripcion } : undefined, isLineaBlanca: false, allowSameCode: true },
       })
-      setActiveLbProduct(code)
+      const saved = r?.product?.productCode || code
+      setActiveLbProduct(saved)
       setShowAddProductModal(false)
       setLbProductCode(''); setLbLabelData(null)
       await loadOperation()
-      setFeedback(`✓ ${code} agregado desde la base de datos. Ya puedes añadir fotos.`)
+      setFeedback(saved !== code
+        ? `✓ ${saved} agregado (misma orden que otro producto). Ya puedes añadir fotos.`
+        : `✓ ${code} agregado desde la base de datos. Ya puedes añadir fotos.`)
     } catch (err) {
       setFeedback(err instanceof Error ? err.message : 'Error al agregar el producto.')
     } finally {

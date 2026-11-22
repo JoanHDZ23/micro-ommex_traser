@@ -354,6 +354,8 @@ export interface LineaBlancaProduct {
   labelData?: LabelData
   isLineaBlanca?: boolean
   linkedTo?: string[]
+  /** Código original (orden) cuando varios productos lo comparten; productCode = "CÓDIGO · DESCRIPCIÓN". */
+  orderCode?: string
   photos: PhotoRecord[]
   status: 'EN_PROCESO' | 'COMPLETADO'
   createdAt: string

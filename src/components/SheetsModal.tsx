@@ -1221,7 +1221,8 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     const { productCode, descripcion } = rowToProduct(row)
     await apiRequest(`/operations/${encodeURIComponent(trackingCode)}/linea-blanca`, {
       method: 'POST',
-      body: { productCode, labelData: descripcion ? { descripcion } : undefined },
+      // Varias filas de la MISMA orden: cada una entra como producto propio.
+      body: { productCode, labelData: descripcion ? { descripcion } : undefined, allowSameCode: true },
     })
   }
 
