@@ -6,6 +6,8 @@
  * - Se auto-eliminan después de 24 horas
  */
 
+import { withTimeout } from './upload-chunks'
+
 const DB_NAME = 'ommex-photo-cache'
 const STORE_NAME = 'photos'
 const DB_VERSION = 1
@@ -33,8 +35,22 @@ export interface CachedPhoto {
   lastAttemptAt?: number
 }
 
+// ── Conexión y transacciones SEGURAS ────────────────────────────────────────
+// Antes cada operación abría una conexión nueva (sin cerrarla) y las
+// transacciones solo escuchaban `error`. Cuando el almacenamiento se llenaba,
+// el navegador ABORTA la transacción (evento `abort`, no `error`): la promesa no
+// terminaba nunca y la subida de varias fotos se quedaba "cargando" hasta
+// recargar la página. Ahora: una sola conexión reutilizada, `abort` también
+// rechaza y cada operación tiene un tiempo máximo.
+
+/** Tiempo máximo de una operación de IndexedDB antes de darla por fallida. */
+const IDB_TIMEOUT_MS = 15_000
+
+let dbPromise: Promise<IDBDatabase> | null = null
+
 function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise
+  const p = new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION)
     request.onupgradeneeded = () => {
       const db = request.result
@@ -44,25 +60,63 @@ function openDB(): Promise<IDBDatabase> {
         store.createIndex('timestamp', 'timestamp', { unique: false })
       }
     }
-    request.onsuccess = () => resolve(request.result)
+    request.onsuccess = () => {
+      const db = request.result
+      // Otra pestaña necesita actualizar la base: se cierra y se reabre después.
+      db.onversionchange = () => { db.close(); dbPromise = null }
+      db.onclose = () => { dbPromise = null }
+      resolve(db)
+    }
     request.onerror = () => reject(request.error)
+    request.onblocked = () => reject(new Error('El almacenamiento de fotos está bloqueado por otra pestaña.'))
   })
+  dbPromise = withTimeout(p, IDB_TIMEOUT_MS, 'No se pudo abrir el almacenamiento de fotos del dispositivo.')
+  dbPromise.catch(() => { dbPromise = null })
+  return dbPromise
+}
+
+/**
+ * Ejecuta una transacción y resuelve con lo que `run` deje en `result` cuando
+ * TERMINA (complete). Rechaza ante error, abort (p. ej. cuota llena) o si no
+ * responde a tiempo.
+ */
+async function runTx<T>(
+  mode: IDBTransactionMode,
+  run: (store: IDBObjectStore, done: (value: T) => void) => void,
+): Promise<T> {
+  const db = await openDB()
+  const p = new Promise<T>((resolve, reject) => {
+    let tx: IDBTransaction
+    try { tx = db.transaction(STORE_NAME, mode) } catch (err) { dbPromise = null; reject(err); return }
+    let value: T | undefined
+    tx.oncomplete = () => resolve(value as T)
+    tx.onerror = () => reject(tx.error ?? new Error('Error de almacenamiento local.'))
+    tx.onabort = () => reject(tx.error ?? new Error('Se canceló el guardado local (¿almacenamiento lleno?).'))
+    try {
+      run(tx.objectStore(STORE_NAME), (v) => { value = v })
+    } catch (err) {
+      try { tx.abort() } catch { /* ya terminada */ }
+      reject(err)
+    }
+  })
+  return withTimeout(p, IDB_TIMEOUT_MS, 'El almacenamiento de fotos del dispositivo no respondió.')
+}
+
+/** El dataUrl no se guarda (duplicaba el tamaño de cada foto): se arma al leer. */
+function withDataUrl(photo: CachedPhoto): CachedPhoto {
+  return photo.dataUrl ? photo : { ...photo, dataUrl: `data:image/jpeg;base64,${photo.base64}` }
 }
 
 /** Escribe una foto en el store (una sola transacción). */
-function putPhoto(db: IDBDatabase, photo: CachedPhoto): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    tx.objectStore(STORE_NAME).put(photo)
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
-  })
+function putPhoto(photo: CachedPhoto): Promise<void> {
+  const { dataUrl: _omit, ...stored } = photo
+  return runTx<void>('readwrite', (store) => { store.put(stored) })
 }
 
 /** True si el error es por cuota de almacenamiento llena. */
 function isQuotaError(err: unknown): boolean {
   const e = err as { name?: string; message?: string } | null
-  return e?.name === 'QuotaExceededError' || /quota/i.test(e?.message ?? '')
+  return e?.name === 'QuotaExceededError' || /quota|lleno/i.test(e?.message ?? '')
 }
 
 /**
@@ -71,19 +125,15 @@ function isQuotaError(err: unknown): boolean {
  * servidor y borrarlas sería perderlas.
  */
 export async function purgeUploadedPhotos(): Promise<number> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    const req = store.getAll()
+  return runTx<number>('readwrite', (store, done) => {
     let deleted = 0
+    const req = store.openCursor()
     req.onsuccess = () => {
-      for (const photo of (req.result ?? []) as CachedPhoto[]) {
-        if (photo.uploaded) { store.delete(photo.id); deleted++ }
-      }
+      const cursor = req.result
+      if (!cursor) { done(deleted); return }
+      if ((cursor.value as CachedPhoto).uploaded) { cursor.delete(); deleted++ }
+      cursor.continue()
     }
-    tx.oncomplete = () => resolve(deleted)
-    tx.onerror = () => reject(tx.error)
   })
 }
 
@@ -95,7 +145,6 @@ export async function purgeUploadedPhotos(): Promise<number> {
  * foto en pantalla en lugar de descartarla (antes se perdía en silencio).
  */
 export async function cachePhoto(photo: Omit<CachedPhoto, 'id' | 'timestamp' | 'uploaded' | 'dataUrl'>): Promise<CachedPhoto> {
-  const db = await openDB()
   const timestamp = Date.now()
   // ID ÚNICO con sufijo aleatorio: evita colisiones cuando se cachean varias
   // fotos del mismo producto en el mismo milisegundo (compresión en paralelo),
@@ -113,113 +162,80 @@ export async function cachePhoto(photo: Omit<CachedPhoto, 'id' | 'timestamp' | '
   }
 
   try {
-    await putPhoto(db, cached)
+    await putPhoto(cached)
   } catch (err) {
     if (!isQuotaError(err)) throw err
     await purgeUploadedPhotos()
-    await putPhoto(db, cached)
+    await putPhoto(cached)
   }
   return cached
 }
 
-/** Marca una foto como subida pero la MANTIENE en IndexedDB hasta el guardado final (Req 5). */
-export async function markAsUploaded(id: string): Promise<void> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
+/** Cambia una foto guardada (si existe) dentro de una transacción. */
+function updatePhoto(id: string, change: (photo: CachedPhoto) => void): Promise<void> {
+  return runTx<void>('readwrite', (store) => {
     const req = store.get(id)
     req.onsuccess = () => {
       const photo = req.result as CachedPhoto | undefined
-      if (photo) {
-        photo.uploaded = true
-        store.put(photo)
-      }
+      if (!photo) return
+      change(photo)
+      store.put(photo)
     }
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
   })
+}
+
+/** Marca una foto como subida pero la MANTIENE en IndexedDB hasta el guardado final (Req 5). */
+export async function markAsUploaded(id: string): Promise<void> {
+  await updatePhoto(id, (p) => { p.uploaded = true })
 }
 
 /** Registra un intento fallido de subida (incrementa contador + marca hora). */
 async function recordFailedAttempt(id: string): Promise<void> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    const req = store.get(id)
-    req.onsuccess = () => {
-      const photo = req.result as CachedPhoto | undefined
-      if (photo) {
-        photo.uploadAttempts = (photo.uploadAttempts ?? 0) + 1
-        photo.lastAttemptAt = Date.now()
-        store.put(photo)
-      }
-    }
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
+  await updatePhoto(id, (p) => {
+    p.uploadAttempts = (p.uploadAttempts ?? 0) + 1
+    p.lastAttemptAt = Date.now()
   })
 }
 
 /** Elimina definitivamente las fotos subidas de un registro (al finalizar). */
 export async function clearUploadedPhotos(trackingCode: string): Promise<void> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    const index = store.index('trackingCode')
-    const req = index.getAll(trackingCode)
+  await runTx<void>('readwrite', (store) => {
+    const req = store.index('trackingCode').openCursor(IDBKeyRange.only(trackingCode))
     req.onsuccess = () => {
-      for (const photo of req.result ?? []) {
-        if (photo.uploaded) store.delete(photo.id)
-      }
+      const cursor = req.result
+      if (!cursor) return
+      if ((cursor.value as CachedPhoto).uploaded) cursor.delete()
+      cursor.continue()
     }
-    tx.oncomplete = () => resolve()
-    tx.onerror = () => reject(tx.error)
   })
 }
 
 /** Obtiene todas las fotos cacheadas para un trackingCode */
 export async function getCachedPhotos(trackingCode: string): Promise<CachedPhoto[]> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly')
-    const index = tx.objectStore(STORE_NAME).index('trackingCode')
-    const req = index.getAll(trackingCode)
-    req.onsuccess = () => resolve(req.result ?? [])
-    req.onerror = () => reject(req.error)
+  const list = await runTx<CachedPhoto[]>('readonly', (store, done) => {
+    const req = store.index('trackingCode').getAll(trackingCode)
+    req.onsuccess = () => done((req.result ?? []) as CachedPhoto[])
   })
+  return (list ?? []).map(withDataUrl)
 }
 
 /** Obtiene el dataUrl de una foto por su ID (para mostrar rápido) */
 export async function getCachedPhotoUrl(id: string): Promise<string | null> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly')
-    const req = tx.objectStore(STORE_NAME).get(id)
-    req.onsuccess = () => resolve(req.result?.dataUrl ?? null)
-    req.onerror = () => reject(req.error)
-  })
+  const photo = await getPhotoById(id)
+  return photo ? withDataUrl(photo).dataUrl : null
 }
 
 /** Datos LIVIANOS de una foto pendiente (sin base64/dataUrl). */
 export type PendingMeta = Pick<CachedPhoto, 'id' | 'trackingCode' | 'productCode' | 'uploadAttempts' | 'lastAttemptAt' | 'timestamp'>
 
 /**
- * Lista las fotos pendientes SIN acumular sus imágenes en memoria.
- *
- * `getAll()` cargaba de golpe TODAS las fotos del almacén (con base64 y además
- * `dataUrl`, el doble) solo para contarlas, y se llamaba varias veces al abrir
- * la app y cada 30 s. Con muchas fotos eso agotaba la memoria de la pestaña
- * (pantalla "carita triste"). Con un cursor se lee una foto a la vez y solo se
- * conserva su metadato; el resto se libera enseguida.
+ * Lista las fotos pendientes SIN acumular sus imágenes en memoria: con un
+ * cursor se lee una foto a la vez y solo se conserva su metadato.
  */
 export async function getPendingMeta(): Promise<PendingMeta[]> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const out: PendingMeta[] = []
-    const tx = db.transaction(STORE_NAME, 'readonly')
-    const req = tx.objectStore(STORE_NAME).openCursor()
+  const out: PendingMeta[] = []
+  await runTx<void>('readonly', (store) => {
+    const req = store.openCursor()
     req.onsuccess = () => {
       const cursor = req.result
       if (!cursor) return
@@ -236,19 +252,17 @@ export async function getPendingMeta(): Promise<PendingMeta[]> {
       }
       cursor.continue()
     }
-    tx.oncomplete = () => resolve(out)
-    tx.onerror = () => reject(tx.error)
   })
+  return out
 }
 
 /** Lee UNA foto completa por id (para subirla). */
 async function getPhotoById(id: string): Promise<CachedPhoto | undefined> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const req = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(id)
-    req.onsuccess = () => resolve(req.result as CachedPhoto | undefined)
-    req.onerror = () => reject(req.error)
+  const photo = await runTx<CachedPhoto | undefined>('readonly', (store, done) => {
+    const req = store.get(id)
+    req.onsuccess = () => done(req.result as CachedPhoto | undefined)
   })
+  return photo ? withDataUrl(photo) : undefined
 }
 
 /** Nº de fotos pendientes de subir (no subidas) en todo el almacén. */
@@ -268,39 +282,38 @@ export async function hasFailedUploads(): Promise<boolean> {
  * nada: solo las vuelve a dejar "listas para subir".
  */
 export async function resetPendingForRetry(): Promise<number> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    const req = store.getAll()
+  return runTx<number>('readwrite', (store, done) => {
     let reset = 0
+    const req = store.openCursor()
     req.onsuccess = () => {
-      for (const photo of (req.result ?? []) as CachedPhoto[]) {
-        if (!photo.uploaded) {
-          photo.uploadAttempts = 0
-          photo.lastAttemptAt = 0
-          store.put(photo)
-          reset++
-        }
+      const cursor = req.result
+      if (!cursor) { done(reset); return }
+      const photo = cursor.value as CachedPhoto
+      if (!photo.uploaded) {
+        photo.uploadAttempts = 0
+        photo.lastAttemptAt = 0
+        cursor.update(photo)
+        reset++
       }
+      cursor.continue()
     }
-    tx.oncomplete = () => resolve(reset)
-    tx.onerror = () => reject(tx.error)
   })
 }
 
 /** Obtiene fotos pendientes de subir */
 export async function getPendingUploads(): Promise<CachedPhoto[]> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readonly')
-    const req = tx.objectStore(STORE_NAME).getAll()
+  const out: CachedPhoto[] = []
+  await runTx<void>('readonly', (store) => {
+    const req = store.openCursor()
     req.onsuccess = () => {
-      const all = (req.result ?? []) as CachedPhoto[]
-      resolve(all.filter((p) => !p.uploaded))
+      const cursor = req.result
+      if (!cursor) return
+      const p = cursor.value as CachedPhoto
+      if (!p.uploaded) out.push(withDataUrl(p))
+      cursor.continue()
     }
-    req.onerror = () => reject(req.error)
   })
+  return out
 }
 
 /**
@@ -311,23 +324,17 @@ export async function getPendingUploads(): Promise<CachedPhoto[]> {
  * que todavía no llegaron al servidor y borrarlas sería perderlas.
  */
 export async function cleanExpiredPhotos(): Promise<number> {
-  const db = await openDB()
   const cutoff = Date.now() - EXPIRY_MS
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-    const store = tx.objectStore(STORE_NAME)
-    const req = store.getAll()
+  return runTx<number>('readwrite', (store, done) => {
     let deleted = 0
+    const req = store.openCursor()
     req.onsuccess = () => {
-      for (const photo of (req.result ?? []) as CachedPhoto[]) {
-        if (photo.uploaded && photo.timestamp < cutoff) {
-          store.delete(photo.id)
-          deleted++
-        }
-      }
+      const cursor = req.result
+      if (!cursor) { done(deleted); return }
+      const photo = cursor.value as CachedPhoto
+      if (photo.uploaded && photo.timestamp < cutoff) { cursor.delete(); deleted++ }
+      cursor.continue()
     }
-    tx.oncomplete = () => resolve(deleted)
-    tx.onerror = () => reject(tx.error)
   })
 }
 
@@ -420,23 +427,38 @@ async function uploadGroup(api: ApiFn, photos: CachedPhoto[]): Promise<number> {
  *  - Respeta un backoff creciente por foto y un tope de reintentos, evitando
  *    que una subida que siempre falla consuma red/batería en cada ciclo.
  */
-/** Máximo de fotos cargadas en memoria y enviadas en una misma petición. */
-const UPLOAD_CHUNK_SIZE = 6
+/** Máximo de fotos cargadas en memoria y enviadas en una misma petición.
+ *  Pocas por petición: cada una termina rápido aunque la señal sea débil. */
+const UPLOAD_CHUNK_SIZE = 3
+
+/** Una subida en segundo plano que lleve más que esto se da por colgada y no
+ *  bloquea las siguientes (antes había que recargar la página). */
+const STALE_UPLOAD_MS = 6 * 60 * 1000
+
+/** Fotos que está subiendo AHORA la pantalla del registro: el segundo plano no
+ *  las toca, para no enviarlas dos veces a la vez. */
+const foregroundIds = new Set<string>()
+export function claimForegroundUpload(ids: string[]): void { for (const id of ids) foregroundIds.add(id) }
+export function releaseForegroundUpload(ids: string[]): void { for (const id of ids) foregroundIds.delete(id) }
 
 /** Subida en curso: evita que dos disparadores (banner, reintento manual,
  *  evento 'online') suban y carguen las mismas fotos a la vez. */
 let inFlightUpload: Promise<number> | null = null
+let inFlightSince = 0
 
 export function uploadPendingInBackground(apiRequest: ApiFn): Promise<number> {
-  if (inFlightUpload) return inFlightUpload
-  inFlightUpload = runPendingUpload(apiRequest).finally(() => { inFlightUpload = null })
-  return inFlightUpload
+  if (inFlightUpload && Date.now() - inFlightSince < STALE_UPLOAD_MS) return inFlightUpload
+  const run = runPendingUpload(apiRequest)
+  inFlightUpload = run
+  inFlightSince = Date.now()
+  void run.finally(() => { if (inFlightUpload === run) inFlightUpload = null }).catch(() => undefined)
+  return run
 }
 
 async function runPendingUpload(apiRequest: ApiFn): Promise<number> {
   const now = Date.now()
   // Solo metadatos: no se cargan las imágenes hasta que toque subirlas.
-  const pending = (await getPendingMeta()).filter((p) => isReadyToUpload(p, now))
+  const pending = (await getPendingMeta()).filter((p) => isReadyToUpload(p, now) && !foregroundIds.has(p.id))
   if (pending.length === 0) return 0
 
   // Agrupa por registro+producto para subir cada tanda en una sola petición.

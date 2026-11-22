@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertCircle, CheckCircle2, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { count as queueCount, flush, type QueuedRequest } from '../lib/sync-queue'
 import { uploadPendingInBackground, countPendingUploads, hasFailedUploads, resetPendingForRetry } from '../lib/photo-cache'
+import { withTimeout } from '../lib/upload-chunks'
 import { apiRequest } from '../lib/api'
 
 export function OfflineBanner() {
@@ -47,9 +48,11 @@ export function OfflineBanner() {
       // Reintento manual: reinicia el backoff para subir ya mismo.
       if (force) { try { await resetPendingForRetry() } catch { /* noop */ } }
       // 1. Fotos capturadas offline → photo-cache → backend
-      const uploadedPhotos = await uploadPendingInBackground(
+      // Con tiempo máximo: una subida colgada ya no bloquea la sincronización
+      // hasta recargar la página (sigue en el siguiente ciclo).
+      const uploadedPhotos = await withTimeout(uploadPendingInBackground(
         (url, opts) => apiRequest(url as string, opts as { method: string; body?: unknown }),
-      )
+      ), 6 * 60_000).catch(() => 0)
       // 2. Mutaciones encoladas → sync-queue → backend
       const result = await flush(
         (ep, opts) => apiRequest(ep, opts),
@@ -88,6 +91,13 @@ export function OfflineBanner() {
     const handleOnline  = () => { setIsOnline(true);  void autoSync() }
     const handleOffline = () => { setIsOnline(false) }
     const handleEnqueue = () => { void refreshCount() }
+    // Fotos que no se pudieron enviar desde el registro: reintento pronto, sin recargar.
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const handlePhotoPending = () => {
+      void refreshCount()
+      if (retryTimer) clearTimeout(retryTimer)
+      retryTimer = setTimeout(() => { if (navigator.onLine) void autoSync() }, 8000)
+    }
 
     window.addEventListener('online',  handleOnline)
     window.addEventListener('offline', handleOffline)
@@ -95,6 +105,8 @@ export function OfflineBanner() {
     window.addEventListener('sync-queue:enqueued', handleEnqueue)
     // Evento disparado cuando se cachea una foto que quedó pendiente de subir.
     window.addEventListener('photo-cache:pending', handleEnqueue)
+    // Lo emite el registro cuando una tanda no terminó de subir.
+    window.addEventListener('photo-cache:retry-soon', handlePhotoPending)
 
     // Poll cada 30 s para detectar pendientes en conexiones intermitentes
     const poll = setInterval(() => {
@@ -112,6 +124,8 @@ export function OfflineBanner() {
       window.removeEventListener('offline', handleOffline)
       window.removeEventListener('sync-queue:enqueued', handleEnqueue)
       window.removeEventListener('photo-cache:pending', handleEnqueue)
+      window.removeEventListener('photo-cache:retry-soon', handlePhotoPending)
+      if (retryTimer) clearTimeout(retryTimer)
       clearInterval(poll)
     }
   }, [autoSync, refreshCount])

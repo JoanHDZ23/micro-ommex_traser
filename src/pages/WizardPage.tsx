@@ -11,7 +11,8 @@ import { AudioRecorder } from '../components/AudioRecorder'
 import { CatalogPicker } from '../components/CatalogPicker'
 import { ImageEditor } from '../components/ImageEditor'
 import { Button, ErrorState, LoadingState, Modal, ModalSurface } from '../components/ui'
-import { cachePhoto, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, resetPendingForRetry, uploadPendingInBackground, type CachedPhoto } from '../lib/photo-cache'
+import { cachePhoto, claimForegroundUpload, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, releaseForegroundUpload, resetPendingForRetry, uploadPendingInBackground, type CachedPhoto } from '../lib/photo-cache'
+import { PHOTOS_PER_REQUEST, uploadInChunks, withTimeout } from '../lib/upload-chunks'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { compressImageToBase64 } from '../lib/image-compress'
@@ -906,18 +907,30 @@ export function WizardPage() {
       setFeedback('No se pudieron guardar las fotos en este dispositivo. Revisa el espacio e inténtalo de nuevo.')
       return
     }
-    try {
-      if (targetProduct) {
-        await uploadProductPhotosBatch({ trackingCode, productCode: targetProduct, groupId, comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
-      } else {
-        await uploadPhotosBatch({ trackingCode, groupId, comment, clientTimestamp, mimeType: 'image/jpeg', photos: items })
-      }
-      for (const id of cachedIds) await markAsUploaded(id)
-      await loadOperation()
+    // Subida en tandas pequeñas: cada petición termina rápido y, si una falla,
+    // las demás ya quedaron en el servidor. Las fallidas se reintentan solas.
+    claimForegroundUpload(cachedIds)
+    const r = await uploadInChunks(items, PHOTOS_PER_REQUEST, async (part, start) => {
+        if (targetProduct) {
+          await uploadProductPhotosBatch({ trackingCode, productCode: targetProduct, groupId, comment, clientTimestamp, mimeType: 'image/jpeg', photos: part })
+        } else {
+          await uploadPhotosBatch({ trackingCode, groupId, comment, clientTimestamp, mimeType: 'image/jpeg', photos: part })
+        }
+        for (const id of cachedIds.slice(start, start + part.length)) {
+          try { await markAsUploaded(id) } catch { /* se reconcilia por clientKey */ }
+        }
+        setFeedback(`⏳ Subiendo fotos… ${Math.min(start + part.length, items.length)} de ${items.length}`)
+      }, { isFatal: (err) => err instanceof NetworkError })
+      .finally(() => releaseForegroundUpload(cachedIds))
+    void loadOperation()
+    if (r.failed.length === 0) {
       setFeedback(`✓ ${base64s.length} foto(s) enviada(s)`)
-    } catch (err) {
-      // Sin conexión: las fotos quedan en cache local (visibles y reintentables).
-      setFeedback(err instanceof Error ? err.message : 'Error al enviar las fotos')
+    } else {
+      // Sin conexión o error: las fotos quedan en cache local (visibles) y el
+      // segundo plano las reintenta sin recargar la página.
+      const err = r.error
+      setFeedback(`${r.sent.length > 0 ? `✓ ${r.sent.length} enviada(s). ` : ''}${r.failed.length} quedaron guardadas y se reintentan solas.${err instanceof Error && !(err instanceof NetworkError) && err.message ? ` (${err.message})` : ''}`)
+      try { window.dispatchEvent(new CustomEvent('photo-cache:retry-soon')) } catch { /* noop */ }
     }
   }
 
@@ -1302,8 +1315,13 @@ export function WizardPage() {
     // Guard SÍNCRONO anti doble-envío: `setTraySending(true)` es asíncrono
     // (React agrupa el estado), así que dos toques muy rápidos podían colar dos
     // ejecuciones y duplicar/romper el flujo. El ref corta la segunda al instante.
-    if (sendTrayBusyRef.current) return
+    // Un envío anterior que lleve más de 5 min se da por colgado y no bloquea.
+    if (sendTrayBusyRef.current && Date.now() - sendTrayBusySinceRef.current < 5 * 60_000) {
+      setFeedback('⏳ Aún se están enviando las fotos anteriores…')
+      return
+    }
     sendTrayBusyRef.current = true
+    sendTrayBusySinceRef.current = Date.now()
     setTraySending(true)
     const message = trayMessage.trim()
     const photos = [...captureTray]
@@ -1479,48 +1497,70 @@ export function WizardPage() {
 
     let okCount = 0
     let failed = false
-    for (const g of groups) {
-      const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      const items = g.idxs
-        .map((i) => ({
-          base64Image: photos[i].split(',')[1] ?? '',
-          comment: commentAt(i),
-          clientTimestamp,
-          clientKey: clientKeyByIndex.get(i),
-        }))
-        .filter((it) => it.base64Image)
-      if (items.length === 0) continue
-      try {
+    // El segundo plano no toca estas fotos mientras se suben desde aquí.
+    const claimed = [...cachedByIndex.values()].map((c) => c.id)
+    claimForegroundUpload(claimed)
+    try {
+      for (const g of groups) {
+        // Mismo groupId para toda la tanda del producto: se ve como un álbum
+        // aunque se envíe en varias peticiones pequeñas.
+        const groupId = `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const entries = g.idxs
+          .map((i) => ({
+            i,
+            item: {
+              base64Image: photos[i].split(',')[1] ?? '',
+              comment: commentAt(i),
+              clientTimestamp,
+              clientKey: clientKeyByIndex.get(i),
+            },
+          }))
+          .filter((e) => e.item.base64Image)
+        if (entries.length === 0) continue
         if (g.product) {
-          await ensureProduct(g.product)
-          await uploadProductPhotosBatch({ trackingCode, productCode: g.product, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
-        } else {
-          await uploadPhotosBatch({ trackingCode, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
+          try { await withTimeout(ensureProduct(g.product), 30_000) } catch { /* el batch validará */ }
         }
-        await settle(g.idxs)
-        okCount += g.idxs.length
-        // Opción 10: avanza la barra con las fotos ya confirmadas por el servidor.
-        setTrayUploadProgress((prev) => (prev ? { ...prev, done: Math.min(prev.total, prev.done + g.idxs.length) } : prev))
-      } catch {
-        // Este grupo falló (sin conexión): sus fotos quedan en cache y se
-        // reintentan solas con su producto. Seguimos con los demás grupos.
-        failed = true
+        // Pocas fotos por petición: cada una termina rápido, la barra avanza y
+        // si una falla las demás ya quedaron en el servidor.
+        const r = await uploadInChunks(entries, PHOTOS_PER_REQUEST, async (part) => {
+          const items = part.map((e) => e.item)
+          if (g.product) {
+            await uploadProductPhotosBatch({ trackingCode, productCode: g.product, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
+          } else {
+            await uploadPhotosBatch({ trackingCode, groupId, comment: message, clientTimestamp, mimeType: 'image/jpeg', photos: items })
+          }
+          try { await settle(part.map((e) => e.i)) } catch { /* se reconcilia por clientKey */ }
+          okCount += part.length
+          // Opción 10: avanza la barra con las fotos ya confirmadas por el servidor.
+          setTrayUploadProgress((prev) => (prev ? { ...prev, done: Math.min(prev.total, prev.done + part.length) } : prev))
+        }, { isFatal: (err) => err instanceof NetworkError })
+        // Las que fallaron quedan en el dispositivo y se reintentan solas.
+        if (r.failed.length > 0) failed = true
       }
+    } catch {
+      failed = true
+    } finally {
+      // SIEMPRE se libera el envío: antes un error dejaba "Subiendo…" fijo y
+      // bloqueaba los siguientes envíos hasta recargar la página.
+      releaseForegroundUpload(claimed)
+      setTrayUploadProgress(null)
+      setTraySending(false)
+      sendTrayBusyRef.current = false
+      sendTrayBusySinceRef.current = 0
     }
 
     if (lastProduct) setActiveLbProduct(lastProduct)
-    await loadOperation()
+    void loadOperation()
     const prodCount = groups.filter((g) => g.product).length
     if (failed) {
-      setFeedback('Algunas fotos quedaron guardadas y se reintentarán al reconectar.')
+      setFeedback(`${okCount > 0 ? `✓ ${okCount} enviada(s). ` : ''}Las demás quedaron guardadas y se reintentan solas.`)
+      // Reintento automático en segundo plano (sin recargar la página).
+      try { window.dispatchEvent(new CustomEvent('photo-cache:retry-soon')) } catch { /* noop */ }
     } else if (prodCount > 0) {
       setFeedback(`✓ ${okCount} foto(s) enviada(s)${prodCount > 1 ? ` a ${prodCount} productos` : ''}.`)
     } else {
       setFeedback(`✓ ${okCount} foto(s) enviada(s)`)
     }
-    setTrayUploadProgress(null)
-    setTraySending(false)
-    sendTrayBusyRef.current = false
   }
 
   const isCompleted = operation?.status === 'COMPLETADO'
@@ -1633,6 +1673,7 @@ export function WizardPage() {
   const trayRestoredRef = useRef(false)
   // Guard síncrono para que "Enviar" no se ejecute dos veces en paralelo.
   const sendTrayBusyRef = useRef(false)
+  const sendTrayBusySinceRef = useRef(0)
 
   // Recuerda la última ruta de registro visitada. Si el SO relanza la PWA
   // (start_url '/'), HomePage usa esto para volver al registro en vez de dejar

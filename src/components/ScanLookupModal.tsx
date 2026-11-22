@@ -522,15 +522,25 @@ export function ScanLookupModal() {
         {status === 'done' && !selected && results.length > 1 && (
           <div className="space-y-1.5">
             <p className="text-[11px] font-semibold text-gray-500 uppercase">{results.length} coincidencias · elige el producto</p>
-            {results.map((it) => (
+            {results.map((it) => {
+              // Varias filas con el mismo código (p. ej. la misma orden): "2 de 3".
+              const same = results.filter((x) => normCode(x.code) === normCode(it.code))
+              const pos = same.length > 1 && it.code ? same.indexOf(it) + 1 : 0
+              return (
               <button key={it.rowIndex} type="button" onClick={() => pick(it)}
                 className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-gray-200 hover:bg-emerald-50 text-left">
                 <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-800 truncate">
-                    {it.code || '(sin código)'} <span className="text-[10px] font-normal text-gray-400">· fila {it.rowIndex + 1}</span>
+                  <p className="text-sm font-semibold text-gray-800 break-words">
+                    {it.code || '(sin código)'}
+                    {it.descripcion && normCode(it.descripcion) !== normCode(it.code) && <span className="font-normal text-gray-600"> · {it.descripcion}</span>}
                   </p>
-                  {it.descripcion && <p className="text-[11px] text-gray-500 truncate">{it.descripcion}</p>}
+                  <p className="text-[10px] text-gray-400 flex items-center gap-1.5">
+                    {pos > 0 && (
+                      <span className="px-1.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold">{pos} de {same.length}</span>
+                    )}
+                    fila {it.rowIndex + 1}
+                  </p>
                   {/* Otros datos de la fila, para distinguir filas con el mismo código */}
                   <p className="text-[10px] text-gray-400 truncate">
                     {(it.row ?? []).map((v) => String(v ?? '').trim()).filter((v) => v && normCode(v) !== normCode(it.code) && v !== it.descripcion).slice(0, 4).join(' · ')}
@@ -542,7 +552,8 @@ export function ScanLookupModal() {
                   return q > 0 ? <span className="text-[10px] font-bold text-emerald-700 flex-shrink-0">✓ ×{q}</span> : null
                 })()}
               </button>
-            ))}
+              )
+            })}
           </div>
         )}
 
@@ -604,9 +615,21 @@ export function ScanLookupModal() {
               <div className="px-3 py-2.5 bg-emerald-50 border-b border-emerald-100 flex items-start gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0 mt-0.5" />
                 <div className="min-w-0">
-                  <p className="text-base font-bold text-emerald-900 break-all">{selected.code || '(sin código)'}</p>
-                  {selected.descripcion && <p className="text-xs text-emerald-800">{selected.descripcion}</p>}
-                  <p className="text-[10px] text-emerald-700/80 mt-0.5">Fila {selected.rowIndex + 1} · {fields.length} dato(s)</p>
+                  <p className="text-base font-bold text-emerald-900 break-words">
+                    {selected.code || '(sin código)'}
+                    {selected.descripcion && normCode(selected.descripcion) !== normCode(selected.code) && (
+                      <span className="font-semibold text-emerald-800"> · {selected.descripcion}</span>
+                    )}
+                  </p>
+                  <p className="text-[10px] text-emerald-700/80 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    {(() => {
+                      const same = results.filter((x) => normCode(x.code) === normCode(selected.code))
+                      return same.length > 1 && selected.code
+                        ? <span className="px-1.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold">{same.indexOf(selected) + 1} de {same.length} con este código</span>
+                        : null
+                    })()}
+                    Fila {selected.rowIndex + 1} · {fields.length} dato(s)
+                  </p>
                 </div>
               </div>
               <dl className="divide-y divide-gray-100 max-h-[40vh] overflow-y-auto">

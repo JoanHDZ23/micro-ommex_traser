@@ -16,6 +16,7 @@ import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface
 import { adjustReceived, flushReceived, getReceived, receivedKey, refreshReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { rowMarkKeys, type RowMark } from '../lib/mark-keys'
 import { isSearchActive, markBlockReason } from '../lib/mark-guard'
+import { rowTitle, sameCodePositions } from '../lib/row-title'
 import { resolveScanMethod } from '../lib/scan-method'
 import { appendRows, columnMatch } from '../lib/append-rows'
 import { NotFoundCodesPanel } from './NotFoundCodesPanel'
@@ -422,6 +423,13 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
   }
   // Índice global de una fila (en `rows`), para que la selección sobreviva al filtrado.
   const indexOfRow = (row: string[]) => rows.indexOf(row)
+
+  // Título de cada fila = las DOS columnas elegidas (código + descripción).
+  const titleCol = actions ? actions.codeCol : (typeof codeColumn === 'number' && codeColumn >= 0 ? codeColumn : 0)
+  const titleDescCol = actions && actions.descCol >= 0 && actions.descCol !== titleCol ? actions.descCol : -1
+  // Filas que comparten el mismo código/orden: "2 de 3" para distinguirlas.
+  const sameCode = useMemo(() => sameCodePositions(rows, titleCol), [rows, titleCol])
+  const titleColName = headers[titleCol] || 'código'
   const selectedRows = Array.from(selected).map((i) => rows[i]).filter(Boolean)
 
   return (
@@ -665,12 +673,10 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                 const gIdx = indexOfRow(row)
                 const isSel = selected.has(gIdx)
                 const isMarked = isRowMarked(row, gIdx)
-                // Título de la ficha: columna de código (si hay actions) o la primera columna.
-                const titleCol = actions ? actions.codeCol : 0
-                const title = (row[titleCol] ?? '').trim() || `Fila ${gIdx + 1}`
-                // Descripción destacada: columna de descripción si está configurada.
-                const descCol = actions && actions.descCol >= 0 ? actions.descCol : -1
-                const desc = descCol >= 0 ? (row[descCol] ?? '').trim() : ''
+                // Título de la ficha: las dos columnas elegidas (código · descripción).
+                const t = rowTitle(row, titleCol, titleDescCol)
+                const descCol = titleDescCol
+                const dup = sameCode.get(gIdx)
                 const expected = expectedOf(row)
                 const status = statusOf(row, gIdx)
                 const tint = expected !== null ? COUNT_STYLE[status].row : ''
@@ -692,9 +698,17 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className={`text-sm font-bold text-[var(--color-text)] break-words ${isMarked ? 'line-through decoration-emerald-400/60' : ''}`}>
-                          {title}
+                          {t.code || `Fila ${gIdx + 1}`}
+                          {t.desc && <span className="text-[var(--color-text-2)]"> · {t.desc}</span>}
                         </p>
-                        {desc && <p className="text-xs text-[var(--color-text-2)] mt-0.5 break-words">{desc}</p>}
+                        {dup && (
+                          <p className="mt-1 flex items-center gap-1.5 flex-wrap">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-bold">
+                              Misma {titleColName.toLowerCase()} · {dup.pos} de {dup.total}
+                            </span>
+                            <span className="text-[10px] text-[var(--color-text-3)]">Fila {gIdx + 1}</span>
+                          </p>
+                        )}
                         {/* Resto de campos como pares etiqueta: valor */}
                         <dl className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1">
                           {headers.map((h, ci) => {
@@ -869,6 +883,12 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                           } ${blockReason(gIdx) ? 'opacity-50' : ''}`}>
                           {blockReason(gIdx) && !isMarked ? <Lock className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-4 h-4" />}
                         </button>
+                        {sameCode.get(gIdx) && (
+                          <span title={`Misma ${titleColName.toLowerCase()}: ${sameCode.get(gIdx)!.pos} de ${sameCode.get(gIdx)!.total}`}
+                            className="px-1.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-[9px] font-bold whitespace-nowrap">
+                            {sameCode.get(gIdx)!.pos}/{sameCode.get(gIdx)!.total}
+                          </span>
+                        )}
                         {expected !== null && (
                           <CountBadge marked={markedOf(row, gIdx)} expected={expected} status={status} />
                         )}
