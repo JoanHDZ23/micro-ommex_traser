@@ -35,7 +35,7 @@ export function Layout() {
         onClick={() => openScanLookup(undefined, { camera: resolveScanMethod() === 'camera' })}
         aria-label="Escanear producto"
         title="Escanear producto"
-        className={`fixed right-4 z-[900] w-14 h-14 rounded-full bg-amber-600 text-white shadow-lg shadow-amber-900/20 flex items-center justify-center active:scale-95 transition ${inWizard ? 'bottom-24' : 'bottom-5'}`}
+        className={`fixed right-3 sm:right-5 z-[900] rounded-full bg-amber-600 text-white shadow-lg shadow-amber-900/20 flex items-center justify-center active:scale-95 transition ${inWizard ? 'bottom-24 w-12 h-12' : 'bottom-5 w-14 h-14'}`}
         style={{ marginBottom: 'env(safe-area-inset-bottom)' }}
       >
         <ScanLine className="w-6 h-6" />

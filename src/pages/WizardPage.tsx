@@ -2687,8 +2687,11 @@ export function WizardPage() {
         </div>
       )}
 
-      {/* Chat body */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 chat-surface">
+      {/* Chat body: en pantallas anchas el contenido queda centrado con un
+          ancho cómodo (antes las fotos se estiraban a todo el ancho). El espacio
+          extra abajo evita que el botón flotante "Escanear" tape el último producto. */}
+      <div className="flex-1 min-h-0 overflow-y-auto px-2 py-3 sm:p-4 chat-surface">
+      <div className="mx-auto w-full max-w-3xl space-y-3 pb-20">
 
         {/* Completed actions */}
         {isCompleted && (
@@ -3094,18 +3097,18 @@ export function WizardPage() {
                       {prodSel && <CheckCircle2 className="w-4 h-4 text-white" />}
                     </span>
                   )}
-                  <div className={`w-[92%] chat-bubble-out rounded-lg rounded-tr-none shadow-sm overflow-hidden relative ${prodSel ? 'ring-2 ring-[var(--color-primary)]/40' : ''} ${selectMode ? 'pointer-events-none' : ''}`}>
+                  <div className={`w-[94%] sm:w-[88%] chat-bubble-out rounded-lg rounded-tr-none shadow-sm overflow-hidden relative min-w-0 ${prodSel ? 'ring-2 ring-[var(--color-primary)]/40' : ''} ${selectMode ? 'pointer-events-none' : ''}`}>
                     {/* Photo grid */}
                     {/* Fotos tomadas pendientes de subir (storage temporal → GitHub).
                         Si una foto agotó sus reintentos, se marca "sin enviar" con
                         opción de reintentar, en vez de un spinner infinito. */}
                     {pendingLocal.length > 0 && (
-                      <div className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: pendingLocal.length === 1 ? '1fr' : '1fr 1fr' }}>
+                      <div className={`w-full grid gap-0.5 p-0.5 ${pendingLocal.length === 1 ? 'grid-cols-1' : 'grid-cols-2 sm:grid-cols-4'}`}>
                         {pendingLocal.map((ph) => {
                           const stalled = !ph.uploaded && (ph.uploadAttempts ?? 0) >= 6
                           const processing = ph.uploaded
                           return (
-                            <div key={ph.id} className="aspect-square bg-gray-200 rounded overflow-hidden relative">
+                            <div key={ph.id} className={`${pendingLocal.length === 1 ? 'aspect-[4/3] max-h-72' : 'aspect-square'} bg-gray-200 rounded overflow-hidden relative`}>
                               <img src={ph.dataUrl} className="w-full h-full object-cover" />
                               <div className={`absolute inset-0 flex items-center justify-center ${stalled ? 'bg-red-900/50' : 'bg-black/35'}`}>
                                 {stalled
@@ -3129,9 +3132,9 @@ export function WizardPage() {
 
                     {readyServerPhotos.length > 0 && (
                       <button type="button" onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
-                        className="w-full grid gap-0.5 p-0.5" style={{ gridTemplateColumns: readyServerPhotos.length === 1 ? '1fr' : '1fr 1fr' }}>
+                        className={`w-full grid gap-0.5 p-0.5 ${readyServerPhotos.length === 1 ? 'grid-cols-1' : 'grid-cols-2 sm:grid-cols-4'}`}>
                         {visiblePhotos.map((ph, idx) => (
-                          <div key={idx} className="aspect-square bg-gray-200 rounded overflow-hidden relative">
+                          <div key={idx} className={`${readyServerPhotos.length === 1 ? 'aspect-[4/3] max-h-72' : 'aspect-square'} bg-gray-200 rounded overflow-hidden relative`}>
                             {photoSrc(ph, 400) ? (
                               <img src={photoSrc(ph, 400)!}
                                 className="w-full h-full object-cover" loading="lazy"
@@ -3163,9 +3166,9 @@ export function WizardPage() {
                       {/* Product name — tap to expand/collapse (agregar fotos) */}
                       <button onClick={() => setActiveLbProduct(isActive ? null : product.productCode)}
                         className="text-left w-full">
-                        <span className="text-[13px] font-bold text-[var(--color-primary)]">{product.productCode}</span>
+                        <span className="text-[13px] sm:text-sm font-bold text-[var(--color-primary)] break-words">{product.productCode}</span>
                         {desc && editingProductDesc !== product.productCode && (
-                          <span className="text-[12.5px] text-gray-800 block">{desc}</span>
+                          <span className="text-[12.5px] sm:text-[13px] text-gray-800 block break-words">{desc}</span>
                         )}
                       </button>
                       {/* Edición inline de la descripción/comentario del producto */}
@@ -3212,7 +3215,8 @@ export function WizardPage() {
                     </div>
 
                     {/* Action buttons — barra inferior visible (reubicada desde el flotante top-right) */}
-                    <div className="flex items-center gap-1 px-2.5 pb-2 pt-1 border-t border-gray-200/70">
+                    {/* En pantallas angostas los botones bajan de línea en vez de salirse */}
+                    <div className="flex items-center flex-wrap gap-x-1 gap-y-1.5 px-2.5 pb-2 pt-1.5 border-t border-gray-200/70">
                       <button onClick={() => { setRenamingProduct(product.productCode); setRenameValue(product.productCode) }}
                         title="Editar nombre"
                         className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-gray-600 hover:bg-gray-100">
@@ -3268,7 +3272,7 @@ export function WizardPage() {
                       <div className="px-2.5 pb-2 space-y-2 border-t border-gray-200">
                         {/* Individual photos with delete */}
                         {photos.some((ph) => !isServerPhotoWaitingForLocalPreview(ph)) && (
-                          <div className="grid grid-cols-3 gap-1 pt-2">
+                          <div className="grid grid-cols-3 sm:grid-cols-6 gap-1 pt-2">
                             {photos.map((ph, phIdx) => {
                               if (isServerPhotoWaitingForLocalPreview(ph)) return null
                               return (
@@ -3435,6 +3439,7 @@ export function WizardPage() {
       </section>
     )}
 
+      </div>
       </div>
 
       {/* Bottom input bar — sticky al fondo para que siga visible en móvil */}
