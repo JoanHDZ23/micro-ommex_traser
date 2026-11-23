@@ -3,6 +3,8 @@ import { Camera, Keyboard, ScanLine, X } from 'lucide-react'
 import { LoadingState, ErrorState } from './ui'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { detectHardwareScanner, hardwareScannerKnown, markHardwareScannerSeen } from '../lib/scanner-device'
+import { centerRegion, createReadConfirmer, fitScale, pickBest, pickFormats, type Detected } from '../lib/barcode-scan'
+import { playScanSound } from '../lib/scan-sound'
 
 /**
  * Escáner de código de barras. Usa el BarcodeDetector nativo (Chrome Android)
@@ -60,130 +62,198 @@ export function BarcodeScanner({ onResult, onClose, forceCamera = false }: {
     } catch { /* torch not supported */ }
   }
 
+  // Zoom de la cámara (si el equipo lo permite): acerca códigos pequeños o lejanos.
+  const [zoomCaps, setZoomCaps] = useState<{ min: number; max: number } | null>(null)
+  const [zoom, setZoom] = useState(1)
+  const applyZoom = async (next: number) => {
+    const track = streamRef.current?.getVideoTracks()[0]
+    if (!track || !zoomCaps) return
+    const z = Math.min(zoomCaps.max, Math.max(zoomCaps.min, next))
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: z } as MediaTrackConstraintSet] })
+      setZoom(z)
+    } catch { /* sin zoom */ }
+  }
+  // Destello verde al detectar.
+  const [hit, setHit] = useState(false)
+
   useEffect(() => {
     // La cámara solo se enciende en modo cámara (no en PDA ni mientras se detecta).
     if (mode !== 'camera') return
     let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const confirmer = createReadConfirmer()
+    const canvas = document.createElement('canvas')
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
 
-    const startNative = async () => {
-      const BD = (window as unknown as { BarcodeDetector?: new (opts: { formats: string[] }) => { detect: (src: HTMLVideoElement) => Promise<Array<{ rawValue: string }>> } }).BarcodeDetector
-      if (!BD) return false
-
-      try {
-        const detector = new BD({ formats: ['code_128', 'code_39', 'code_93', 'ean_13', 'ean_8', 'itf', 'codabar', 'upc_a', 'upc_e', 'qr_code', 'data_matrix'] })
-        const stream = await navigator.mediaDevices.getUserMedia({
-          // Mayor resolución + enfoque continuo = código más nítido y lectura
-          // más rápida y precisa.
-          video: {
-            facingMode: 'environment',
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            focusMode: { ideal: 'continuous' },
-          } as MediaTrackConstraints,
-        })
-        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return true }
-        streamRef.current = stream
-        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play() }
-        // Fuerza enfoque continuo si el dispositivo lo soporta (precisión).
-        try {
-          const track = stream.getVideoTracks()[0]
-          const caps = track?.getCapabilities?.() as (MediaTrackCapabilities & Record<string, unknown>) | undefined
-          if (caps && Array.isArray(caps.focusMode) && caps.focusMode.includes('continuous')) {
-            await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as MediaTrackConstraintSet] })
-          }
-        } catch { /* sin soporte: se ignora */ }
-        if (!cancelled) setInitializing(false)
-
-        // Confirmación de doble lectura: solo acepta un código tras leer el MISMO
-        // valor 2 veces seguidas, evitando falsos positivos sin perder velocidad.
-        let lastValue: string | null = null
-        const scanLoop = async () => {
-          if (cancelled || !videoRef.current || videoRef.current.readyState < 2) {
-            if (!cancelled) animRef.current = requestAnimationFrame(() => void scanLoop())
-            return
-          }
-          try {
-            const barcodes = await detector.detect(videoRef.current)
-            const value = barcodes[0]?.rawValue?.trim()
-            if (value && !cancelled) {
-              if (value === lastValue) {
-                setScanning(false)
-                stream.getTracks().forEach((t) => t.stop())
-                streamRef.current = null
-                onResult(value)
-                return
-              }
-              lastValue = value
-            }
-          } catch { /* detection failed this frame */ }
-          if (!cancelled) animRef.current = requestAnimationFrame(() => void scanLoop())
-        }
-        void scanLoop()
-        return true
-      } catch { return false }
+    const stopAll = () => {
+      if (timer) { clearTimeout(timer); timer = null }
+      cancelAnimationFrame(animRef.current)
+      controlsRef.current?.stop()
+      controlsRef.current = null
+      streamRef.current?.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
     }
 
-    const startZxing = async () => {
+    /** Lectura fiable: se apaga la cámara, suena, vibra y se entrega. */
+    const accept = (value: string) => {
+      if (cancelled) return
+      cancelled = true
+      setScanning(false)
+      setHit(true)
+      try { navigator.vibrate?.(40) } catch { /* sin vibración */ }
+      playScanSound('found')
+      stopAll()
+      onResult(value)
+    }
+
+    /** Copia al canvas la zona central (o el cuadro completo), con escala acotada. */
+    const grab = (video: HTMLVideoElement, full: boolean, rotate: boolean): HTMLCanvasElement | null => {
+      if (!ctx || !video.videoWidth) return null
+      const r = full ? { x: 0, y: 0, width: video.videoWidth, height: video.videoHeight } : centerRegion(video.videoWidth, video.videoHeight)
+      const s = fitScale(r.width, r.height, full ? 1280 : 1024)
+      const w = Math.round(r.width * s)
+      const h = Math.round(r.height * s)
+      if (rotate) {
+        // Códigos verticales: se gira 90° (el lector JS solo lee en horizontal).
+        canvas.width = h; canvas.height = w
+        ctx.save()
+        ctx.translate(h / 2, w / 2)
+        ctx.rotate(Math.PI / 2)
+        ctx.drawImage(video, r.x, r.y, r.width, r.height, -w / 2, -h / 2, w, h)
+        ctx.restore()
+      } else {
+        canvas.width = w; canvas.height = h
+        ctx.drawImage(video, r.x, r.y, r.width, r.height, 0, 0, w, h)
+      }
+      return canvas
+    }
+
+    const openStream = async (): Promise<MediaStream> => {
+      const base = {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 },
+      }
       try {
-        const { BrowserMultiFormatReader } = await import('@zxing/browser')
-        const { BarcodeFormat, DecodeHintType } = await import('@zxing/library')
-
-        const hints = new Map()
-        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.CODE_93,
-          BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.ITF,
-          BarcodeFormat.CODABAR, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
-          BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX,
-        ])
-        hints.set(DecodeHintType.TRY_HARDER, true)
-
-        // delayBetweenScanAttempts más bajo = más intentos por segundo (más rápido).
-        const reader = new BrowserMultiFormatReader(hints, { delayBetweenScanAttempts: 60 })
-        if (cancelled || !videoRef.current) return
-
-        // Confirmación de doble lectura para precisión (mismo valor 2 veces).
-        let lastValue: string | null = null
-        const controls = await reader.decodeFromConstraints(
-          { video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 }, focusMode: { ideal: 'continuous' } } as MediaTrackConstraints },
-          videoRef.current,
-          (result) => {
-            if (result && !cancelled) {
-              const value = result.getText().trim()
-              if (value !== lastValue) { lastValue = value; return }
-              setScanning(false)
-              controls.stop()
-              controlsRef.current = null
-              const s = videoRef.current?.srcObject as MediaStream | null
-              s?.getTracks().forEach((t) => t.stop())
-              streamRef.current = null
-              onResult(value)
-            }
-          },
-        )
-        if (cancelled) { controls.stop(); return }
-        controlsRef.current = controls
-        const s = videoRef.current?.srcObject as MediaStream | null
-        if (s) streamRef.current = s
-        if (!cancelled) setInitializing(false)
-      } catch (err) {
-        if (!cancelled) {
-          setInitializing(false)
-          setError(err instanceof Error ? err.message : 'No se pudo acceder a la cámara')
-        }
+        return await navigator.mediaDevices.getUserMedia({ video: { ...base, focusMode: { ideal: 'continuous' } } as MediaTrackConstraints, audio: false })
+      } catch {
+        // Algunos equipos rechazan restricciones avanzadas: se pide lo básico.
+        return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
       }
     }
 
-    const init = async () => {
-      const usedNative = await startNative()
-      if (!usedNative && !cancelled) await startZxing()
+    /** Enfoque, exposición y balance continuos + zoom disponible. */
+    const tuneTrack = async (stream: MediaStream) => {
+      const track = stream.getVideoTracks()[0]
+      if (!track) return
+      try {
+        const caps = (track.getCapabilities?.() ?? {}) as MediaTrackCapabilities & Record<string, unknown>
+        const adv: Record<string, unknown> = {}
+        const has = (k: string, v: string) => Array.isArray(caps[k]) && (caps[k] as string[]).includes(v)
+        if (has('focusMode', 'continuous')) adv.focusMode = 'continuous'
+        if (has('exposureMode', 'continuous')) adv.exposureMode = 'continuous'
+        if (has('whiteBalanceMode', 'continuous')) adv.whiteBalanceMode = 'continuous'
+        if (Object.keys(adv).length) await track.applyConstraints({ advanced: [adv as MediaTrackConstraintSet] })
+        const z = caps.zoom as { min?: number; max?: number } | undefined
+        if (z && typeof z.max === 'number' && z.max > 1) setZoomCaps({ min: z.min ?? 1, max: z.max })
+      } catch { /* sin soporte: se ignora */ }
     }
-    void init()
+
+    type Native = { detect: (src: CanvasImageSource) => Promise<Detected[]> }
+    const makeNative = async (): Promise<Native | null> => {
+      const BD = (window as unknown as {
+        BarcodeDetector?: (new (opts: { formats: string[] }) => Native) & { getSupportedFormats?: () => Promise<string[]> }
+      }).BarcodeDetector
+      if (!BD) return null
+      try {
+        const supported = await BD.getSupportedFormats?.().catch(() => null)
+        return new BD({ formats: pickFormats(supported) })
+      } catch { return null }
+    }
+
+    type Zx = { decodeFromCanvas: (c: HTMLCanvasElement) => { getText: () => string; getBarcodeFormat: () => unknown } }
+    const makeZxing = async (): Promise<{ reader: Zx; formatName: (f: unknown) => string } | null> => {
+      try {
+        const { BrowserMultiFormatReader } = await import('@zxing/browser')
+        const { BarcodeFormat, DecodeHintType } = await import('@zxing/library')
+        const hints = new Map()
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+          BarcodeFormat.CODE_128, BarcodeFormat.CODE_39, BarcodeFormat.CODE_93, BarcodeFormat.CODABAR, BarcodeFormat.ITF,
+          BarcodeFormat.EAN_13, BarcodeFormat.EAN_8, BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
+          BarcodeFormat.QR_CODE, BarcodeFormat.DATA_MATRIX, BarcodeFormat.PDF_417, BarcodeFormat.AZTEC,
+        ])
+        hints.set(DecodeHintType.TRY_HARDER, true)
+        const reader = new BrowserMultiFormatReader(hints) as unknown as Zx
+        return { reader, formatName: (f) => String(BarcodeFormat[f as number] ?? '') }
+      } catch { return null }
+    }
+
+    const start = async () => {
+      try {
+        const stream = await openStream()
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return }
+        streamRef.current = stream
+        const video = videoRef.current
+        if (!video) return
+        video.srcObject = stream
+        await video.play().catch(() => undefined)
+        void tuneTrack(stream)
+
+        const native = await makeNative()
+        const zx = native ? null : await makeZxing()
+        if (!native && !zx) throw new Error('Este navegador no puede leer códigos de barras con la cámara.')
+        if (!cancelled) setInitializing(false)
+
+        // Ciclo de lectura: zona central casi siempre (rápido y preciso) y, cada
+        // pocos intentos, el cuadro completo y la imagen girada (códigos verticales).
+        let n = 0
+        const tick = async () => {
+          if (cancelled) return
+          const v = videoRef.current
+          if (v && v.readyState >= 2 && v.videoWidth) {
+            n++
+            const full = n % 4 === 0
+            try {
+              if (native) {
+                const src = full ? v : grab(v, false, false)
+                const found = src ? await native.detect(src) : []
+                const w = full ? v.videoWidth : canvas.width
+                const h = full ? v.videoHeight : canvas.height
+                const best = pickBest(found, w, h)
+                if (best) {
+                  const ok = confirmer.push(best.rawValue, best.format, Date.now())
+                  if (ok) { accept(ok); return }
+                }
+              } else if (zx) {
+                const c = grab(v, full, n % 3 === 0)
+                if (c) {
+                  try {
+                    const r = zx.reader.decodeFromCanvas(c)
+                    const ok = confirmer.push(r.getText(), zx.formatName(r.getBarcodeFormat()).toLowerCase(), Date.now())
+                    if (ok) { accept(ok); return }
+                  } catch { /* sin código en esta imagen */ }
+                }
+              }
+            } catch { /* falló este cuadro */ }
+          }
+          // Sin solaparse: el siguiente intento empieza al terminar el anterior.
+          if (!cancelled) timer = setTimeout(() => { animRef.current = requestAnimationFrame(() => void tick()) }, native ? 0 : 30)
+        }
+        void tick()
+      } catch (err) {
+        if (!cancelled) {
+          setInitializing(false)
+          setError(err instanceof Error && err.message ? err.message : 'No se pudo acceder a la cámara')
+        }
+      }
+    }
+    void start()
 
     return () => {
       cancelled = true
-      cancelAnimationFrame(animRef.current)
-      controlsRef.current?.stop()
-      streamRef.current?.getTracks().forEach((t) => t.stop())
+      stopAll()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode])
@@ -361,9 +431,22 @@ export function BarcodeScanner({ onResult, onClose, forceCamera = false }: {
       )}
       {!manualInput && !error && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="w-80 h-28 border-2 border-red-400 rounded-lg shadow-[0_0_0_9999px_rgba(0,0,0,0.4)]">
-            {scanning && <div className="absolute inset-0 flex items-center"><div className="w-full h-0.5 bg-red-400 animate-pulse" /></div>}
+          {/* Recuadro: dentro de la zona que se analiza con prioridad (centro del video) */}
+          <div className={`relative w-[82%] max-w-md h-40 border-2 rounded-xl shadow-[0_0_0_9999px_rgba(0,0,0,0.35)] transition-colors ${hit ? 'border-emerald-400' : 'border-red-400'}`}>
+            {scanning && <div className="absolute inset-x-2 top-1/2 h-0.5 bg-red-400/90 animate-pulse" />}
           </div>
+        </div>
+      )}
+      {/* Zoom: acerca códigos pequeños o lejanos (si la cámara lo permite) */}
+      {!manualInput && !error && zoomCaps && (
+        <div className="absolute right-3 top-1/2 -translate-y-1/2 z-10 flex flex-col gap-2">
+          {[1, 2, 3].filter((z) => z <= zoomCaps.max).map((z) => (
+            <button key={z} type="button" onClick={() => void applyZoom(z)}
+              aria-label={`Zoom ${z}x`} aria-pressed={Math.round(zoom) === z}
+              className={`w-10 h-10 rounded-full text-xs font-bold ${Math.round(zoom) === z ? 'bg-white text-black' : 'bg-black/50 text-white border border-white/40'}`}>
+              {z}x
+            </button>
+          ))}
         </div>
       )}
       <div className="absolute bottom-0 left-0 right-0 z-10 p-4 bg-gradient-to-t from-black/70 to-transparent space-y-3">
@@ -379,7 +462,7 @@ export function BarcodeScanner({ onResult, onClose, forceCamera = false }: {
           </div>
         ) : (
           <>
-            <p className="text-white text-xs text-center opacity-80">Coloca el código dentro del recuadro · o léelo con el lector de código de barras</p>
+            <p className="text-white text-xs text-center opacity-80">Coloca el código dentro del recuadro, a 10–20 cm · si está lejos o es pequeño usa el zoom · con poca luz, la linterna</p>
             <button onClick={() => setManualInput(true)} aria-label="Ingresar manualmente" className="w-full py-2.5 rounded-lg bg-white/15 text-white text-sm font-medium border border-white/30 backdrop-blur-sm">Ingresar manualmente</button>
           </>
         )}
