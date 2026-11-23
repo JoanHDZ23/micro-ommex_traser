@@ -121,7 +121,8 @@ export function DbProductSearch({
     const table = getOfflineSheetData(companyIdForReceived, sheetId)
     return searchResultMarkKeys(results, sheetId, table ? { rows: table.rows, codeCol: codeColumn } : undefined)
   }, [results, sheetId, codeColumn, companyIdForReceived])
-  const markOf = (item: SheetSearchItem) => resultMarks.get(item) ?? { code: item.code.trim(), rowKey: '' }
+  // Sin clave calculada, la marca es del código en ESTA tabla (no se comparte con otras).
+  const markOf = (item: SheetSearchItem) => resultMarks.get(item) ?? { code: item.code.trim(), rowKey: sheetId }
   const infoOf = (item: SheetSearchItem) => {
     const m = markOf(item)
     return m.code ? receivedMap.get(receivedKey(m.code, m.rowKey)) : undefined

@@ -571,6 +571,17 @@ export async function adjustProductReceived(
  * consulta (y refresca con el polling) para mostrar la marca a TODOS los
  * empleados, no solo a quien la puso.
  */
+/**
+ * Pasa las marcas antiguas "del código" (compartidas entre tablas) a su tabla,
+ * para que cada tabla tenga su conteo independiente. Idempotente.
+ */
+export async function migrateSheetScopedMarks(companyId: string, defaultSheetId?: string): Promise<{ moved: number; skipped: number }> {
+  return apiRequest<{ moved: number; skipped: number }>('/received/migrate-sheet-scope', {
+    method: 'POST',
+    body: { companyId, ...(defaultSheetId ? { defaultSheetId } : {}) },
+  })
+}
+
 export async function getReceivedProducts(companyId: string, scope = ''): Promise<ReceivedProduct[]> {
   const r = await apiRequest<{ received: ReceivedProduct[] }>(
     `/received?companyId=${encodeURIComponent(companyId)}&scope=${encodeURIComponent(scope)}`,

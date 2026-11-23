@@ -1587,6 +1587,9 @@ export function WizardPage() {
 
   // Suma/resta unidades marcadas. El servidor suma de forma atómica, así dos
   // empleados marcando a la vez no pierden unidades.
+  // Tabla DATA de este registro: las marcas de "recibido" se cuentan en ESA tabla
+  // (independientes de las demás tablas).
+  const receivedSheetId = recordSettings.dbSheetId || getPrimarySheetId(receivedCompanyId) || ''
   const changeReceived = useCallback(async (productCode: string, delta: number) => {
     const cid = operationRef.current?.companyId || getCompanyId()
     if (!cid) return
@@ -3264,7 +3267,7 @@ export function WizardPage() {
                       </button>
                       {/* Recibido con cantidad (compartido por empresa) */}
                       <ReceivedQty
-                        info={receivedMap.get(receivedKey(product.productCode))}
+                        info={receivedMap.get(receivedKey(product.productCode, receivedSheetId))}
                         onChange={(delta) => void changeReceived(product.productCode, delta)}
                       />
                     </div>
@@ -3428,7 +3431,7 @@ export function WizardPage() {
                     )}
                     {/* Recibido con cantidad (compartido por empresa) */}
                     <ReceivedQty
-                      info={receivedMap.get(receivedKey(p.productCode))}
+                      info={receivedMap.get(receivedKey(p.productCode, receivedSheetId))}
                       onChange={(delta) => void changeReceived(p.productCode, delta)}
                     />
                   </div>

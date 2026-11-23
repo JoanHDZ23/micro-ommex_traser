@@ -18,7 +18,8 @@
  * La clave es el código en minúsculas y sin espacios (el servidor compara así).
  */
 import { useEffect, useState } from 'react'
-import { adjustProductReceived, getReceivedProducts, NetworkError, undoReceivedChange } from './api'
+import { adjustProductReceived, getReceivedProducts, migrateSheetScopedMarks, NetworkError, undoReceivedChange } from './api'
+import { sheetScopedRowKey } from './mark-keys'
 
 export interface ReceivedInfo {
   quantity: number
@@ -147,6 +148,31 @@ export function refreshReceived(companyId: string): Promise<void> {
   return inFlight
 }
 
+const MIGRATED_KEY = 'ommex_marks_sheet_scoped_v1:'
+const migrating = new Map<string, Promise<void>>()
+
+/**
+ * Una vez por empresa y equipo: pasa las marcas antiguas "del código" (que se
+ * veían en todas las tablas) a su tabla, en el servidor (atómico y seguro con
+ * varios equipos), y recarga las marcas.
+ */
+export function migrateSheetMarks(companyId: string, defaultSheetId?: string): Promise<void> {
+  if (!companyId) return Promise.resolve()
+  try { if (localStorage.getItem(MIGRATED_KEY + companyId)) return Promise.resolve() } catch { /* sin storage */ }
+  const running = migrating.get(companyId)
+  if (running) return running
+  const p = migrateSheetScopedMarks(companyId, defaultSheetId)
+    .then(async () => {
+      try { localStorage.setItem(MIGRATED_KEY + companyId, String(Date.now())) } catch { /* ignore */ }
+      loadedFor = ''
+      await refreshReceived(companyId)
+    })
+    .catch(() => { /* sin conexión o servidor sin la ruta: se reintenta en otra apertura */ })
+    .finally(() => { migrating.delete(companyId) })
+  migrating.set(companyId, p)
+  return p
+}
+
 export interface AdjustResult {
   quantity: number
   /** Id del cambio en el historial (para DESHACER). Sin conexión no hay. */
@@ -167,6 +193,8 @@ export async function adjustReceivedDetailed(
   delta: number,
   extra: { trackingCode?: string; sheetId?: string; rowKey?: string } = {},
 ): Promise<AdjustResult> {
+  // Misma regla que el servidor: sin fila concreta, la marca es de la tabla.
+  extra = { ...extra, rowKey: sheetScopedRowKey(extra.rowKey, extra.sheetId) }
   const key = receivedKey(code, extra.rowKey ?? '')
   if (!companyId || !key || !delta) return { quantity: map.get(key)?.quantity ?? 0 }
   currentCompany = companyId

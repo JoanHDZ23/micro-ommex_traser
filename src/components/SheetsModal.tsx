@@ -13,7 +13,7 @@ import { BarcodeScanner } from './BarcodeScanner'
 import { ActionMenu, type ActionMenuItem } from './ActionMenu'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
-import { adjustReceived, flushReceived, getReceived, receivedKey, refreshReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
+import { adjustReceived, flushReceived, getReceived, receivedKey, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { rowMarkKeys, type RowMark } from '../lib/mark-keys'
 import { isSearchActive, markBlockReason } from '../lib/mark-guard'
 import { rowTitle, sameCodePositions } from '../lib/row-title'
@@ -252,29 +252,17 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
   )
   const markOf = (gIdx: number) => rowMarks[gIdx] ?? { code: '', rowKey: '' }
 
-  // Migración única: las marcas antiguas (locales, por número de fila) se pasan
-  // al servidor por código y se borran del dispositivo. Solo se suben los
-  // códigos que aún no estaban marcados, para no duplicar cantidades.
-  const migratedRef = useRef(false)
+  // Marcas MUY antiguas guardadas en el dispositivo por número de fila. Antes se
+  // subían solas al servidor al abrir la tabla: si la tabla había cambiado
+  // (filas agregadas o editadas), se marcaban productos que nadie había
+  // seleccionado. Ahora solo se borran del dispositivo; nada se marca solo.
   useEffect(() => {
-    if (!serverMarks || !markKey || migratedRef.current || rows.length === 0) return
-    migratedRef.current = true
-    const oldMarked = loadMarked(markKey)
-    if (oldMarked.size === 0) return
-    const oldQty = loadMarkedQty(markKey)
-    void refreshReceived(companyId!).then(async () => {
-      const keys = rowMarkKeys(rows, codeColumn!, sheetId!)
-      for (const idx of oldMarked) {
-        const m = keys[idx]
-        if (!m?.code || getReceived(m.code, m.rowKey)) continue
-        try { await adjustReceived(companyId!, m.code, Math.max(1, oldQty[idx] ?? 1), { sheetId, rowKey: m.rowKey }) } catch { /* se reintenta en otra apertura */ return }
-      }
-      try {
-        localStorage.removeItem(`ommex_marked_${markKey}`)
-        localStorage.removeItem(`ommex_markedqty_${markKey}`)
-      } catch { /* ignore */ }
-    })
-  }, [serverMarks, markKey, rows, companyId, codeColumn, sheetId])
+    if (!serverMarks || !markKey) return
+    try {
+      localStorage.removeItem(`ommex_marked_${markKey}`)
+      localStorage.removeItem(`ommex_markedqty_${markKey}`)
+    } catch { /* ignore */ }
+  }, [serverMarks, markKey])
 
   const isRowMarked = (_row: string[], gIdx: number): boolean => {
     if (!serverMarks) return marked.has(gIdx)
@@ -1645,7 +1633,7 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     for (const r of rows) if (r.length > width) width = r.length
 
     const enriched = rows.map((row) => {
-      const m = keyByRow.get(row) ?? { code: codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '', rowKey: '' }
+      const m = keyByRow.get(row) ?? { code: codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '', rowKey: meta.id }
       const q = m.code ? (getReceived(m.code, m.rowKey)?.quantity ?? 0) : 0
       const expected = expCol >= 0 ? parseExpectedQty(row[expCol]) : null
       return { row, q, expected, status: rowStatus(q, expected, qtyMode) }

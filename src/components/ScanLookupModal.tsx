@@ -19,14 +19,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, Camera, CheckCircle2, ClipboardList, FolderInput, Loader2, Minus, Package, Plus, ScanLine, Search,
-  Star, Volume2, VolumeX, WifiOff,
+  Volume2, VolumeX, WifiOff,
 } from 'lucide-react'
 import { Modal } from './ui'
 import { NetworkError, apiRequest, searchInSheet, type Operation, type SheetSearchItem } from '../lib/api'
 import { getCompanyId } from '../lib/context'
 import { countStatus, effectiveQtyMode, getDbSettings, getSheetColumns, parseExpectedQty, type CountStatus } from '../lib/db-settings'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
-import { adjustReceivedDetailed, getActiveScope, receivedKey, undoReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
+import { adjustReceivedDetailed, getActiveScope, migrateSheetMarks, receivedKey, undoReceived, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { notifyToast } from '../lib/background-send'
 import { getReceivedHistory, reportNotFoundCode, warmSheetCache, type ReceivedHistoryEntry } from '../lib/api'
 import { normCode, searchResultMarkKeys, type RowMark } from '../lib/mark-keys'
@@ -106,7 +106,10 @@ export function ScanLookupModal() {
 
   // Clave de marca de cada resultado (fila concreta si el código se repite).
   const [marks, setMarks] = useState<Map<SheetSearchItem, RowMark>>(new Map())
-  const selMark: RowMark = selected ? (marks.get(selected) ?? { code: selected.code.trim(), rowKey: '' }) : { code: '', rowKey: '' }
+  // Sin clave calculada, la marca es del código en la DATA principal (nunca compartida con otras tablas).
+  const selMark: RowMark = selected
+    ? (marks.get(selected) ?? { code: selected.code.trim(), rowKey: db?.primarySheetId ?? '' })
+    : { code: '', rowKey: '' }
   const current = selMark.code ? receivedMap.get(receivedKey(selMark.code, selMark.rowKey)) : undefined
   const currentQty = current?.quantity ?? 0
   const scope = useActiveScope(companyId)
@@ -137,6 +140,8 @@ export function ScanLookupModal() {
   useEffect(() => {
     const warm = () => {
       const cfg = getDbSettings(companyId)
+      // Una vez: separa por tabla las marcas antiguas que se veían en todas las tablas.
+      if (companyId && navigator.onLine) void migrateSheetMarks(companyId, cfg.primarySheetId)
       if (companyId && cfg.primarySheetId && navigator.onLine) {
         void warmSheetCache(cfg.primarySheetId, companyId, { maxAgeMs: COPY_MAX_AGE_MS })
       }
@@ -202,8 +207,8 @@ export function ScanLookupModal() {
       if (seq !== searchSeq.current) return
       setStatus('error')
       setErrorMsg(err instanceof NetworkError
-        ? 'No se pudo consultar la DATA: conexión lenta o sin señal.'
-        : 'No se pudo consultar la DATA en este momento.')
+        ? 'No se pudo buscar: conexión lenta o sin señal.'
+        : 'No se pudo buscar el producto en este momento.')
     }
   }, [companyId])
 
@@ -282,9 +287,10 @@ export function ScanLookupModal() {
       const exp = expected !== null ? ` de ${expected}` : ''
       // "Deshacer" revierte este cambio en el servidor (respeta lo que otros marcaron después).
       const historyId = r.historyId
+      // Solo se avisa si se guardó (sin nombres de tablas ni de recepciones).
       notifyToast('success',
-        target > 0 ? `Marcado: ${code}` : `Desmarcado: ${code}`,
-        `${target > 0 ? `${pieces ? 'Piezas' : 'Cantidad'}: ${target}${exp}` : 'Quitado del conteo'}${scope.id ? ` · ${scope.name}` : ''}`,
+        target > 0 ? 'Guardado' : 'Marca quitada',
+        target > 0 ? `${code} · ${target}${exp} ${pieces ? (target === 1 ? 'pieza' : 'piezas') : 'unidad(es)'}` : code,
         undefined,
         historyId
           ? {
@@ -299,6 +305,7 @@ export function ScanLookupModal() {
       close()
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'No se pudo guardar la marca.')
+      notifyToast('error', 'No se guardó', err instanceof Error && err.message ? err.message : 'Revisa la conexión e intenta de nuevo.')
     } finally {
       setSaving(false)
     }
@@ -487,11 +494,6 @@ export function ScanLookupModal() {
         {code && (
           <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
             <span className="font-mono text-sm font-semibold text-gray-800 bg-gray-100 px-2 py-1 rounded break-all">{code}</span>
-            {db?.primarySheetName && (
-              <span className="inline-flex items-center gap-1 truncate">
-                <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> {db.primarySheetName}
-              </span>
-            )}
           </div>
         )}
 
@@ -503,7 +505,7 @@ export function ScanLookupModal() {
             <p className="text-sm font-semibold text-gray-700">
               {effectiveMethod === 'camera' ? 'Escanea con la cámara' : 'Apunta y presiona el gatillo SCAN'}
             </p>
-            <p className="text-xs max-w-xs">El producto se busca en la DATA principal{db?.primarySheetName ? ` (${db.primarySheetName})` : ''} y suena al encontrarlo.</p>
+            <p className="text-xs max-w-xs">El producto se busca y suena al encontrarlo.</p>
             {effectiveMethod === 'camera' && (
               <button type="button" onClick={() => setCameraOpen(true)}
                 className="mt-1 px-4 py-2 rounded-xl bg-amber-600 text-white text-sm font-semibold inline-flex items-center gap-2">
@@ -554,7 +556,7 @@ export function ScanLookupModal() {
 
         {status === 'loading' && (
           <div className="flex items-center gap-2 text-xs text-gray-500 py-4 justify-center">
-            <Loader2 className="w-4 h-4 animate-spin" /> Buscando en la DATA…
+            <Loader2 className="w-4 h-4 animate-spin" /> Buscando…
           </div>
         )}
 
@@ -571,7 +573,7 @@ export function ScanLookupModal() {
         {status === 'done' && results.length === 0 && (
           <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 text-red-700 text-xs">
             <Package className="w-4 h-4 flex-shrink-0" />
-            <span>No se encontró “{code}” en la DATA principal. Quedó en la lista de <b>códigos no encontrados</b> (Base de datos).</span>
+            <span>No se encontró “{code}”. Quedó registrado como código no encontrado.</span>
           </div>
         )}
 
