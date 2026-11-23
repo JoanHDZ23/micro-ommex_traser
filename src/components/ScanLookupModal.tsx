@@ -40,6 +40,7 @@ import {
 } from '../lib/scan-lookup'
 import { useTracerFeatures } from '../lib/tracer-features'
 import { isSameDbProduct } from '../lib/product-variant'
+import { usePdaScanner } from '../hooks/usePdaScanner'
 
 type Status = 'idle' | 'loading' | 'done' | 'error' | 'no-data'
 
@@ -84,30 +85,6 @@ export function ScanLookupModal() {
   const effectiveMethod = resolveScanMethod(scanMethod)
   const searchSeq = useRef(0)
   const manualRef = useRef<HTMLInputElement | null>(null)
-  // false = el campo no abre el teclado (espera el gatillo SCAN); se activa al tocarlo.
-  const [kbd, setKbd] = useState(false)
-  // Texto insertado de golpe en el campo (PDA en modo "llenar campo"/IME): se busca solo.
-  const bulkTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const onManualChange = (next: string) => {
-    const grew = next.length - manual.length
-    setManual(next)
-    if (bulkTimer.current) { clearTimeout(bulkTimer.current); bulkTimer.current = null }
-    if (grew >= 3 || /[\r\n]/.test(next)) {
-      bulkTimer.current = setTimeout(() => {
-        bulkTimer.current = null
-        const v = (manualRef.current?.value ?? next).replace(/[\r\n\t]+/g, '').trim()
-        if (v.length < 3) return
-        // Igual que el gatillo: el mismo código suma una unidad.
-        if (selected && normCode(selected.code) === normCode(v)) {
-          setManual('')
-          changeQty(qty + 1)
-          playScanSound('found')
-          return
-        }
-        void runLookup(v)
-      }, 150)
-    }
-  }
 
   // Registro (operación) al que traer el producto.
   const location = useLocation()
@@ -230,9 +207,9 @@ export function ScanLookupModal() {
     }
   }, [companyId])
 
-  // Lectura del escáner: respaldo global (cerrado) o, con el modal abierto,
-  // por encima de la página para seguir escaneando aquí.
-  useHardwareScanner((scanned) => {
+  // Código leído (gatillo SCAN, ráfaga, Fill/Input o pegado): el mismo producto
+  // suma una unidad; otro código se busca en la DATA principal.
+  const handleScan = (scanned: string) => {
     const clean = scanned.trim()
     if (!clean) return
     if (open && selected && selected.code.trim().toLowerCase() === clean.toLowerCase()) {
@@ -242,7 +219,24 @@ export function ScanLookupModal() {
     }
     setOpen(true)
     void runLookup(clean)
-  }, { priority: open ? SCAN_PRIORITY.modal : SCAN_PRIORITY.global })
+  }
+
+  // Modal CERRADO: respaldo global, cualquier lectura abre el modal.
+  useHardwareScanner(handleScan, { enabled: !open, priority: SCAN_PRIORITY.global })
+
+  // Modal ABIERTO: gatillo, ráfaga y Fill/Input en el campo (ver usePdaScanner).
+  const pda = usePdaScanner({
+    enabled: open && !cameraOpen,
+    captureInput: sinkEnabled(sinkMode),
+    inputRef: manualRef,
+    value: manual,
+    setValue: setManual,
+    onCode: (c, source) => {
+      // Búsqueda escrita a mano (Buscar/Enter): se busca tal cual.
+      if (source === 'manual') { void runLookup(c); return }
+      handleScan(c)
+    },
+  })
 
   // Apertura a mano (botón flotante "Escanear" o desde otra vista), con o sin código.
   useEffect(() => {
@@ -254,11 +248,7 @@ export function ScanLookupModal() {
       searchSeq.current++
       setStatus('idle'); setCode(''); setSelected(null); setResults([]); setPickOp(false)
       if (d?.camera) { setCameraOpen(true); return }
-      // Se enfoca siempre para recibir la lectura de PDAs que "escriben" en el
-      // campo. Con el gatillo SCAN va sin teclado en pantalla (inputmode none)
-      // hasta que el usuario toca el campo para escribir.
-      setKbd(false)
-      setTimeout(() => manualRef.current?.focus(), 60)
+      // El foco (sin teclado en pantalla) lo pone usePdaScanner al abrir.
     }
     window.addEventListener(SCAN_LOOKUP_EVENT, onOpen)
     return () => window.removeEventListener(SCAN_LOOKUP_EVENT, onOpen)
@@ -447,22 +437,26 @@ export function ScanLookupModal() {
         {/* Buscar a mano (también recibe la lectura de la PDA) + sonido */}
         <form
           className="flex items-center gap-2"
-          onSubmit={(e) => { e.preventDefault(); void runLookup(manual) }}
+          onSubmit={(e) => { e.preventDefault(); pda.submit(manual) }}
         >
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            {pda.phase !== 'idle'
+              ? <ScanLine className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-amber-600 animate-pulse" />
+              : <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />}
             <input
               ref={manualRef}
               value={manual}
-              onChange={(e) => onManualChange(e.target.value)}
-              inputMode={effectiveMethod === 'pda' && !kbd ? 'none' : 'text'}
-              onPointerDown={() => setKbd(true)}
+              {...pda.inputProps}
               // Una lectura del gatillo aquí se toma como código escaneado.
               data-scan-capture=""
               enterKeyHint="search"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               placeholder="Escanea con SCAN o escribe código / nombre"
               aria-label="Código o nombre a buscar"
-              className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+              className={`w-full pl-9 pr-3 py-2.5 rounded-xl border text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/30 ${pda.phase !== 'idle' ? 'border-amber-400 ring-2 ring-amber-300/50' : 'border-gray-200'}`}
             />
           </div>
           <button type="submit" disabled={!manual.trim()}
@@ -482,6 +476,14 @@ export function ScanLookupModal() {
           </button>
         </form>
 
+        {/* Feedback inmediato del gatillo SCAN */}
+        {pda.phase !== 'idle' && (
+          <p role="status" className="flex items-center gap-1.5 text-xs font-semibold text-amber-700">
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+            {pda.phase === 'pressed' ? 'Escaneando…' : 'Leyendo código…'}
+          </p>
+        )}
+
         {code && (
           <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
             <span className="font-mono text-sm font-semibold text-gray-800 bg-gray-100 px-2 py-1 rounded break-all">{code}</span>
@@ -495,7 +497,7 @@ export function ScanLookupModal() {
 
         {status === 'idle' && (
           <div className="flex flex-col items-center gap-2 py-6 text-center text-gray-500">
-            <div className="w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center">
+            <div className={`w-14 h-14 rounded-2xl bg-amber-50 flex items-center justify-center ${pda.phase !== 'idle' ? 'ring-4 ring-amber-300 animate-pulse' : ''}`}>
               <ScanLine className="w-7 h-7 text-amber-600" />
             </div>
             <p className="text-sm font-semibold text-gray-700">

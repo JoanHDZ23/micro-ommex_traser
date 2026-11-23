@@ -220,6 +220,8 @@ export const SCAN_PRIORITY = {
   camera: 35,
   /** Buscador en la DATA (también cuando se abre dentro de la cámara). */
   search: 40,
+  /** Modal "Lector de la PDA" abierto: por encima de la tabla y la página de atrás. */
+  lookup: 90,
   /** Escáner de cámara de código de barras abierto. */
   scanner: 100,
 } as const
