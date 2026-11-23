@@ -1,12 +1,30 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+/** Versión de este build: la app la compara con /version.json para avisar de una nueva. */
+const APP_VERSION = new Date().toISOString()
+
+/** Escribe /version.json en el build (no lo precacha el Service Worker). */
+function versionFile(): Plugin {
+  return {
+    name: 'ommex-version-file',
+    apply: 'build',
+    generateBundle() {
+      this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ version: APP_VERSION }) })
+    },
+  }
+}
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
   plugins: [
     react(),
     tailwindcss(),
+    versionFile(),
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: false,           // lo hacemos manualmente en main.tsx

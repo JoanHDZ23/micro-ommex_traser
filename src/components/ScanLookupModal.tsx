@@ -41,6 +41,7 @@ import {
 import { useTracerFeatures } from '../lib/tracer-features'
 import { isSameDbProduct } from '../lib/product-variant'
 import { usePdaScanner } from '../hooks/usePdaScanner'
+import { refreshCountSessions, useCountSession } from '../lib/count-sessions'
 
 type Status = 'idle' | 'loading' | 'done' | 'error' | 'no-data'
 
@@ -100,6 +101,9 @@ export function ScanLookupModal() {
   const companyId = getCompanyId()
   const receivedMap = useReceivedMap(companyId)
   const db = useMemo(() => (open ? getDbSettings(companyId) : null), [open, companyId])
+  // Conteo de la DATA principal cerrado → no se puede marcar.
+  const countClosed = useCountSession(open ? companyId : '', db?.primarySheetId)?.status === 'closed'
+  useEffect(() => { if (open && companyId) void refreshCountSessions(companyId) }, [open, companyId])
   // true cuando el usuario cambió la cantidad (o escaneó otra unidad): desde
   // entonces no se pisa con la cantidad ya marcada que llegue del servidor.
   const [qtyTouched, setQtyTouched] = useState(false)
@@ -417,14 +421,17 @@ export function ScanLookupModal() {
       footer={selected?.code && !pickOp ? (
         <div className="space-y-2">
           {saveError && <p role="alert" className="text-xs text-red-600">{saveError}</p>}
+          {countClosed && (
+            <p role="status" className="text-xs text-red-700">El conteo está cerrado: no se puede marcar hasta abrirlo en Base de datos.</p>
+          )}
           <div className="flex items-center gap-2">
             {currentQty > 0 && (
-              <button type="button" onClick={() => void save(0)} disabled={busy}
+              <button type="button" onClick={() => void save(0)} disabled={busy || countClosed}
                 className="px-3 py-2.5 rounded-xl border border-red-200 text-red-600 text-sm font-medium disabled:opacity-50">
                 Desmarcar
               </button>
             )}
-            <button type="button" onClick={() => void save(qty)} disabled={busy || qty < 1}
+            <button type="button" onClick={() => void save(qty)} disabled={busy || qty < 1 || countClosed}
               className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
               {currentQty > 0 ? `Guardar cantidad (${qty})` : `Marcar (${qty})`}

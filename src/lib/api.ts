@@ -582,6 +582,29 @@ export async function migrateSheetScopedMarks(companyId: string, defaultSheetId?
   })
 }
 
+/** Estado del conteo de una tabla (sin sesión guardada = abierto). */
+export interface CountSession {
+  sheetId: string
+  status: 'open' | 'closed'
+  openedBy?: string
+  openedAt?: string
+  closedBy?: string
+  closedAt?: string
+}
+
+export async function getCountSessions(companyId: string): Promise<CountSession[]> {
+  const r = await apiRequest<{ sessions: CountSession[] }>(`/received/count-sessions?companyId=${encodeURIComponent(companyId)}`)
+  return r.sessions ?? []
+}
+
+export async function setCountSession(companyId: string, sheetId: string, action: 'open' | 'close'): Promise<CountSession> {
+  const r = await apiRequest<{ session: CountSession }>('/received/count-sessions', {
+    method: 'POST',
+    body: { companyId, sheetId, action },
+  })
+  return r.session
+}
+
 export async function getReceivedProducts(companyId: string, scope = ''): Promise<ReceivedProduct[]> {
   const r = await apiRequest<{ received: ReceivedProduct[] }>(
     `/received?companyId=${encodeURIComponent(companyId)}&scope=${encodeURIComponent(scope)}`,

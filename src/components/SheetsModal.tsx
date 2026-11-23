@@ -16,10 +16,14 @@ import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface
 import { adjustReceived, flushReceived, getReceived, receivedKey, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { rowMarkKeys, type RowMark } from '../lib/mark-keys'
 import { isSearchActive, markBlockReason } from '../lib/mark-guard'
+import { changeCountSession, refreshCountSessions, useCountSession } from '../lib/count-sessions'
+import { countPendingMarks, requestSyncSoon, usePendingMarks } from '../lib/pending-marks'
+import { codeColumnIssues, codeInTable, guessCodeColumn } from '../lib/table-checks'
 import { rowTitle, sameCodePositions } from '../lib/row-title'
 import { resolveScanMethod } from '../lib/scan-method'
-import { appendRows, columnMatch } from '../lib/append-rows'
+import { appendRows, columnMatch, normKey } from '../lib/append-rows'
 import { NotFoundCodesPanel } from './NotFoundCodesPanel'
+import { MarksReviewPanel } from './MarksReviewPanel'
 import { OfflineDataStatus } from './OfflineDataStatus'
 import { buildStyledXlsx, downloadBlob } from '../lib/xlsx-styled'
 import {
@@ -166,7 +170,7 @@ function PiecesBadge({ pieces }: { pieces: number }) {
   )
 }
 
-type StatusFilter = 'all' | 'pending' | 'partial' | 'over' | 'complete'
+type StatusFilter = 'all' | 'pending' | 'partial' | 'over' | 'complete' | 'mine'
 
 function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, sheetId, codeColumn, expectedColumn, qtyMode, filteredRowsRef }: DataTableProps) {
   const [filterCol, setFilterCol] = useState<number>(-1) // -1 = todas (filtro global)
@@ -178,7 +182,15 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
   // Aviso "presiona el gatillo SCAN" cuando el método del equipo es la PDA.
   const [scanHint, setScanHint] = useState(false)
   // Lector físico: un código leído filtra la tabla (igual que el escáner de cámara).
-  useHardwareScanner((code) => { setScanHint(false); setFilterText(code.trim()) }, { priority: SCAN_PRIORITY.table })
+  // Código escaneado que NO está en esta tabla: se avisa (no se busca en otra).
+  const [scanMiss, setScanMiss] = useState<string | null>(null)
+  const applyScan = (raw: string) => {
+    const code = raw.trim()
+    setScanHint(false)
+    setFilterText(code)
+    setScanMiss(code && !codeInTable(rows, code, typeof codeColumn === 'number' ? codeColumn : -1) ? code : null)
+  }
+  useHardwareScanner(applyScan, { priority: SCAN_PRIORITY.table })
   const onScanClick = () => {
     if (resolveScanMethod() === 'camera') { setScanning(true); return }
     setScanHint(true)
@@ -251,6 +263,36 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
     [serverMarks, rows, codeColumn, sheetId],
   )
   const markOf = (gIdx: number) => rowMarks[gIdx] ?? { code: '', rowKey: '' }
+  // Quién y cuándo marcó la fila (auditoría visible).
+  const markInfoOf = (gIdx: number) => {
+    if (!serverMarks) return undefined
+    const m = markOf(gIdx)
+    return m.code ? receivedMap.get(receivedKey(m.code, m.rowKey)) : undefined
+  }
+  const me = getOperatorName().trim().toLowerCase()
+  const markedByMe = (gIdx: number) => {
+    const info = markInfoOf(gIdx)
+    return Boolean(info && me && (info.receivedBy ?? '').trim().toLowerCase() === me)
+  }
+  const mineCount = serverMarks && me ? rows.reduce((n, _r, i) => n + (markedByMe(i) ? 1 : 0), 0) : 0
+
+  // Conteo por tabla: cerrado = no se puede marcar.
+  const countSession = useCountSession(serverMarks ? companyId! : '', serverMarks ? sheetId : undefined)
+  const countClosed = countSession?.status === 'closed'
+  // Al abrir la tabla se trae el estado actual (otro equipo pudo cerrarlo).
+  useEffect(() => { if (serverMarks && companyId) void refreshCountSessions(companyId) }, [serverMarks, companyId, sheetId])
+  const [countBusy, setCountBusy] = useState(false)
+  // Marcas hechas sin conexión que aún no llegaron al servidor.
+  const pendingMarks = usePendingMarks()
+  const toggleCount = async () => {
+    if (!serverMarks || !sheetId) return
+    const action = countClosed ? 'open' : 'close'
+    if (action === 'close' && !window.confirm('¿Cerrar el conteo de esta tabla? Nadie podrá marcar hasta que se vuelva a abrir.')) return
+    setCountBusy(true); setMarkError(null)
+    try { await changeCountSession(companyId!, sheetId, action) }
+    catch (e) { setMarkError(e instanceof Error && e.message ? e.message : 'No se pudo cambiar el conteo.') }
+    finally { setCountBusy(false) }
+  }
 
   // Marcas MUY antiguas guardadas en el dispositivo por número de fila. Antes se
   // subían solas al servidor al abrir la tabla: si la tabla había cambiado
@@ -284,7 +326,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
   // Solo se marca lo que se escaneó o buscó (y, con marcas del servidor, si la fila tiene código).
   const searchActive = isSearchActive(filterText, columnFilters)
   const blockReason = (gIdx: number) =>
-    markBlockReason({ searchActive, serverMarks, hasCode: Boolean(markOf(gIdx).code) })
+    markBlockReason({ searchActive, serverMarks, hasCode: Boolean(markOf(gIdx).code), closed: countClosed })
   const guard = (gIdx: number): boolean => {
     const reason = blockReason(gIdx)
     if (reason) { setMarkError(reason); return false }
@@ -366,12 +408,15 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
 
   const filtered = useMemo(() => {
     const q = filterText.trim().toLowerCase()
-    const byStatus = showStatus && statusFilter !== 'all'
+    const byMine = statusFilter === 'mine'
+    const byStatus = showStatus && statusFilter !== 'all' && !byMine
     // Sin ningún filtro activo → todas las filas
-    if (!q && activeColumnFilters.length === 0 && !byStatus) return rows
+    if (!q && activeColumnFilters.length === 0 && !byStatus && !byMine) return rows
     return rows.filter((row, idx) => {
       // 0) Estado del conteo (pendientes / incompletos / sobrantes / completos)
       if (byStatus && statusOf(row, idx) !== statusFilter) return false
+      // 0b) Solo lo que marqué yo
+      if (byMine && !markedByMe(idx)) return false
       // 1) Todos los filtros por columna deben cumplirse (AND, estilo Excel)
       for (const f of activeColumnFilters) {
         if (!(row[f.col] ?? '').toLowerCase().includes(f.text)) return false
@@ -430,7 +475,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
       {/* Escáner: al detectar un código, lo coloca en el filtro de texto */}
       {scanning && (
         <BarcodeScanner
-          onResult={(code) => { setScanning(false); setFilterText(code) }}
+          onResult={(code) => { setScanning(false); applyScan(code) }}
           onClose={() => setScanning(false)}
         />
       )}
@@ -542,6 +587,23 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
         </div>
       )}
 
+      {scanMiss && scanMiss === filterText.trim() && (
+        <div role="alert" className="flex items-center gap-2 p-2.5 rounded-[var(--radius-lg)] bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span className="flex-1">El código <b className="font-mono">{scanMiss}</b> no está en esta tabla. Revisa que sea la tabla correcta.</span>
+          <button type="button" onClick={() => setScanMiss(null)} aria-label="Cerrar aviso" className="flex-shrink-0">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {countClosed && (
+        <p className="flex items-center gap-1.5 text-[11px] text-red-700 px-1">
+          <Lock className="w-3 h-3 flex-shrink-0" />
+          Conteo cerrado{countSession?.closedBy ? ` por ${countSession.closedBy}` : ''}: no se puede marcar hasta abrirlo.
+        </p>
+      )}
+
       {/* Marcar exige escanear o buscar antes */}
       {!searchActive && rows.length > 0 && (
         <p className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-3)] px-1">
@@ -612,9 +674,34 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
       )}
 
       {/* ── Resumen del estado (toca para filtrar) ── */}
-      {showStatus && (
+      {(showStatus || serverMarks) && (
         <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filtrar por estado">
-          {((pieces
+          {/* Estado del conteo de esta tabla (abrir / cerrar) */}
+          {serverMarks && (
+            <button type="button" onClick={() => void toggleCount()} disabled={countBusy}
+              title={countClosed
+                ? `Cerrado${countSession?.closedBy ? ` por ${countSession.closedBy}` : ''}${countSession?.closedAt ? ` · ${new Date(countSession.closedAt).toLocaleString('es-CO')}` : ''}. Toca para abrirlo.`
+                : 'Conteo abierto. Toca para cerrarlo.'}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-semibold disabled:opacity-50 ${countClosed ? 'bg-red-50 border-red-200 text-red-700' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+              {countClosed ? <Lock className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
+              {countClosed ? 'Conteo cerrado · Abrir' : 'Conteo abierto · Cerrar'}
+            </button>
+          )}
+          {serverMarks && pendingMarks > 0 && (
+            <button type="button" onClick={requestSyncSoon}
+              title="Marcas hechas sin conexión. Se envían solas al volver la señal; toca para reintentar."
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] font-semibold bg-amber-50 border-amber-300 text-amber-800">
+              <RefreshCw className="w-3 h-3" /> {pendingMarks} marca(s) sin enviar
+            </button>
+          )}
+          {serverMarks && me && (
+            <button type="button" onClick={() => setStatusFilter(statusFilter === 'mine' ? 'all' : 'mine')}
+              aria-pressed={statusFilter === 'mine'}
+              className={`px-2.5 py-1 rounded-full border text-[11px] font-semibold bg-sky-50 border-sky-200 text-sky-700 ${statusFilter === 'mine' ? 'ring-2 ring-[var(--color-primary)]/50' : 'opacity-80'}`}>
+              Marcados por mí ({mineCount})
+            </button>
+          )}
+          {showStatus && ((pieces
             ? [
               ['all', `Todos (${rows.length})`, 'bg-[var(--color-surface)] text-[var(--color-text-2)] border-[var(--color-border)]'],
               ['pending', `Pendientes (${statusCounts.pending})`, COUNT_STYLE.pending.badge],
@@ -711,6 +798,13 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                             )
                           })}
                         </dl>
+                        {/* Auditoría: quién marcó y cuándo */}
+                        {isMarked && markInfoOf(gIdx)?.receivedBy && (
+                          <p className="mt-1.5 text-[10px] text-emerald-700">
+                            ✓ Marcó {markInfoOf(gIdx)!.receivedBy}
+                            {markInfoOf(gIdx)!.receivedAt && ` · ${new Date(markInfoOf(gIdx)!.receivedAt).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`}
+                          </p>
+                        )}
                       </div>
                       {/* Marcar como listo + contador de cantidad encontrada */}
                       <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
@@ -889,6 +983,12 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                             <button onClick={() => bumpQtyRow(row, gIdx, 1)} aria-label="Más"
                               className="w-4 h-4 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-xs font-bold leading-none">+</button>
                           </div>
+                        )}
+                        {isMarked && markInfoOf(gIdx)?.receivedBy && (
+                          <span className="max-w-[5.5rem] truncate text-[9px] text-emerald-700"
+                            title={`Marcó ${markInfoOf(gIdx)!.receivedBy}${markInfoOf(gIdx)!.receivedAt ? ` · ${new Date(markInfoOf(gIdx)!.receivedAt).toLocaleString('es-CO')}` : ''}`}>
+                            {markInfoOf(gIdx)!.receivedBy}
+                          </span>
                         )}
                       </div>
                     </td>
@@ -1617,6 +1717,12 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
     /** Tabla completa cuando `rows` es solo una parte (lo filtrado). */
     fullRowsForKeys?: string[][],
   ): Promise<number> => {
+    // Marcas hechas sin conexión que aún no llegaron: el Excel saldría sin ellas.
+    const queued = await countPendingMarks()
+    if (queued > 0) {
+      requestSyncSoon()
+      throw new Error(`Hay ${queued} marca(s) sin enviar. Conéctate y espera a que se envíen antes de descargar.`)
+    }
     // Filas MARCADAS en la recepción activa (compartidas por la empresa, por código).
     await flushReceived(companyId)
     const cols = getSheetColumns(companyId, meta.id)
@@ -2153,6 +2259,9 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
             {/* Códigos escaneados que no estaban en la DATA (se oculta si no hay) */}
             <NotFoundCodesPanel companyId={companyId} />
 
+            {/* Revisión diaria: marcas sin tabla, de filas que ya no existen o sobrantes */}
+            <MarksReviewPanel companyId={companyId} sheets={sheets} />
+
             {/* ── Pestañas: tus tablas / importar un documento ── */}
             <div role="tablist" aria-label="Base de datos" className="grid grid-cols-2 gap-1 p-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)]">
               {([
@@ -2257,6 +2366,31 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
                         Agregar las columnas nuevas al final
                       </label>
                       <p className="text-[10px] text-[var(--color-text-3)]">Las filas se agregan al final; las marcas que ya tiene la tabla no cambian.</p>
+                    </div>
+                  )
+                })()}
+
+                {/* Revisión del documento: códigos repetidos o vacíos antes de guardar */}
+                {(() => {
+                  const target = importMode === 'append' ? sheets.find((s) => s.id === appendTargetId) : undefined
+                  let codeIdx = guessCodeColumn(preview.headers)
+                  if (target) {
+                    const name = target.columns?.[getSheetColumns(companyId, target.id).codeColumn] ?? ''
+                    codeIdx = preview.headers.findIndex((h) => normKey(h) === normKey(name))
+                  }
+                  if (codeIdx < 0) return null
+                  const issues = codeColumnIssues(preview.rows, codeIdx)
+                  if (issues.duplicates === 0 && issues.empty === 0) return null
+                  return (
+                    <div role="alert" className="flex items-start gap-2 p-3 rounded-[var(--radius-lg)] bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+                      <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <p className="font-semibold">Revisa la columna “{preview.headers[codeIdx] || `Columna ${codeIdx + 1}`}” antes de guardar:</p>
+                        {issues.duplicates > 0 && (
+                          <p>{issues.duplicates} fila(s) con código repetido{issues.duplicateCodes.length ? ` (${issues.duplicateCodes.join(', ')}${issues.duplicates > issues.duplicateCodes.length ? '…' : ''})` : ''}. Cada fila se marcará por separado.</p>
+                        )}
+                        {issues.empty > 0 && <p>{issues.empty} fila(s) sin código: no se podrán marcar ni escanear.</p>}
+                      </div>
                     </div>
                   )
                 })()}

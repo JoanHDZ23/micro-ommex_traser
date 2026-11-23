@@ -6,6 +6,7 @@ import { openScanLookup } from '../lib/scan-lookup'
 import { resolveScanMethod } from '../lib/scan-method'
 import { getSinkMode, installScanSink, sinkEnabled, subscribeSinkMode } from '../lib/scan-sink'
 import { OfflineBanner } from './OfflineBanner'
+import { UpdateBanner } from './UpdateBanner'
 import { ScanLookupModal } from './ScanLookupModal'
 
 export function Layout() {
@@ -33,6 +34,7 @@ export function Layout() {
 
   return (
     <div className="app-shell flex flex-col">
+      <UpdateBanner />
       <OfflineBanner />
       <main className="app-main flex-1 min-h-0 overflow-y-auto">
         <Outlet />

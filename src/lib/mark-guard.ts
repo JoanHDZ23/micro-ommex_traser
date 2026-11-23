@@ -10,13 +10,18 @@ export interface MarkGuardInput {
   serverMarks: boolean
   /** La fila tiene código (solo cuenta con marcas del servidor). */
   hasCode: boolean
+  /** El conteo de la tabla está cerrado. */
+  closed?: boolean
 }
+
+export const MARK_COUNT_CLOSED = 'El conteo de esta tabla está cerrado. Ábrelo para seguir marcando.'
 
 export const MARK_NEEDS_SEARCH = 'Escanea o busca el producto antes de marcarlo.'
 export const MARK_NEEDS_CODE = 'Esta fila no tiene código: no se puede marcar.'
 
 /** Motivo por el que NO se puede marcar, o null si se puede. */
 export function markBlockReason(i: MarkGuardInput): string | null {
+  if (i.closed) return MARK_COUNT_CLOSED
   if (i.serverMarks && !i.hasCode) return MARK_NEEDS_CODE
   if (!i.searchActive) return MARK_NEEDS_SEARCH
   return null
