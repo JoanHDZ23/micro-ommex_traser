@@ -20,6 +20,7 @@
 import { useEffect, useState } from 'react'
 import { adjustProductReceived, getReceivedProducts, migrateSheetScopedMarks, NetworkError, undoReceivedChange } from './api'
 import { sheetScopedRowKey } from './mark-keys'
+import { mergeServerMarks, sameMarks } from './received-merge'
 
 export interface ReceivedInfo {
   quantity: number
@@ -29,7 +30,9 @@ export interface ReceivedInfo {
 
 let map = new Map<string, ReceivedInfo>()
 let loadedFor = ''
-let inFlight: Promise<void> | null = null
+const inFlight = new Map<string, Promise<void>>()
+const pollTimers = new Map<string, ReturnType<typeof setInterval>>()
+const pollSubscribers = new Map<string, number>()
 const listeners = new Set<() => void>()
 
 function emit(): void {
@@ -110,6 +113,11 @@ export function getReceived(code: string, rowKey = ''): ReceivedInfo | undefined
 
 // Marcas enviadas que el servidor aún no confirmó (para no descargar sin ellas).
 const pending = new Set<Promise<unknown>>()
+const mutationVersion = new Map<string, number>()
+const mutationInFlight = new Map<string, number>()
+/** Orden de las consultas y de los cambios confirmados (mismo contador). */
+let refreshSeq = 0
+const mutationSettledAt = new Map<string, number>()
 
 /**
  * Espera a que se guarden las marcas en curso y trae del servidor la lista
@@ -117,35 +125,52 @@ const pending = new Set<Promise<unknown>>()
  */
 export async function flushReceived(companyId: string): Promise<void> {
   if (pending.size) await Promise.allSettled([...pending])
-  if (inFlight) await inFlight // una recarga empezada antes de las marcas puede traer datos viejos
+  if (inFlight.size) await Promise.allSettled([...inFlight.values()]) // espera recargas empezadas antes de las marcas
   await refreshReceived(companyId)
 }
 
 /** Recarga desde el servidor los marcados de la empresa en la recepción activa. */
 export function refreshReceived(companyId: string): Promise<void> {
   if (!companyId) return Promise.resolve()
-  if (inFlight) return inFlight
   const scope = getActiveScope(companyId).id
+  const requestKey = `${companyId}|${scope}`
+  const active = inFlight.get(requestKey)
+  if (active) return active
   if (currentCompany !== companyId) {
     // Primer uso para esta empresa: se muestra la copia del dispositivo al instante.
     currentCompany = companyId
     map = readPersisted(companyId, scope)
     emit()
   }
-  inFlight = getReceivedProducts(companyId, scope)
+  const startedAt = ++refreshSeq
+  const request = getReceivedProducts(companyId, scope)
     .then((list) => {
-      if (getActiveScope(companyId).id !== scope) return // cambió de recepción mientras tanto
-      const next = new Map<string, ReceivedInfo>()
+      if (currentCompany !== companyId || getActiveScope(companyId).id !== scope) return
+      const server = new Map<string, ReceivedInfo>()
       for (const r of list) {
         const q = Number(r.quantity) > 0 ? Math.floor(Number(r.quantity)) : 1
-        next.set(receivedKey(r.productCode, r.rowKey ?? ''), { quantity: q, receivedBy: r.receivedBy, receivedAt: r.receivedAt })
+        server.set(receivedKey(r.productCode, r.rowKey ?? ''), { quantity: q, receivedBy: r.receivedBy, receivedAt: r.receivedAt })
       }
-      loadedFor = `${companyId}|${scope}`
-      setMap(next)
+      // Se conserva el valor local de las marcas en curso y de las que se
+      // confirmaron DESPUÉS de empezar esta consulta (la respuesta es anterior).
+      const scopedPrefix = `${companyId}|${scope}|`
+      const protectedKeys: string[] = []
+      for (const [activeKey, settledAt] of mutationSettledAt) {
+        if (activeKey.startsWith(scopedPrefix) && settledAt > startedAt) protectedKeys.push(activeKey.slice(scopedPrefix.length))
+      }
+      for (const activeKey of mutationInFlight.keys()) {
+        if (activeKey.startsWith(scopedPrefix)) protectedKeys.push(activeKey.slice(scopedPrefix.length))
+      }
+      const next = mergeServerMarks(server, map, protectedKeys)
+      loadedFor = requestKey
+      // Sin cambios no se redibuja ni se reescribe la copia del dispositivo
+      // (con la consulta cada 1,5 s eso recargaba la tabla sin necesidad).
+      if (!sameMarks(next, map)) setMap(next)
     })
     .catch(() => { /* sin conexión: se mantiene lo último conocido */ })
-    .finally(() => { inFlight = null })
-  return inFlight
+    .finally(() => { inFlight.delete(requestKey) })
+  inFlight.set(requestKey, request)
+  return request
 }
 
 const MIGRATED_KEY = 'ommex_marks_sheet_scoped_v1:'
@@ -199,6 +224,10 @@ export async function adjustReceivedDetailed(
   if (!companyId || !key || !delta) return { quantity: map.get(key)?.quantity ?? 0 }
   currentCompany = companyId
   const scope = getActiveScope(companyId).id
+  const scopedKey = `${companyId}|${scope}|${key}`
+  const version = (mutationVersion.get(scopedKey) ?? 0) + 1
+  mutationVersion.set(scopedKey, version)
+  mutationInFlight.set(scopedKey, (mutationInFlight.get(scopedKey) ?? 0) + 1)
   const prev = map.get(key)
   const optimistic = Math.max(0, (prev?.quantity ?? 0) + delta)
   const next = new Map(map)
@@ -211,10 +240,9 @@ export async function adjustReceivedDetailed(
 
   const req = adjustProductReceived(companyId, code.trim(), delta, { ...extra, scope })
   pending.add(req)
-  void req.finally(() => pending.delete(req)).catch(() => {})
   try {
     const r = await req
-    if (getActiveScope(companyId).id === scope) {
+    if (getActiveScope(companyId).id === scope && mutationVersion.get(scopedKey) === version) {
       const after = new Map(map)
       if (r.quantity > 0) after.set(key, { quantity: r.quantity, receivedBy: r.receivedBy, receivedAt: r.receivedAt })
       else after.delete(key)
@@ -223,11 +251,27 @@ export async function adjustReceivedDetailed(
     return { quantity: r.quantity, historyId: r.historyId }
   } catch (err) {
     if (err instanceof NetworkError) return { quantity: optimistic } // en cola: se aplicará al reconectar
-    const reverted = new Map(map)
-    if (prev) reverted.set(key, prev)
-    else reverted.delete(key)
-    setMap(reverted)
+    if (mutationVersion.get(scopedKey) === version) {
+      const reverted = new Map(map)
+      if (prev) reverted.set(key, prev)
+      else reverted.delete(key)
+      setMap(reverted)
+    }
     throw err
+  } finally {
+    pending.delete(req)
+    // Las consultas empezadas antes de este momento no pueden pisar esta marca.
+    mutationSettledAt.set(scopedKey, ++refreshSeq)
+    const remaining = (mutationInFlight.get(scopedKey) ?? 1) - 1
+    if (remaining > 0) mutationInFlight.set(scopedKey, remaining)
+    else {
+      mutationInFlight.delete(scopedKey)
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        const activeRefresh = inFlight.get(`${companyId}|${scope}`)
+        if (activeRefresh) void activeRefresh.then(() => refreshReceived(companyId))
+        else void refreshReceived(companyId)
+      }
+    }
   }
 }
 
@@ -266,10 +310,37 @@ export function useReceivedMap(companyId: string): Map<string, ReceivedInfo> {
   const [snapshot, setSnapshot] = useState(map)
   useEffect(() => {
     const onChange = () => setSnapshot(map)
+    const refreshWhenVisible = () => {
+      if (document.visibilityState !== 'hidden') void refreshReceived(companyId)
+    }
     listeners.add(onChange)
-    if (companyId && loadedFor !== `${companyId}|${getActiveScope(companyId).id}`) void refreshReceived(companyId)
-    else onChange()
-    return () => { listeners.delete(onChange) }
+    if (companyId) {
+      if (loadedFor !== `${companyId}|${getActiveScope(companyId).id}`) void refreshReceived(companyId)
+      pollSubscribers.set(companyId, (pollSubscribers.get(companyId) ?? 0) + 1)
+      if (!pollTimers.has(companyId)) {
+        pollTimers.set(companyId, setInterval(() => {
+          // Sin señal no se consulta (cada intento fallido tarda y gasta batería).
+          if (document.visibilityState !== 'hidden' && navigator.onLine !== false) void refreshReceived(companyId)
+        }, 1500))
+      }
+      document.addEventListener('visibilitychange', refreshWhenVisible)
+      window.addEventListener('online', refreshWhenVisible)
+    } else onChange()
+    return () => {
+      listeners.delete(onChange)
+      if (companyId) {
+        document.removeEventListener('visibilitychange', refreshWhenVisible)
+        window.removeEventListener('online', refreshWhenVisible)
+        const remaining = (pollSubscribers.get(companyId) ?? 1) - 1
+        if (remaining > 0) pollSubscribers.set(companyId, remaining)
+        else {
+          pollSubscribers.delete(companyId)
+          const timer = pollTimers.get(companyId)
+          if (timer) clearInterval(timer)
+          pollTimers.delete(companyId)
+        }
+      }
+    }
   }, [companyId])
   return snapshot
 }

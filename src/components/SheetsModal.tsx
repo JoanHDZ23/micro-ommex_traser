@@ -528,12 +528,12 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
           <span className="hidden sm:inline">Escanear</span>
         </Button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
         <select
           value={filterCol}
           onChange={(e) => setFilterCol(Number(e.target.value))}
           aria-label="Columna donde buscar"
-          className="flex-1 md:flex-none md:w-44 min-w-0 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
+          className="flex-1 md:flex-none md:w-44 min-w-[9rem] min-h-11 rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
         >
           <option value={-1}>Todas las columnas</option>
           {headers.map((h, i) => (
@@ -547,7 +547,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
           onClick={() => setShowColumnFilters((v) => !v)}
           title="Filtrar por varias columnas (estilo Excel)"
           leftIcon={<Filter className="w-4 h-4" />}
-          className="flex-shrink-0"
+          className="flex-shrink-0 min-h-11"
         >
           <span className="hidden sm:inline">Columnas</span>
           {activeColumnFilters.length > 0 && (
@@ -562,7 +562,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
             type="button"
             onClick={() => setViewMode('cards')}
             title="Vista de items"
-            className={`px-3 py-2 flex items-center gap-1.5 text-sm ${viewMode === 'cards' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-2)]'}`}
+            className={`w-11 h-11 flex items-center justify-center gap-1.5 text-sm ${viewMode === 'cards' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-2)]'}`}
           >
             <LayoutGrid className="w-4 h-4" />
           </button>
@@ -570,7 +570,7 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
             type="button"
             onClick={() => setViewMode('table')}
             title="Vista de tabla"
-            className={`px-3 py-2 flex items-center gap-1.5 text-sm ${viewMode === 'table' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-2)]'}`}
+            className={`w-11 h-11 flex items-center justify-center gap-1.5 text-sm ${viewMode === 'table' ? 'bg-[var(--color-primary)] text-white' : 'bg-[var(--color-surface)] text-[var(--color-text-2)]'}`}
           >
             <List className="w-4 h-4" />
           </button>
@@ -900,10 +900,11 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
             <thead className="sticky top-0 z-10 bg-[var(--color-primary)] text-white shadow-[0_1px_0_var(--color-primary)]">
               <tr>
                 {actions && (
-                  <th className="w-12 px-3 py-3 text-center">
+                  <th className="w-14 min-w-14 px-1 py-1 text-center">
+                    <label className="w-11 h-11 inline-flex items-center justify-center cursor-pointer" title="Seleccionar todas las visibles">
                     <input type="checkbox"
                       aria-label="Seleccionar todas las visibles"
-                      className="w-4 h-4 rounded border-white/40 bg-white/10 text-emerald-400 focus:ring-emerald-400/50"
+                      className="w-5 h-5 rounded border-white/40 bg-white/10 text-emerald-400 focus:ring-emerald-400/50"
                       checked={visible.length > 0 && visible.every((r) => selected.has(indexOfRow(r)))}
                       onChange={(e) => {
                         setSelected((prev) => {
@@ -913,10 +914,11 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                           return next
                         })
                       }} />
+                    </label>
                   </th>
                 )}
                 {/* Columna de "marcar" (producto cogido/listo) */}
-                <th className="w-12 px-2 py-3 text-center" title="Marcar como listo">
+                <th className="min-w-[5rem] px-1 py-1 text-center" title="Marcar como listo">
                   <CheckCircle2 className="w-4 h-4 mx-auto opacity-80" />
                 </th>
                 {headers.map((h, i) => (
@@ -947,18 +949,22 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                 return (
                   <tr key={ri} className={`${rowClass} border-b border-[var(--color-border)] last:border-b-0 hover:bg-[var(--color-primary-bg)]/30 transition-colors`}>
                     {actions && (
-                      <td className="px-3 py-2.5 text-center border-r border-[var(--color-border)]">
+                      <td className="w-14 min-w-14 px-1 py-1 text-center border-r border-[var(--color-border)]">
+                        <label className="w-11 h-11 inline-flex items-center justify-center cursor-pointer">
                         <input type="checkbox" checked={isSel} onChange={() => toggleRow(gIdx)}
-                          className="w-4 h-4 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]/30" />
+                          aria-label={`Seleccionar fila ${gIdx + 1}`}
+                          className="w-5 h-5 rounded border-[var(--color-border)] text-[var(--color-primary)] focus:ring-[var(--color-primary)]/30" />
+                        </label>
                       </td>
                     )}
                     {/* Botón de marcar + cantidad encontrada */}
-                    <td className="px-2 py-2.5 text-center border-r border-[var(--color-border)]">
-                      <div className="flex flex-col items-center gap-1">
+                    <td className="min-w-[5rem] px-1 py-1.5 text-center border-r border-[var(--color-border)]">
+                      <div className="flex flex-col items-center gap-1.5">
                         <button onClick={() => toggleMarkRow(row, gIdx)}
                           title={blockReason(gIdx) ?? (isMarked ? 'Quitar marca' : 'Marcar como encontrado')}
+                          aria-label={isMarked ? `Quitar marca de la fila ${gIdx + 1}` : `Marcar fila ${gIdx + 1} como encontrada`}
                           aria-disabled={blockReason(gIdx) !== null}
-                          className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                          className={`w-11 h-11 rounded-full flex items-center justify-center transition-all touch-manipulation ${
                             isMarked
                               ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/30'
                               : 'bg-[var(--color-bg)] text-[var(--color-text-3)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]'
@@ -978,10 +984,10 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                         {isMarked && (
                           <div className="flex items-center gap-0.5">
                             <button onClick={() => bumpQtyRow(row, gIdx, -1)} aria-label="Menos"
-                              className="w-4 h-4 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-xs font-bold leading-none">−</button>
-                            <span className="w-5 text-center text-[11px] font-bold text-emerald-800">{rowQty(row, gIdx)}</span>
+                              className="w-6 h-6 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-sm font-bold leading-none touch-manipulation">−</button>
+                            <span className="min-w-6 text-center text-[11px] font-bold text-emerald-800">{rowQty(row, gIdx)}</span>
                             <button onClick={() => bumpQtyRow(row, gIdx, 1)} aria-label="Más"
-                              className="w-4 h-4 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-xs font-bold leading-none">+</button>
+                              className="w-6 h-6 rounded-full flex items-center justify-center text-emerald-700 hover:bg-emerald-100 text-sm font-bold leading-none touch-manipulation">+</button>
                           </div>
                         )}
                         {isMarked && markInfoOf(gIdx)?.receivedBy && (
