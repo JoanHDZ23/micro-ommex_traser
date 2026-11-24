@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, type MutableRefObject, typ
 import { useNavigate } from 'react-router-dom'
 import {
   X, Upload, FileSpreadsheet, Loader2, ExternalLink, Trash2, Download,
-  Search, CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
+  CheckCircle2, AlertCircle, Table2, FileText, Eye, ArrowLeft,
   Pencil, Save, Plus, Database, RefreshCw, FilePlus, PackagePlus, Filter,
   Star, LayoutGrid, List, Package, SlidersHorizontal, ScanLine, Lock, Camera,
 } from 'lucide-react'
@@ -12,7 +12,7 @@ import { getCompanyId, getOperatorName } from '../lib/context'
 import { BarcodeScanner } from './BarcodeScanner'
 import { ActionMenu, type ActionMenuItem } from './ActionMenu'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
-import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SectionHeader } from './ui'
+import { Button, Card, EmptyState, ErrorState, Input, LoadingState, ModalSurface, SearchField, SectionHeader } from './ui'
 import { adjustReceived, flushReceived, getReceived, receivedKey, useActiveScope, useReceivedMap } from '../lib/received-store'
 import { rowMarkKeys, type RowMark } from '../lib/mark-keys'
 import { isSearchActive, markBlockReason } from '../lib/mark-guard'
@@ -506,20 +506,14 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
       {/* Filtro: en el celular, búsqueda arriba a lo ancho y el resto debajo */}
       <div className="flex flex-col md:flex-row md:items-center gap-2">
         <div className="flex items-center gap-2 flex-1 min-w-0">
-        <div className="relative flex-1 min-w-0">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-3)]" />
-          <input
+        <div className="flex-1 min-w-0">
+          <SearchField
             value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
+            onChange={setFilterText}
             placeholder="Filtrar filas…"
-            className="w-full rounded-[var(--radius)] border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 pl-9 pr-9 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-3)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 focus:border-[var(--color-primary)]/50"
+            aria-label="Filtrar filas"
+            clearLabel="Limpiar filtro"
           />
-          {filterText && (
-            <button onClick={() => setFilterText('')} aria-label="Limpiar filtro"
-              className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] transition-colors">
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
         </div>
         {/* Escanear para filtrar: cámara o gatillo SCAN según el equipo */}
         <Button variant="secondary" size="md" onClick={onScanClick} title="Escanear un código para buscarlo"
@@ -640,13 +634,13 @@ function DataTable({ headers, rows, actions, markKey, initialFilter, companyId, 
                     value={columnFilters[i] ?? ''}
                     onChange={(e) => setColumnFilter(i, e.target.value)}
                     placeholder="Filtrar…"
-                    className={`w-full rounded-[var(--radius)] border bg-[var(--color-surface)] px-2.5 py-1.5 pr-7 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-3)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
+                    className={`block w-full rounded-[var(--radius)] border bg-[var(--color-surface)] px-2.5 py-1.5 pr-7 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-3)] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 ${
                       columnFilters[i] ? 'border-[var(--color-primary)]' : 'border-[var(--color-border)]'
                     }`}
                   />
                   {columnFilters[i] && (
                     <button onClick={() => setColumnFilter(i, '')} aria-label="Limpiar"
-                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)]">
+                      className="absolute right-1.5 inset-y-0 my-auto w-5 h-5 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:text-[var(--color-text)]">
                       <X className="w-3 h-3" />
                     </button>
                   )}
@@ -2468,21 +2462,14 @@ export function SheetsModal({ open, onClose, targetTrackingCode, onBrought, init
 
               {/* Buscador de tablas (aparece cuando hay más de una) */}
               {sheets.length > 1 && (
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-text-3)]" />
-                  <input
-                    value={sheetSearch}
-                    onChange={(e) => setSheetSearch(e.target.value)}
-                    placeholder="Buscar tabla por nombre…"
-                    className="w-full pl-9 pr-9 py-2.5 rounded-xl border border-[var(--color-border)] text-sm bg-[var(--color-surface)] text-[var(--color-text)] focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-                  />
-                  {sheetSearch && (
-                    <button onClick={() => setSheetSearch('')} aria-label="Limpiar búsqueda"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[var(--color-text-3)] hover:bg-[var(--color-bg)]">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
+                <SearchField
+                  value={sheetSearch}
+                  onChange={setSheetSearch}
+                  placeholder="Buscar tabla por nombre…"
+                  aria-label="Buscar tabla por nombre"
+                  clearLabel="Limpiar búsqueda"
+                  boxClassName="rounded-xl"
+                />
               )}
 
               {!loadingList && sheets.length === 0 && (
