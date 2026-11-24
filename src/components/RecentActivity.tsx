@@ -26,6 +26,8 @@ export interface FeedItem {
   sheetId?: string
   sheetName?: string
   scopeName?: string
+  /** Marcas: columnas elegidas en "Columnas" de la tabla (descripción, cliente…). */
+  fields?: Array<{ label: string; value: string }>
 }
 
 const REFRESH_MS = 30_000
@@ -158,6 +160,17 @@ export function RecentActivity({ limit = 15 }: { limit?: number }) {
                     </span>
                   </div>
                   <p className="text-xs text-[var(--color-text-2)] break-words">{it.detail}</p>
+                  {/* Columnas elegidas en la configuración de la tabla */}
+                  {it.fields && it.fields.length > 0 && (
+                    <dl className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-0.5 px-2 py-1.5 rounded-lg bg-[var(--color-bg)] border border-[var(--color-border)]">
+                      {it.fields.map((f, i) => (
+                        <div key={i} className="flex gap-1 text-[11px] min-w-0">
+                          {f.label && <dt className="font-semibold text-[var(--color-text-3)] flex-shrink-0">{f.label}:</dt>}
+                          <dd className="text-[var(--color-text)] truncate" title={f.value}>{f.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
                   <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                     {it.trackingCode && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-semibold">
