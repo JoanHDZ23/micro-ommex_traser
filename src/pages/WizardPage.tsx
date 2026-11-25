@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, Search, Send, SlidersHorizontal, Trash2, Wifi, WifiOff, X } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, ImagePlus, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, RotateCw, Search, Send, SlidersHorizontal, Trash2, Wifi, WifiOff, X } from 'lucide-react'
 import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, warmSheetCache, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
@@ -14,6 +14,7 @@ import { Button, ErrorState, LoadingState, Modal, ModalSurface } from '../compon
 import { cachePhoto, claimForegroundUpload, cleanExpiredPhotos, getCachedPhotos, markAsUploaded, releaseForegroundUpload, resetPendingForRetry, uploadPendingInBackground, type CachedPhoto } from '../lib/photo-cache'
 import { PHOTOS_PER_REQUEST, uploadInChunks, withTimeout } from '../lib/upload-chunks'
 import { findDbProduct } from '../lib/product-variant'
+import { indexAfterRemove, rotateDataUrl } from '../lib/image-edit'
 import { getFrequentTemplates, saveTemplate, deleteTemplate, type TextTemplate } from '../lib/text-templates'
 import { GuideModal, type GuideStep } from '../components/GuideModal'
 import { compressImageToBase64 } from '../lib/image-compress'
@@ -994,6 +995,30 @@ export function WizardPage() {
     setTrayPhotoProducts((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  /** Quita la foto visible del visor y muestra la siguiente (o cierra si era la única). */
+  const deleteTrayPhoto = (idx: number) => {
+    const next = indexAfterRemove(idx, idx, captureTray.length)
+    if (next === null) { cancelCaptureTray(); return }
+    removeTrayPhoto(idx)
+    setTrayFullIdx(next)
+  }
+
+  /** Gira 90° la foto de la bandeja (sin abrir el editor). */
+  const [trayRotating, setTrayRotating] = useState(false)
+  const rotateTrayPhoto = async (idx: number) => {
+    const src = captureTray[idx]
+    if (!src || !src.startsWith('data:') || trayRotating) return
+    setTrayRotating(true)
+    try {
+      const out = await rotateDataUrl(src, 1)
+      setCaptureTray((prev) => prev.map((x, i) => (i === idx ? out : x)))
+    } catch {
+      setFeedback('No se pudo girar la foto')
+    } finally {
+      setTrayRotating(false)
+    }
+  }
+
   /** Actualiza el comentario opcional de la foto `idx` de la bandeja. */
   const setTrayCommentAt = (idx: number, text: string) => {
     setTrayComments((prev) => {
@@ -1100,7 +1125,7 @@ export function WizardPage() {
       })
       setTrayComments((prev) => [...prev, ...dataUrls.map(() => '')])
       setTrayPhotoProducts((prev) => [...prev, ...dataUrls.map(() => photoProduct)])
-      if (dataUrls.length === 1) setTrayFullIdx(nextIdx)
+      setTrayFullIdx(nextIdx)
     }
     if (failed) setFeedback(`No se pudieron procesar ${failed} imagen(es)`)
   }, [])
@@ -4149,246 +4174,47 @@ export function WizardPage() {
         </div>
       )}
 
-      {/* Bandeja de revisión de fotos tomadas con la cámara del dispositivo */}
-      {showCaptureTray && trayEditIdx === null && (
-        <div className="fixed inset-0 z-[95] bg-black/60 flex items-end sm:items-center justify-center">
-          {/* Alto acotado con `dvh` (viewport DINÁMICO): a diferencia de `vh`,
-              descuenta la barra del navegador móvil, así el modal nunca supera
-              la pantalla visible y el footer con el botón "Enviar" SIEMPRE queda
-              a la vista sin tener que hacer scroll ni ajustar la pantalla. */}
-          <div className="w-full sm:max-w-md bg-white rounded-t-2xl sm:rounded-2xl shadow-xl max-h-[85dvh] flex flex-col overflow-hidden">
-            <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-gray-200">
-              <h3 className="text-sm font-bold text-gray-800">
-                {trayEditingPhotoIdx !== null
-                  ? 'Editar foto'
-                  : `${captureTray.length} foto${captureTray.length === 1 ? '' : 's'}`}
-              </h3>
-              <button onClick={cancelCaptureTray} className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
-            </div>
-
-            {/* `flex-1 min-h-0` permite que SOLO esta zona haga scroll y ceda el
-                espacio justo para header y footer (sin empujarlos fuera). */}
-            <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4">
-              {/* Miniaturas + drag & drop zone */}
-              <div
-                className="grid grid-cols-3 gap-2"
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'))
-                  if (files.length === 0) return
-                  void addImageFilesToTray(files)
-                }}
-              >
-                {captureTray.map((src, i) => (
-                  <div key={i} className="relative aspect-square rounded-lg overflow-hidden bg-gray-100">
-                    {/* Tocar la foto abre el visor a pantalla completa para
-                        agregarle un comentario opcional (estilo WhatsApp). */}
-                    <button type="button" onClick={() => setTrayFullIdx(i)} aria-label="Abrir foto y agregar comentario"
-                      className="absolute inset-0 w-full h-full">
-                      <img src={traySrc(src)} className="w-full h-full object-cover" />
-                    </button>
-                    {/* Producto al que está vinculada esta foto (Opción A). */}
-                    <span className={`absolute top-0 inset-x-0 px-1 py-0.5 text-[8px] font-semibold text-white text-center truncate ${trayPhotoProducts[i] ? 'bg-emerald-600/90' : 'bg-black/50'}`}>
-                      {trayPhotoProducts[i] ? `📦 ${trayPhotoProducts[i]}` : 'General'}
-                    </span>
-                    {features.markerEditor && (
-                      <button onClick={() => setTrayEditIdx(i)} aria-label="Editar foto"
-                        className="absolute top-1 left-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
-                        <Pencil className="w-3.5 h-3.5 text-white" />
-                      </button>
-                    )}
-                    <button onClick={() => removeTrayPhoto(i)} aria-label="Quitar foto"
-                      className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 flex items-center justify-center">
-                      <X className="w-3.5 h-3.5 text-white" />
-                    </button>
-                    {/* Indicador de comentario (abajo). Si tiene texto, lo
-                        muestra; si no, invita a tocar para agregarlo. */}
-                    <button type="button" onClick={() => setTrayFullIdx(i)}
-                      className="absolute bottom-0 inset-x-0 flex items-center gap-1 px-1.5 py-1 bg-gradient-to-t from-black/70 to-transparent text-left">
-                      <MessageCircle className="w-3 h-3 text-white/90 flex-shrink-0" />
-                      <span className={`text-[9px] truncate ${trayComments[i]?.trim() ? 'text-white' : 'text-white/60'}`}>
-                        {trayComments[i]?.trim() || 'Añade un comentario…'}
-                      </span>
-                    </button>
-                  </div>
-                ))}
-                {/* Tomar otra foto (cámara) */}
-                <button onClick={() => openNativeCamera()}
-                  className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 text-gray-500 hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]">
-                  <Camera className="w-6 h-6" />
-                  <span className="text-[10px] font-medium">Otra foto</span>
-                </button>
-                {/* Seleccionar múltiples imágenes desde galería */}
-                <label className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 text-gray-500 hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] cursor-pointer">
-                  <Plus className="w-6 h-6" />
-                  <span className="text-[10px] font-medium">Galería</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files ?? [])
-                      e.target.value = ''
-                      void addImageFilesToTray(files)
-                    }}
-                  />
-                </label>
-                {/* Pegar imagen del portapapeles */}
-                <button type="button" onClick={() => void pasteImageFromClipboard()}
-                  className="aspect-square rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center gap-1 text-gray-500 hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]">
-                  <ClipboardPaste className="w-6 h-6" />
-                  <span className="text-[10px] font-medium">Pegar</span>
-                </button>
-              </div>
-              {/* Ayuda: arrastrar o pegar */}
-              <p className="text-[10px] text-gray-400 text-center">
-                Arrastra imágenes aquí · Ctrl+V para pegar · o usa Galería para seleccionar varias
-              </p>
-
-              {/* ── Vincular estas fotos a un producto ── */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <button
-                  type="button"
-                  onClick={() => setShowTrayScanner(true)}
-                  className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors"
-                >
-                  <QrCode className="w-4 h-4" />
-                  Escanear código
-                </button>
-                {recordSettings.dbSheetId && (
-                  <button
-                    type="button"
-                    onClick={() => { setTrayDbSearchInitial(''); setShowTrayDbSearch(true) }}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-xs font-medium hover:bg-emerald-100 transition-colors"
-                  >
-                    <Database className="w-4 h-4" />
-                    Buscar en DATA
-                  </button>
-                )}
-                {features.whatsappCatalog && (
-                  <button
-                    type="button"
-                    onClick={() => setShowTrayCatalog(true)}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-amber-700 text-xs font-medium hover:bg-amber-100 transition-colors"
-                  >
-                    <Package className="w-4 h-4" />
-                    Catálogo
-                  </button>
-                )}
-              </div>
-
-              {/* Producto vinculado a este grupo de fotos */}
-              {trayProductCode && (
-                <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
-                  <div className="flex items-center gap-2 text-emerald-700">
-                    <Package className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span>
-                      {trayProductPrefilled ? 'Sugerido (último): ' : 'Vinculado a: '}
-                      <strong>{trayProductCode}</strong>
-                    </span>
-                  </div>
-                  <button onClick={() => { setTrayProductCode(null); setTrayProductPrefilled(false) }} className="text-emerald-600 hover:text-emerald-800">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-
-              {/* Mensaje general (opcional). Aplica a las fotos que no tengan
-                  su propio comentario. Toca cada foto para comentarla aparte. */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-gray-600">Comentario general (opcional)</label>
-                {/* Opción 8: plantillas de comentario rápido. Un toque aplica el
-                    texto guardado al comentario general. */}
-                {templates.length > 0 && (
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
-                    {templates.map((tpl) => (
-                      <button
-                        key={tpl.id}
-                        type="button"
-                        onClick={() => { saveTemplate(tpl.text); setTemplates(getFrequentTemplates()); setTrayMessage(tpl.text) }}
-                        className="flex-shrink-0 px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 text-[11px] whitespace-nowrap active:scale-95 max-w-[11rem] truncate">
-                        {tpl.text}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <textarea
-                  value={trayMessage}
-                  onChange={(e) => setTrayMessage(e.target.value)}
-                  onBlur={() => { const t = trayMessage.trim(); if (t.length > 3) { saveTemplate(t); setTemplates(getFrequentTemplates()) } }}
-                  placeholder="Comentario para las fotos sin texto propio… (toca una foto para comentarla aparte)"
-                  rows={2}
-                  className="w-full px-3 py-2.5 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 resize-none" />
-                <p className="text-[10px] text-gray-400">Toca una foto para agregarle un comentario individual.</p>
-              </div>
-            </div>
-
-            {/* Opción 10: progreso real de subida (fotos confirmadas / total). */}
-            {trayUploadProgress && trayUploadProgress.total > 0 && (
-              <div className="flex-shrink-0 px-4 pt-2 space-y-1">
-                <div className="flex items-center justify-between text-[11px] text-gray-500">
-                  <span>Subiendo fotos…</span>
-                  <span>{trayUploadProgress.done} / {trayUploadProgress.total}</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
-                  <div
-                    className="h-full bg-[var(--color-primary)] transition-all duration-300"
-                    style={{ width: `${Math.round((trayUploadProgress.done / trayUploadProgress.total) * 100)}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="flex-shrink-0 flex items-center gap-2 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-gray-200 bg-white">
-              <button onClick={cancelCaptureTray} disabled={traySending}
-                className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 disabled:opacity-50">
-                Cancelar
-              </button>
-              <button onClick={() => void sendCaptureTray()} disabled={traySending || captureTray.length === 0}
-                className="flex-1 py-2.5 rounded-xl bg-[var(--color-primary)] text-white font-semibold text-sm disabled:opacity-50 flex items-center justify-center gap-2 active:scale-[0.98]">
-                {traySending
-                  ? <LoadingState inline size="sm" label={trayEditingPhotoIdx !== null ? 'Guardando…' : 'Enviando…'} />
-                  : (trayEditingPhotoIdx !== null ? <CheckCircle2 className="w-4 h-4" /> : <Send className="w-4 h-4" />)}
-                {(() => {
-                  if (trayEditingPhotoIdx !== null) return 'Guardar'
-                  const prods = Array.from(new Set(trayPhotoProducts.slice(0, captureTray.length).filter(Boolean))) as string[]
-                  const n = captureTray.length
-                  if (prods.length === 1) return `Guardar en ${prods[0]} (${n})`
-                  if (prods.length > 1) return `Enviar (${n}) · ${prods.length} productos`
-                  return `Enviar ${n > 0 ? `(${n})` : ''}`
-                })()}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── Visor de foto a pantalla completa con comentario (estilo WhatsApp) ──
           Estructura: imagen grande, header con cerrar/editar, tira de
           miniaturas y barra "Añade un comentario…" + botón enviar. El
           comentario es opcional y se guarda por foto. Usa la paleta propia
           (no los colores de WhatsApp). */}
-      {trayFullIdx !== null && captureTray[trayFullIdx] && (
+      {showCaptureTray && trayEditIdx === null && captureTray.length > 0 && ((trayFullIdx: number) => (
         <div className="fixed inset-0 z-[98] bg-black flex flex-col">
           {/* Header */}
           <div className="flex-shrink-0 flex items-center justify-between px-3 py-3">
-            <button onClick={() => setTrayFullIdx(null)} aria-label="Cerrar"
-              className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
+            <button
+              onClick={() => {
+                if (traySending) return
+                const n = captureTray.length
+                if (n === 0 || window.confirm(n === 1 ? '¿Descartar la foto?' : `¿Descartar las ${n} fotos?`)) cancelCaptureTray()
+              }}
+              aria-label="Descartar y cerrar"
+              className="w-11 h-11 rounded-full bg-white/10 flex items-center justify-center">
               <X className="w-5 h-5 text-white" />
             </button>
             <span className="text-white/80 text-xs font-medium">
               {trayFullIdx + 1} / {captureTray.length}
             </span>
-            {features.markerEditor ? (
-              <button onClick={() => { const idx = trayFullIdx; setTrayFullIdx(null); setTrayEditIdx(idx) }} aria-label="Editar foto"
-                className="w-10 h-10 rounded-full bg-black/40 flex items-center justify-center">
-                <Pencil className="w-5 h-5 text-white" />
+            {/* Edición rápida de ESTA foto, sin salir del visor */}
+            <div className="flex items-center gap-1.5">
+              {captureTray[trayFullIdx]?.startsWith('data:') && (
+                <button onClick={() => void rotateTrayPhoto(trayFullIdx)} disabled={trayRotating} aria-label="Girar foto"
+                  className="w-11 h-11 rounded-full bg-white/10 flex items-center justify-center disabled:opacity-40">
+                  {trayRotating ? <Loader2 className="w-5 h-5 text-white animate-spin" /> : <RotateCw className="w-5 h-5 text-white" />}
+                </button>
+              )}
+              <button onClick={() => deleteTrayPhoto(trayFullIdx)} aria-label="Quitar esta foto"
+                className="w-11 h-11 rounded-full bg-white/10 flex items-center justify-center">
+                <Trash2 className="w-5 h-5 text-white" />
               </button>
-            ) : <span className="w-10 h-10" />}
+              {features.markerEditor && (
+                <button onClick={() => { setTrayFullIdx(trayFullIdx); setTrayEditIdx(trayFullIdx) }} aria-label="Editar foto"
+                  className="h-11 px-3 rounded-full bg-white text-black flex items-center gap-1.5 text-xs font-semibold">
+                  <Pencil className="w-4 h-4" /> Editar
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Imagen */}
@@ -4414,7 +4240,9 @@ export function WizardPage() {
                     className={`flex-1 min-w-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${current ? 'bg-emerald-500/90 text-white' : 'bg-white/10 text-white/80'}`}
                   >
                     <Package className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span className="truncate">{current ? current : 'General (sin producto)'}</span>
+                    <span className="truncate">
+                      {current ? `${trayProductPrefilled && current === trayProductCode ? 'Último: ' : ''}${current}` : 'General (sin producto)'}
+                    </span>
                   </button>
                   {/* Opción 5: ESCANEAR directo. Un toque abre la cámara de
                       código de barras sin pasar por ningún modal, con o sin
@@ -4515,6 +4343,13 @@ export function WizardPage() {
                 <Camera className="w-5 h-5" />
                 {captureTray.length >= MAX_TRAY_PHOTOS ? 'Límite alcanzado' : 'Tomar otra'}
               </button>
+              {/* Agregar desde la galería sin salir del visor */}
+              <label aria-label="Agregar fotos de la galería" title="Galería"
+                className={`w-12 h-12 rounded-full bg-white/15 text-white flex items-center justify-center flex-shrink-0 cursor-pointer active:scale-95 ${captureTray.length >= MAX_TRAY_PHOTOS ? 'opacity-40 pointer-events-none' : ''}`}>
+                <ImagePlus className="w-5 h-5" />
+                <input type="file" accept="image/*" multiple className="hidden"
+                  onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; void addImageFilesToTray(files) }} />
+              </label>
               <button
                 onClick={() => void sendCaptureTray()}
                 disabled={traySending || captureTray.length === 0}
@@ -4541,7 +4376,7 @@ export function WizardPage() {
             )}
           </div>
         </div>
-      )}
+      ))(Math.min(Math.max(0, trayFullIdx ?? captureTray.length - 1), captureTray.length - 1))}
 
       {/* Escáner de código de barras en la bandeja de fotos (sin base de datos fijada) */}
       {showTrayScanner && (
