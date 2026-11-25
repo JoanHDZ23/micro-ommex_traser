@@ -18,6 +18,7 @@ const NO_QUEUE_PATTERNS = [
   /\/photos\/upload-batch/,
   /\/linea-blanca\/.*\/photo$/,
   /\/linea-blanca\/.*\/photo-batch$/,
+  /\/photos\/[^/]+\/\d+\/image$/,
   /\/auth\/login/,
   /\/whatsapp-web\//,
 ]
@@ -603,6 +604,38 @@ export async function setCountSession(companyId: string, sheetId: string, action
     body: { companyId, sheetId, action },
   })
   return r.session
+}
+
+/**
+ * Descarga una foto ya guardada DESDE NUESTRO SERVIDOR y la devuelve como URL
+ * local (blob:). El editor la necesita así: con la URL del almacenamiento el
+ * navegador bloquea exportar la imagen editada (CORS) y no se podía guardar.
+ * Quien la use debe liberarla con URL.revokeObjectURL.
+ */
+export async function fetchPhotoForEdit(trackingCode: string, photoIndex: number): Promise<string> {
+  const url = `${BASE_URL}/photos/${encodeURIComponent(trackingCode)}/${photoIndex}/image`
+  const get = async (token: string | null) => failoverFetch(url, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: 'no-store',
+  })
+  let token = getToken() ?? await ensureSession()
+  let res = await get(token)
+  if (res.status === 401) { token = await renewSession(); res = await get(token) }
+  if (!res.ok) {
+    let msg = 'No se pudo cargar la foto para editarla.'
+    try { const j = await res.json() as { message?: string }; if (j.message) msg = j.message } catch { /* sin cuerpo */ }
+    throw new Error(msg)
+  }
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
+}
+
+/** Reemplaza la imagen de una foto guardada (misma posición y comentario). */
+export async function replacePhotoImage(trackingCode: string, photoIndex: number, base64Image: string, expectedFileId?: string): Promise<void> {
+  await apiRequest(`/photos/${encodeURIComponent(trackingCode)}/${photoIndex}/image`, {
+    method: 'PUT',
+    body: { base64Image, mimeType: 'image/jpeg', ...(expectedFileId ? { expectedFileId } : {}) },
+  })
 }
 
 export async function getReceivedProducts(companyId: string, scope = ''): Promise<ReceivedProduct[]> {

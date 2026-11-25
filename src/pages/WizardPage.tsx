@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertCircle, ArrowLeft, Activity, Camera, CheckCircle2, ClipboardPaste, Database, Edit3, FileText, Image as ImageIcon, ImagePlus, Link2, Loader2, Mail, MapPin, Mic, MessageCircle, Package, Pencil, Plus, QrCode, RefreshCw, RotateCw, Search, Send, SlidersHorizontal, Trash2, Wifi, WifiOff, X } from 'lucide-react'
-import { apiRequest, fileToBase64, makeClientKey, NetworkError, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, warmSheetCache, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
+import { apiRequest, fetchPhotoForEdit, fileToBase64, makeClientKey, NetworkError, replacePhotoImage, searchInSheet, uploadPhotosBatch, uploadProductPhotosBatch, warmSheetCache, type CompanySheet, type LabelData, type Operation, type OperationType, type SheetSearchItem, type UploadPhotoResponse } from '../lib/api'
 import { CameraCapture, type MultiCaptureResult } from '../components/CameraCapture'
 import { SheetsModal } from '../components/SheetsModal'
 import { DbProductSearch } from '../components/DbProductSearch'
@@ -290,7 +290,7 @@ export function WizardPage() {
 
   // Editor de imagen para re-editar una foto ya guardada en el servidor.
   // Guarda el índice original para eliminar la foto vieja tras confirmar.
-  const [photoEditTarget, setPhotoEditTarget] = useState<{ idx: number; src: string; comment: string } | null>(null)
+  const [photoEditTarget, setPhotoEditTarget] = useState<{ idx: number; src: string; comment: string; fileId?: string } | null>(null)
   const nativeCameraRef = useRef<HTMLInputElement>(null)
   // Input dedicado para la opción "Galería" del menú "+": antes apuntaba al
   // input de una tarjeta de producto (que puede no estar montada) y por eso no
@@ -469,6 +469,8 @@ export function WizardPage() {
   // Si está definido, al enviar la bandeja se ACTUALIZA esa foto (comentario +
   // imagen) en vez de crear fotos nuevas.
   const [trayEditingPhotoIdx, setTrayEditingPhotoIdx] = useState<number | null>(null)
+  /** fileId de la foto que se edita (para no reemplazar otra si la lista cambió). */
+  const [trayEditingFileId, setTrayEditingFileId] = useState<string | null>(null)
 
   // ── Comentarios de las fotos de un producto (modal estilo IG/Facebook) ──
   // Guarda el productCode cuyo feed de comentarios se está mostrando.
@@ -1007,7 +1009,7 @@ export function WizardPage() {
   const [trayRotating, setTrayRotating] = useState(false)
   const rotateTrayPhoto = async (idx: number) => {
     const src = captureTray[idx]
-    if (!src || !src.startsWith('data:') || trayRotating) return
+    if (!src || !/^(data|blob):/.test(src) || trayRotating) return
     setTrayRotating(true)
     try {
       const out = await rotateDataUrl(src, 1)
@@ -1131,12 +1133,16 @@ export function WizardPage() {
   }, [])
 
   const cancelCaptureTray = () => {
+    // Libera las fotos abiertas para editar (blob: locales).
+    for (const src of captureTray) if (src.startsWith('blob:')) URL.revokeObjectURL(src)
     setShowCaptureTray(false)
     setCaptureTray([])
     setTrayComments([])
+    setTrayPhotoProducts([])
     setTrayFullIdx(null)
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
+    setTrayEditingFileId(null)
     setTrayProductCode(null)
     setTrayProductPrefilled(false)
     if (trackingCode) void clearTrayDraft(trackingCode)
@@ -1359,6 +1365,7 @@ export function WizardPage() {
     // tiene; si no, el mensaje global solo para la primera (compatibilidad).
     const commentAt = (i: number) => (comments[i]?.trim() ? comments[i].trim() : (i === 0 ? message : ''))
     const editingIdx = trayEditingPhotoIdx
+    const editingFileId = trayEditingFileId
 
     // ── 1) PERSISTENCIA PRIMERO ──
     // Guarda TODAS las fotos nuevas en el dispositivo ANTES de limpiar la
@@ -1373,6 +1380,9 @@ export function WizardPage() {
     try {
       for (let i = 0; i < photos.length; i++) {
         if (!isDataUrl(photos[i])) continue // foto que ya vive en el servidor
+        // Edición: la foto 0 REEMPLAZA a la guardada; no se guarda como nueva
+        // (si no, quedaba una copia local "pendiente" además de la editada).
+        if (editingIdx !== null && i === 0) continue
         const base64 = photos[i].split(',')[1] ?? ''
         if (!base64) continue
         const clientKey = makeClientKey(trackingCode, `${clientTimestamp}:${i}:${Math.random().toString(36).slice(2, 8)}`)
@@ -1415,6 +1425,7 @@ export function WizardPage() {
     setTrayFullIdx(null)
     setTrayMessage('')
     setTrayEditingPhotoIdx(null)
+    setTrayEditingFileId(null)
     // Opción 4: conserva el último producto usado en la tanda enviada como
     // "activo" para la siguiente tanda del mismo registro (y lo recuerda para
     // el próximo registro). Así no hay que re-vincularlo tras cada envío.
@@ -1431,24 +1442,34 @@ export function WizardPage() {
     if (editingIdx !== null) {
       try {
         const first = photos[0] ?? ''
+        // La foto se abrió como blob: (sin cambios). Si se editó o giró, es un dataURL.
         const imageChanged = isDataUrl(first)
 
         if (imageChanged) {
+          // REEMPLAZA la imagen en su lugar: no se crea una foto nueva ni queda
+          // la anterior (antes: subir nueva + borrar, que podía duplicarla).
           const base64 = first.split(',')[1] ?? ''
-          await uploadSinglePhoto(base64, message, false, undefined, undefined, cachedByIndex.get(0), clientKeyByIndex.get(0))
-          await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'DELETE' })
-        } else {
-          await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'PATCH', body: { comment: message } })
+          await replacePhotoImage(trackingCode, editingIdx, base64, editingFileId ?? undefined)
         }
+        await apiRequest(`/photos/${trackingCode}/${editingIdx}`, { method: 'PATCH', body: { comment: commentAt(0) } })
         // Fotos adicionales agregadas durante la edición (comentario por foto).
         for (let i = 1; i < photos.length; i++) {
           if (!isDataUrl(photos[i])) continue
           await uploadSinglePhoto(photos[i].split(',')[1] ?? '', commentAt(i), false, undefined, undefined, cachedByIndex.get(i), clientKeyByIndex.get(i))
         }
+        for (const src of photos) if (src.startsWith('blob:')) URL.revokeObjectURL(src)
         await loadOperation()
         setFeedback('✓ Foto actualizada')
       } catch (err) {
-        setFeedback(err instanceof Error ? err.message : 'Error al actualizar la foto. Quedó guardada en este dispositivo.')
+        // No se pierde la edición: se reabre el visor para reintentar.
+        setCaptureTray(photos)
+        setTrayComments(comments)
+        setTrayPhotoProducts(photoProducts)
+        setTrayEditingPhotoIdx(editingIdx)
+        setTrayEditingFileId(editingFileId)
+        setTrayFullIdx(0)
+        setShowCaptureTray(true)
+        setFeedback(err instanceof Error && err.message ? `${err.message} Toca Enviar para reintentar.` : 'No se pudo guardar la foto editada. Toca Enviar para reintentar.')
       } finally {
         setTrayUploadProgress(null)
         setTraySending(false)
@@ -1749,6 +1770,8 @@ export function WizardPage() {
   const persistTrayNow = useCallback(() => {
     if (!trackingCode) return
     const s = trayStateRef.current
+    // Editando una foto ya guardada (blob: local): no hay borrador que guardar.
+    if (s.captureTray.some((p) => p.startsWith('blob:'))) return
     if (s.showCaptureTray && s.captureTray.length > 0) {
       void saveTrayDraft(trackingCode, {
         photos: s.captureTray, comments: s.trayComments, photoProducts: s.trayPhotoProducts, productCode: s.trayProductCode, message: s.trayMessage,
@@ -2266,41 +2289,66 @@ export function WizardPage() {
 
   // Abre el editor de imagen (marcador) con una foto ya guardada para re-editarla.
   // Al confirmar: sube la versión editada y elimina la original.
-  const openPhotoReEdit = (photoIndex: number) => {
+  /**
+   * Abre una foto ya guardada en el editor. Se descarga desde NUESTRO servidor
+   * (blob local): con la URL del almacenamiento el navegador no deja exportar
+   * la imagen editada y "Listo" se quedaba cargando sin guardar.
+   */
+  const openPhotoReEdit = async (photoIndex: number) => {
     const photo = operation?.photos[photoIndex]
-    if (!photo) return
-    const src = directUrl(photo) || (photo.driveUrl && /^https?:\/\//.test(photo.driveUrl) ? photo.driveUrl : null)
-    if (!src) { setFeedback('No se puede editar esta foto (aún no está disponible).'); return }
-    setPhotoEditTarget({ idx: photoIndex, src, comment: photo.comment ?? photo.stepName ?? '' })
+    if (!photo || !trackingCode) return
+    if (!directUrl(photo) && !(photo.driveUrl && /^https?:\/\//.test(photo.driveUrl))) {
+      setFeedback('No se puede editar esta foto (aún no está disponible).'); return
+    }
+    setFeedback('⏳ Abriendo foto…')
+    try {
+      const src = await fetchPhotoForEdit(trackingCode, photoIndex)
+      setFeedback(null)
+      setPhotoEditTarget({ idx: photoIndex, src, comment: photo.comment ?? photo.stepName ?? '', fileId: photo.fileId })
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'No se pudo abrir la foto para editarla.')
+    }
   }
 
-  // Edita una foto general en la misma bandeja de revisión donde se registró
-  // (foto + campo de mensaje). Al enviar se ACTUALIZA esa foto en vez de crear
-  // una nueva (ver sendCaptureTray con trayEditingPhotoIdx).
-  const openEditInTray = (photoIndex: number) => {
+  // Edita una foto general en el visor de la bandeja (foto + comentario). Al
+  // enviar se REEMPLAZA esa foto en su lugar (ver sendCaptureTray con
+  // trayEditingPhotoIdx), sin crear una nueva.
+  const openEditInTray = async (photoIndex: number) => {
     const photo = operation?.photos[photoIndex]
-    if (!photo) return
-    const src = directUrl(photo) || (photo.driveUrl && /^https?:\/\//.test(photo.driveUrl) ? photo.driveUrl : null)
-    if (!src) { setFeedback('No se puede editar esta foto (aún no está disponible).'); return }
+    if (!photo || !trackingCode) return
+    if (!directUrl(photo) && !(photo.driveUrl && /^https?:\/\//.test(photo.driveUrl))) {
+      setFeedback('No se puede editar esta foto (aún no está disponible).'); return
+    }
+    setFeedback('⏳ Abriendo foto…')
+    let src: string
+    try {
+      src = await fetchPhotoForEdit(trackingCode, photoIndex)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'No se pudo abrir la foto para editarla.')
+      return
+    }
+    setFeedback(null)
     setTrayEditingPhotoIdx(photoIndex)
+    setTrayEditingFileId(photo.fileId ?? null)
     setCaptureTray([src])
     setTrayComments([photo.comment ?? ''])
-    setTrayMessage(photo.comment ?? '')
+    setTrayPhotoProducts([null])
+    setTrayMessage('')
+    setTrayFullIdx(0)
     setEditingPhotoIdx(null)
     setShowCaptureTray(true)
   }
 
   const handleConfirmPhotoReEdit = async (editedBase64: string) => {
     if (!photoEditTarget || !trackingCode) return
-    const { idx, comment } = photoEditTarget
+    const { idx, fileId, src } = photoEditTarget
     setPhotoEditTarget(null)
+    if (src.startsWith('blob:')) URL.revokeObjectURL(src)
     setFeedback('⏳ Guardando imagen editada…')
     try {
       const b64 = editedBase64.includes(',') ? editedBase64.split(',')[1] : editedBase64
-      // Sube la imagen editada como nueva foto (misma lógica que cámara/galería).
-      await uploadSinglePhoto(b64, comment, false)
-      // Elimina la foto original.
-      await apiRequest(`/photos/${trackingCode}/${idx}`, { method: 'DELETE' })
+      // REEMPLAZA la imagen en su lugar (antes: foto nueva + borrar la original).
+      await replacePhotoImage(trackingCode, idx, b64, fileId)
       await loadOperation()
       setFeedback('✓ Imagen actualizada')
     } catch (err) {
@@ -4198,7 +4246,7 @@ export function WizardPage() {
             </span>
             {/* Edición rápida de ESTA foto, sin salir del visor */}
             <div className="flex items-center gap-1.5">
-              {captureTray[trayFullIdx]?.startsWith('data:') && (
+              {/^(data|blob):/.test(captureTray[trayFullIdx] ?? '') && (
                 <button onClick={() => void rotateTrayPhoto(trayFullIdx)} disabled={trayRotating} aria-label="Girar foto"
                   className="w-11 h-11 rounded-full bg-white/10 flex items-center justify-center disabled:opacity-40">
                   {trayRotating ? <Loader2 className="w-5 h-5 text-white animate-spin" /> : <RotateCw className="w-5 h-5 text-white" />}
@@ -4481,7 +4529,10 @@ export function WizardPage() {
         <ImageEditor
           imageSrc={photoEditTarget.src}
           onConfirm={(editedBase64) => void handleConfirmPhotoReEdit(editedBase64)}
-          onCancel={() => setPhotoEditTarget(null)}
+          onCancel={() => {
+            if (photoEditTarget.src.startsWith('blob:')) URL.revokeObjectURL(photoEditTarget.src)
+            setPhotoEditTarget(null)
+          }}
         />
       )}
 
