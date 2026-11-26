@@ -1,6 +1,24 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { centerRegion, cleanBarcodeValue, createReadConfirmer, fitScale, needsConfirmation, pickBest, pickFormats } from './barcode-scan'
+import {
+  centerRegion, cleanBarcodeValue, createReadConfirmer, fitScale, needsConfirmation, normalizeScannedCode, pickBest, pickFormats,
+  withoutCheckChar,
+} from './barcode-scan'
+
+test('códigos alfanuméricos: quita prefijo AIM y asteriscos de Code 39', () => {
+  assert.equal(normalizeScannedCode('PDVT000288673R'), 'PDVT000288673R')
+  assert.equal(normalizeScannedCode(']A0PDVT000288673R\r\n'), 'PDVT000288673R')
+  assert.equal(normalizeScannedCode(']C1PDVT000288673R'), 'PDVT000288673R')
+  assert.equal(normalizeScannedCode('*PDVT000288673R*'), 'PDVT000288673R')
+  assert.equal(normalizeScannedCode('  pdvt-0001  '), 'pdvt-0001', 'conserva minúsculas y guiones')
+  assert.equal(normalizeScannedCode('7701234567890'), '7701234567890')
+})
+
+test('variante sin carácter de control final (Code 39 mod 43)', () => {
+  assert.equal(withoutCheckChar('PDVT000288673RX'), 'PDVT000288673R')
+  assert.equal(withoutCheckChar('AB12'), null, 'muy corto: no se recorta')
+  assert.equal(withoutCheckChar('ÑANDU-1234'), null, 'fuera del juego de Code 39')
+})
 
 test('formatos: los pedidos que el equipo soporta', () => {
   assert.deepEqual(pickFormats(['qr_code', 'ean_13', 'foo']), ['ean_13', 'qr_code'])

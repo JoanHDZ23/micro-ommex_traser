@@ -3,7 +3,7 @@ import { Camera, Keyboard, ScanLine, X } from 'lucide-react'
 import { LoadingState, ErrorState } from './ui'
 import { SCAN_PRIORITY, useHardwareScanner } from '../lib/hardware-scanner'
 import { detectHardwareScanner, hardwareScannerKnown, markHardwareScannerSeen } from '../lib/scanner-device'
-import { centerRegion, createReadConfirmer, fitScale, pickBest, pickFormats, type Detected } from '../lib/barcode-scan'
+import { centerRegion, createReadConfirmer, fitScale, normalizeScannedCode, pickBest, pickFormats, type Detected } from '../lib/barcode-scan'
 import { playScanSound } from '../lib/scan-sound'
 
 /**
@@ -104,7 +104,8 @@ export function BarcodeScanner({ onResult, onClose, forceCamera = false }: {
       try { navigator.vibrate?.(40) } catch { /* sin vibración */ }
       playScanSound('found')
       stopAll()
-      onResult(value)
+      // Sin prefijo AIM ni asteriscos de Code 39 (p. ej. "*PDVT000288673R*").
+      onResult(normalizeScannedCode(value) || value)
     }
 
     /** Copia al canvas la zona central (o el cuadro completo), con escala acotada. */

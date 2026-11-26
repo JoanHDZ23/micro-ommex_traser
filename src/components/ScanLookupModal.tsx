@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, Camera, CheckCircle2, CheckSquare, ClipboardList, FolderInput, Loader2, Minus, Package, Plus, ScanLine, Search,
+  AlertTriangle, ArrowLeft, Camera, CheckCircle2, CheckSquare, ClipboardList, FolderInput, Loader2, Minus, Package, Plus, ScanLine, Search,
   Square, Volume2, VolumeX, WifiOff,
 } from 'lucide-react'
 import { Modal } from './ui'
@@ -31,6 +31,7 @@ import { notifyToast } from '../lib/background-send'
 import { getReceivedHistory, reportNotFoundCode, warmSheetCache, type ReceivedHistoryEntry } from '../lib/api'
 import { normCode, searchResultMarkKeys, type RowMark } from '../lib/mark-keys'
 import { getOfflineSheetData } from '../lib/local-tables'
+import { normalizeScannedCode, withoutCheckChar } from '../lib/barcode-scan'
 import { isScanSoundOn, playScanSound, setScanSoundOn } from '../lib/scan-sound'
 import { resolveScanMethod, setScanMethod, useScanMethod, type ScanMethod } from '../lib/scan-method'
 import { getSinkMode, setSinkMode, sinkEnabled, subscribeSinkMode, type SinkMode } from '../lib/scan-sink'
@@ -55,6 +56,13 @@ function reportMissing(companyId: string, code: string, sheetId?: string, scope?
 }
 
 const COPY_MAX_AGE_MS = 6 * 60 * 60 * 1000
+
+/** ¿La lectura es del producto abierto? (también si trae el carácter de control de Code 39). */
+function isSameScan(productCode: string, scanned: string): boolean {
+  const a = productCode.trim().toLowerCase()
+  const b = scanned.trim().toLowerCase()
+  return !!a && (a === b || withoutCheckChar(b) === a)
+}
 
 const STATUS_TEXT: Record<CountStatus, { cls: string; label: string }> = {
   none: { cls: 'text-gray-500', label: 'Sin marcar' },
@@ -245,8 +253,10 @@ export function ScanLookupModal() {
     setPickOp(false)
   }
 
-  const runLookup = useCallback(async (raw: string) => {
-    const q = raw.trim()
+  const runLookup = useCallback(async (raw: string, fromScan = false) => {
+    // Sin prefijo AIM ni asteriscos de Code 39 (también si la PDA "escribió"
+    // la lectura en el campo y llegó como búsqueda a mano).
+    let q = normalizeScannedCode(raw) || raw.trim()
     if (!q) return
     const seq = ++searchSeq.current
     setCode(q)
@@ -261,11 +271,23 @@ export function ScanLookupModal() {
     if (!companyId || !cfg.primarySheetId) { setStatus('no-data'); playScanSound('notfound'); return }
     setStatus('loading')
     try {
-      const r = await searchInSheet({
-        sheetId: cfg.primarySheetId, companyId, q,
+      const sheetId = cfg.primarySheetId
+      const search = (text: string) => searchInSheet({
+        sheetId, companyId, q: text,
         codeColumn: cfg.codeColumn, descColumn: cfg.descColumn, limit: 25,
       })
+      let r = await search(q)
       if (seq !== searchSeq.current) return // llegó otra lectura mientras tanto
+      // Lectura sin coincidencia EXACTA: algunos lectores agregan el carácter de
+      // control de Code 39 al final ("PDVT000288673R" → "PDVT000288673RX").
+      // Se reintenta sin él y solo se acepta si ese código existe tal cual.
+      const shorter = fromScan ? withoutCheckChar(q) : null
+      if (shorter && !r.results.some((it) => normCode(it.code) === normCode(q))) {
+        const r2 = await search(shorter).catch(() => null)
+        if (seq !== searchSeq.current) return
+        const exact2 = r2?.results.filter((it) => normCode(it.code) === normCode(shorter)) ?? []
+        if (r2 && exact2.length > 0) { r = { ...r2, results: exact2 }; q = shorter; setCode(q) }
+      }
       const table = getOfflineSheetData(companyId, cfg.primarySheetId)
       setMarks(searchResultMarkKeys(r.results, cfg.primarySheetId, table ? { rows: table.rows, codeCol: cfg.codeColumn } : undefined))
       setResults(r.results)
@@ -297,15 +319,15 @@ export function ScanLookupModal() {
   // Código leído (gatillo SCAN, ráfaga, Fill/Input o pegado): el mismo producto
   // suma una unidad; otro código se busca en la DATA principal.
   const handleScan = (scanned: string) => {
-    const clean = scanned.trim()
+    const clean = normalizeScannedCode(scanned) || scanned.trim()
     if (!clean) return
-    if (open && selected && selected.code.trim().toLowerCase() === clean.toLowerCase()) {
+    if (open && selected && isSameScan(selected.code, clean)) {
       changeQty(qty + 1) // mismo producto: una unidad más
       playScanSound('found')
       return
     }
     setOpen(true)
-    void runLookup(clean)
+    void runLookup(clean, true)
   }
 
   // Modal CERRADO: respaldo global, cualquier lectura abre el modal.
@@ -331,7 +353,7 @@ export function ScanLookupModal() {
       const d = (e as CustomEvent<{ code?: string; camera?: boolean }>).detail
       const c = d?.code ?? ''
       setOpen(true)
-      if (c.trim()) { void runLookup(c); return }
+      if (c.trim()) { void runLookup(c, true); return }
       searchSeq.current++
       setStatus('idle'); setCode(''); setSelected(null); setResults([]); setChecked(new Set()); setPickOp(false)
       if (d?.camera) { setCameraOpen(true); return }
@@ -346,17 +368,25 @@ export function ScanLookupModal() {
   // Lectura con la cámara: se busca igual que una del gatillo SCAN.
   const onCameraResult = (scanned: string) => {
     setCameraOpen(false)
-    const clean = scanned.trim()
+    const clean = normalizeScannedCode(scanned) || scanned.trim()
     if (!clean) return
-    if (selected && selected.code.trim().toLowerCase() === clean.toLowerCase()) {
+    if (selected && isSameScan(selected.code, clean)) {
       changeQty(qty + 1)
       playScanSound('found')
       return
     }
-    void runLookup(clean)
+    void runLookup(clean, true)
   }
 
   const close = () => setOpen(false)
+
+  // Del producto abierto a la lista de resultados de la misma búsqueda.
+  const backToResults = () => {
+    setSelected(null)
+    setSaveError(null)
+    setPickOp(false)
+    setQty(1)
+  }
 
   /** Suma `delta` a lo que ya lleva la fila (negativo = quitar). Nunca reemplaza. */
   const save = async (delta: number) => {
@@ -603,7 +633,18 @@ export function ScanLookupModal() {
 
         {code && (
           <div className="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
-            <span className="font-mono text-sm font-semibold text-gray-800 bg-gray-100 px-2 py-1 rounded break-all">{code}</span>
+            {selected && results.length > 1 ? (
+              // Producto abierto desde la lista: tocar la búsqueda vuelve a los resultados.
+              <button type="button" onClick={backToResults}
+                title="Volver a los resultados de la búsqueda"
+                className="inline-flex items-center gap-1.5 font-mono text-sm font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded break-all hover:bg-emerald-100 active:scale-95">
+                <ArrowLeft className="w-3.5 h-3.5 flex-shrink-0" />
+                {code}
+                <span className="font-sans text-[11px] font-medium text-emerald-700">· {results.length} resultados</span>
+              </button>
+            ) : (
+              <span className="font-mono text-sm font-semibold text-gray-800 bg-gray-100 px-2 py-1 rounded break-all">{code}</span>
+            )}
           </div>
         )}
 

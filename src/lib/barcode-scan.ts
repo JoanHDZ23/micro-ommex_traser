@@ -49,11 +49,36 @@ export function cleanBarcodeValue(raw: string): string {
 }
 
 /**
+ * Normaliza un código ALFANUMÉRICO leído (p. ej. "PDVT000288673R") quitando lo
+ * que agregan algunos lectores y que no es parte del dato:
+ *  - prefijo AIM de simbología (`]A0`, `]C1`, `]E0`…), que envían algunas PDAs;
+ *  - asteriscos de inicio/fin de Code 39 (`*PDVT000288673R*`);
+ *  - caracteres de control y espacios en los bordes.
+ * No cambia mayúsculas/minúsculas ni guiones (pueden ser parte del código).
+ */
+export function normalizeScannedCode(raw: string): string {
+  let v = cleanBarcodeValue(raw)
+  v = v.replace(/^\][A-Za-z][0-9A-Za-z]/, '')
+  if (/^\*.+\*$/.test(v)) v = v.slice(1, -1)
+  return v.trim()
+}
+
+/**
+ * Variante sin el último carácter: Code 39 (mod 43) y otros añaden un dígito de
+ * control al final si el lector está configurado así ("PDVT000288673R" → se lee
+ * "PDVT000288673RX"). Solo se usa como 2.º intento y si coincide EXACTO.
+ */
+export function withoutCheckChar(code: string): string | null {
+  const v = code.trim()
+  return v.length >= 6 && /^[0-9A-Za-z\-. $/+%]+$/.test(v) ? v.slice(0, -1) : null
+}
+
+/**
  * Confirma lecturas: devuelve el código cuando es fiable (a la primera si el
  * formato tiene control; si no, al leer el MISMO valor dos veces seguidas
  * dentro de `windowMs`).
  */
-export function createReadConfirmer(windowMs = 1500) {
+export function createReadConfirmer(windowMs = 2500) {
   let last = ''
   let lastAt = 0
   return {
