@@ -18,8 +18,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  AlertTriangle, Camera, CheckCircle2, ClipboardList, FolderInput, Loader2, Minus, Package, Plus, ScanLine, Search,
-  Volume2, VolumeX, WifiOff,
+  AlertTriangle, Camera, CheckCircle2, CheckSquare, ClipboardList, FolderInput, Loader2, Minus, Package, Plus, ScanLine, Search,
+  Square, Volume2, VolumeX, WifiOff,
 } from 'lucide-react'
 import { Modal } from './ui'
 import { NetworkError, apiRequest, searchInSheet, type Operation, type SheetSearchItem } from '../lib/api'
@@ -162,6 +162,73 @@ export function ScanLookupModal() {
 
   const changeQty = (next: number) => { setQtyTouched(true); setQty(Math.max(1, Math.floor(next || 1))) }
 
+  // ── Selección múltiple en la lista de coincidencias ──────────────────────
+  // Filas (rowIndex) seleccionadas con la casilla para marcarlas de una vez.
+  const [checked, setChecked] = useState<Set<number>>(new Set())
+  const [bulkSaving, setBulkSaving] = useState(false)
+  // Misma clave de marca que al abrir el producto (fila concreta o la tabla).
+  const markOf = (it: SheetSearchItem): RowMark =>
+    marks.get(it) ?? { code: it.code.trim(), rowKey: db?.primarySheetId ?? '' }
+  const markedQty = (it: SheetSearchItem): number => {
+    const m = markOf(it)
+    return m.code ? receivedMap.get(receivedKey(m.code, m.rowKey))?.quantity ?? 0 : 0
+  }
+  const toggleChecked = (rowIndex: number) => setChecked((prev) => {
+    const next = new Set(prev)
+    if (next.has(rowIndex)) next.delete(rowIndex)
+    else next.add(rowIndex)
+    return next
+  })
+  const allChecked = results.length > 0 && results.every((it) => checked.has(it.rowIndex))
+  const toggleAllChecked = () =>
+    setChecked(allChecked ? new Set() : new Set(results.map((it) => it.rowIndex)))
+  const checkedItems = results.filter((it) => checked.has(it.rowIndex) && it.code.trim())
+  const toMark = checkedItems.filter((it) => markedQty(it) === 0)
+  const toUnmark = checkedItems.filter((it) => markedQty(it) > 0)
+
+  /**
+   * Marca (1 pieza cada una) o desmarca las filas seleccionadas. Las ya
+   * marcadas no se tocan al marcar. Un solo aviso con "Deshacer" para todas.
+   */
+  const bulkMark = async (mode: 'mark' | 'unmark') => {
+    const items = mode === 'mark' ? toMark : toUnmark
+    if (items.length === 0 || bulkSaving) return
+    setBulkSaving(true)
+    const outcomes = await Promise.allSettled(items.map((it) => {
+      const m = markOf(it)
+      const delta = mode === 'mark' ? 1 : -markedQty(it)
+      return adjustReceivedDetailed(companyId, m.code, delta, { sheetId: db?.primarySheetId, rowKey: m.rowKey })
+    }))
+    setBulkSaving(false)
+    const historyIds = outcomes.flatMap((o) => (o.status === 'fulfilled' && o.value.historyId ? [o.value.historyId] : []))
+    const ok = outcomes.filter((o) => o.status === 'fulfilled').length
+    const failed = outcomes.length - ok
+    // Las que fallaron siguen seleccionadas para reintentar.
+    setChecked(new Set(items.filter((_, i) => outcomes[i].status === 'rejected').map((it) => it.rowIndex)))
+    if (ok > 0) {
+      notifyToast('success',
+        mode === 'mark' ? `${ok} marcada(s)` : `${ok} desmarcada(s)`,
+        failed > 0 ? `${failed} no se guardaron: siguen seleccionadas.` : (mode === 'mark' ? '1 pieza cada una.' : undefined),
+        undefined,
+        historyIds.length
+          ? {
+            label: 'Deshacer',
+            run: () => {
+              void Promise.allSettled(historyIds.map((id) => undoReceived(companyId, id)))
+                .then((rs) => {
+                  const bad = rs.filter((r) => r.status === 'rejected').length
+                  if (bad) notifyToast('error', 'No se pudo deshacer todo', `${bad} sin deshacer.`)
+                  else notifyToast('info', `Deshecho: ${historyIds.length}`)
+                })
+            },
+          }
+          : undefined)
+    } else {
+      const first = outcomes.find((o) => o.status === 'rejected') as PromiseRejectedResult | undefined
+      notifyToast('error', 'No se guardó', first?.reason instanceof Error && first.reason.message ? first.reason.message : 'Revisa la conexión e intenta de nuevo.')
+    }
+  }
+
   const pick = (item: SheetSearchItem) => {
     setSelected(item)
     setSaveError(null)
@@ -177,6 +244,7 @@ export function ScanLookupModal() {
     setManual('')
     setSelected(null)
     setResults([])
+    setChecked(new Set())
     setSaveError(null)
     setPickOp(false)
     const cfg = getDbSettings(companyId)
@@ -255,7 +323,7 @@ export function ScanLookupModal() {
       setOpen(true)
       if (c.trim()) { void runLookup(c); return }
       searchSeq.current++
-      setStatus('idle'); setCode(''); setSelected(null); setResults([]); setPickOp(false)
+      setStatus('idle'); setCode(''); setSelected(null); setResults([]); setChecked(new Set()); setPickOp(false)
       if (d?.camera) { setCameraOpen(true); return }
       // El foco (sin teclado en pantalla) lo pone usePdaScanner al abrir.
     }
@@ -445,6 +513,30 @@ export function ScanLookupModal() {
             </button>
           )}
         </div>
+      ) : !selected && status === 'done' && checked.size > 0 ? (
+        // Selección múltiple: marcar / desmarcar todas las filas elegidas.
+        <div className="space-y-2">
+          {countClosed && (
+            <p role="status" className="text-xs text-red-700">El conteo está cerrado: no se puede marcar hasta abrirlo en Base de datos.</p>
+          )}
+          <div className="flex items-center gap-2">
+            {toUnmark.length > 0 && (
+              <button type="button" onClick={() => void bulkMark('unmark')} disabled={bulkSaving || countClosed}
+                className="px-3 py-2.5 rounded-xl border border-red-200 text-red-600 text-sm font-medium disabled:opacity-50">
+                Desmarcar ({toUnmark.length})
+              </button>
+            )}
+            <button type="button" onClick={() => void bulkMark('mark')} disabled={bulkSaving || countClosed || toMark.length === 0}
+              className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
+              {bulkSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              {toMark.length > 0 ? `Marcar ${toMark.length} seleccionada(s)` : 'Ya están marcadas'}
+            </button>
+          </div>
+          <button type="button" onClick={() => setChecked(new Set())} disabled={bulkSaving}
+            className="w-full text-[11px] font-semibold text-gray-500 underline">
+            Quitar selección
+          </button>
+        </div>
       ) : undefined}
     >
       <div className="space-y-3">
@@ -587,15 +679,34 @@ export function ScanLookupModal() {
         {/* Varias coincidencias sin código exacto: elegir la correcta */}
         {status === 'done' && !selected && results.length > 1 && (
           <div className="space-y-1.5">
-            <p className="text-[11px] font-semibold text-gray-500 uppercase">{results.length} coincidencias · elige el producto</p>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase">
+                {results.length} coincidencias · {checked.size > 0 ? `${checked.size} seleccionada(s)` : 'toca ☐ para marcar varias'}
+              </p>
+              <button type="button" onClick={toggleAllChecked}
+                className="text-[11px] font-semibold text-emerald-700 underline flex-shrink-0">
+                {allChecked ? 'Ninguna' : 'Seleccionar todas'}
+              </button>
+            </div>
             {results.map((it) => {
               // Varias filas con el mismo código (p. ej. la misma orden): "2 de 3".
               const same = results.filter((x) => normCode(x.code) === normCode(it.code))
               const pos = same.length > 1 && it.code ? same.indexOf(it) + 1 : 0
+              const isChecked = checked.has(it.rowIndex)
               return (
-              <button key={it.rowIndex} type="button" onClick={() => pick(it)}
-                className="w-full flex items-center gap-2.5 p-2.5 rounded-lg border border-gray-200 hover:bg-emerald-50 text-left">
-                <Package className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <div key={it.rowIndex}
+                className={`w-full flex items-stretch rounded-lg border text-left ${isChecked ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200'}`}>
+                {/* Casilla: selecciona la fila para marcarla junto con otras */}
+                <button type="button" role="checkbox" aria-checked={isChecked}
+                  aria-label={`Seleccionar ${it.code || 'fila ' + (it.rowIndex + 1)}`}
+                  onClick={() => toggleChecked(it.rowIndex)}
+                  className="w-11 flex-shrink-0 flex items-center justify-center">
+                  {isChecked
+                    ? <CheckSquare className="w-5 h-5 text-emerald-600" />
+                    : <Square className="w-5 h-5 text-gray-400" />}
+                </button>
+              <button type="button" onClick={() => pick(it)}
+                className="min-w-0 flex-1 flex items-center gap-2.5 py-2.5 pr-2.5 text-left hover:bg-emerald-50/60 rounded-r-lg">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-gray-800 break-words">
                     {it.code || '(sin código)'}
@@ -613,11 +724,11 @@ export function ScanLookupModal() {
                   </p>
                 </div>
                 {(() => {
-                  const m = marks.get(it)
-                  const q = m?.code ? receivedMap.get(receivedKey(m.code, m.rowKey))?.quantity ?? 0 : 0
+                  const q = markedQty(it)
                   return q > 0 ? <span className="text-[10px] font-bold text-emerald-700 flex-shrink-0">✓ ×{q}</span> : null
                 })()}
               </button>
+              </div>
               )
             })}
           </div>
