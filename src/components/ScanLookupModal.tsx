@@ -104,9 +104,6 @@ export function ScanLookupModal() {
   // Conteo de la DATA principal cerrado → no se puede marcar.
   const countClosed = useCountSession(open ? companyId : '', db?.primarySheetId)?.status === 'closed'
   useEffect(() => { if (open && companyId) void refreshCountSessions(companyId) }, [open, companyId])
-  // true cuando el usuario cambió la cantidad (o escaneó otra unidad): desde
-  // entonces no se pisa con la cantidad ya marcada que llegue del servidor.
-  const [qtyTouched, setQtyTouched] = useState(false)
 
   // Clave de marca de cada resultado (fila concreta si el código se repite).
   const [marks, setMarks] = useState<Map<SheetSearchItem, RowMark>>(new Map())
@@ -155,12 +152,9 @@ export function ScanLookupModal() {
     return () => { clearTimeout(t); window.removeEventListener('online', warm) }
   }, [companyId])
 
-  // Por defecto, la cantidad propuesta es la ya marcada (o 1 si no hay marca).
-  useEffect(() => {
-    if (selected && !qtyTouched) setQty(currentQty > 0 ? currentQty : 1)
-  }, [selected, currentQty, qtyTouched])
-
-  const changeQty = (next: number) => { setQtyTouched(true); setQty(Math.max(1, Math.floor(next || 1))) }
+  // `qty` es la cantidad A SUMAR a lo que ya lleva la fila (nunca reemplaza).
+  const changeQty = (next: number) => { setQty(Math.max(1, Math.floor(next || 1))) }
+  const unit = (n: number) => (pieces ? (n === 1 ? 'pieza' : 'piezas') : 'unidad(es)')
 
   // ── Selección múltiple en la lista de coincidencias ──────────────────────
   // Filas (rowIndex) seleccionadas con la casilla para marcarlas de una vez.
@@ -182,13 +176,22 @@ export function ScanLookupModal() {
   const allChecked = results.length > 0 && results.every((it) => checked.has(it.rowIndex))
   const toggleAllChecked = () =>
     setChecked(allChecked ? new Set() : new Set(results.map((it) => it.rowIndex)))
+  // Cantidad A SUMAR por fila seleccionada (por defecto 1).
+  const [bulkQty, setBulkQty] = useState<Map<number, number>>(new Map())
+  const addQtyOf = (rowIndex: number) => bulkQty.get(rowIndex) ?? 1
+  const setAddQty = (rowIndex: number, n: number) => setBulkQty((prev) => {
+    const next = new Map(prev)
+    next.set(rowIndex, Math.max(1, Math.floor(n || 1)))
+    return next
+  })
   const checkedItems = results.filter((it) => checked.has(it.rowIndex) && it.code.trim())
-  const toMark = checkedItems.filter((it) => markedQty(it) === 0)
+  const toMark = checkedItems
   const toUnmark = checkedItems.filter((it) => markedQty(it) > 0)
+  const bulkPieces = toMark.reduce((s, it) => s + addQtyOf(it.rowIndex), 0)
 
   /**
-   * Marca (1 pieza cada una) o desmarca las filas seleccionadas. Las ya
-   * marcadas no se tocan al marcar. Un solo aviso con "Deshacer" para todas.
+   * Suma a cada fila seleccionada su cantidad (se AGREGA a lo que ya lleva,
+   * nunca la reemplaza) o les quita la marca. Un aviso con "Deshacer" para todas.
    */
   const bulkMark = async (mode: 'mark' | 'unmark') => {
     const items = mode === 'mark' ? toMark : toUnmark
@@ -196,10 +199,16 @@ export function ScanLookupModal() {
     setBulkSaving(true)
     const outcomes = await Promise.allSettled(items.map((it) => {
       const m = markOf(it)
-      const delta = mode === 'mark' ? 1 : -markedQty(it)
+      const delta = mode === 'mark' ? addQtyOf(it.rowIndex) : -markedQty(it)
       return adjustReceivedDetailed(companyId, m.code, delta, { sheetId: db?.primarySheetId, rowKey: m.rowKey })
     }))
     setBulkSaving(false)
+    // Las guardadas vuelven a 1 (las que fallaron conservan su cantidad).
+    setBulkQty((prev) => {
+      const next = new Map(prev)
+      items.forEach((it, i) => { if (outcomes[i].status === 'fulfilled') next.delete(it.rowIndex) })
+      return next
+    })
     const historyIds = outcomes.flatMap((o) => (o.status === 'fulfilled' && o.value.historyId ? [o.value.historyId] : []))
     const ok = outcomes.filter((o) => o.status === 'fulfilled').length
     const failed = outcomes.length - ok
@@ -208,7 +217,7 @@ export function ScanLookupModal() {
     if (ok > 0) {
       notifyToast('success',
         mode === 'mark' ? `${ok} marcada(s)` : `${ok} desmarcada(s)`,
-        failed > 0 ? `${failed} no se guardaron: siguen seleccionadas.` : (mode === 'mark' ? '1 pieza cada una.' : undefined),
+        failed > 0 ? `${failed} no se guardaron: siguen seleccionadas.` : (mode === 'mark' ? 'Sumado a lo que ya llevaban.' : undefined),
         undefined,
         historyIds.length
           ? {
@@ -232,7 +241,7 @@ export function ScanLookupModal() {
   const pick = (item: SheetSearchItem) => {
     setSelected(item)
     setSaveError(null)
-    setQtyTouched(false)
+    setQty(1) // cantidad a sumar: empieza en 1
     setPickOp(false)
   }
 
@@ -245,6 +254,7 @@ export function ScanLookupModal() {
     setSelected(null)
     setResults([])
     setChecked(new Set())
+    setBulkQty(new Map())
     setSaveError(null)
     setPickOp(false)
     const cfg = getDbSettings(companyId)
@@ -348,21 +358,22 @@ export function ScanLookupModal() {
 
   const close = () => setOpen(false)
 
-  const save = async (target: number) => {
+  /** Suma `delta` a lo que ya lleva la fila (negativo = quitar). Nunca reemplaza. */
+  const save = async (delta: number) => {
     if (!selected?.code) return
-    const delta = target - currentQty
     if (delta === 0) { close(); return }
     setSaving(true); setSaveError(null)
     try {
       const code = selMark.code || selected.code
       const r = await adjustReceivedDetailed(companyId, code, delta, { sheetId: db?.primarySheetId, rowKey: selMark.rowKey })
+      const total = r.quantity
       const exp = expected !== null ? ` de ${expected}` : ''
       // "Deshacer" revierte este cambio en el servidor (respeta lo que otros marcaron después).
       const historyId = r.historyId
       // Solo se avisa si se guardó (sin nombres de tablas ni de recepciones).
       notifyToast('success',
-        target > 0 ? 'Guardado' : 'Marca quitada',
-        target > 0 ? `${code} · ${target}${exp} ${pieces ? (target === 1 ? 'pieza' : 'piezas') : 'unidad(es)'}` : code,
+        total > 0 ? (delta > 0 ? `+${delta} ${unit(delta)}` : 'Guardado') : 'Marca quitada',
+        total > 0 ? `${code} · lleva ${total}${exp} ${unit(total)}` : code,
         undefined,
         historyId
           ? {
@@ -494,7 +505,7 @@ export function ScanLookupModal() {
           )}
           <div className="flex items-center gap-2">
             {currentQty > 0 && (
-              <button type="button" onClick={() => void save(0)} disabled={busy || countClosed}
+              <button type="button" onClick={() => void save(-currentQty)} disabled={busy || countClosed}
                 className="px-3 py-2.5 rounded-xl border border-red-200 text-red-600 text-sm font-medium disabled:opacity-50">
                 Desmarcar
               </button>
@@ -502,7 +513,7 @@ export function ScanLookupModal() {
             <button type="button" onClick={() => void save(qty)} disabled={busy || qty < 1 || countClosed}
               className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              {currentQty > 0 ? `Guardar cantidad (${qty})` : `Marcar (${qty})`}
+              {currentQty > 0 ? `Sumar ${qty} (quedará ${currentQty + qty})` : `Marcar (${qty})`}
             </button>
           </div>
           {canBring && (
@@ -529,7 +540,7 @@ export function ScanLookupModal() {
             <button type="button" onClick={() => void bulkMark('mark')} disabled={bulkSaving || countClosed || toMark.length === 0}
               className="flex-1 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
               {bulkSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              {toMark.length > 0 ? `Marcar ${toMark.length} seleccionada(s)` : 'Ya están marcadas'}
+              {`Sumar ${bulkPieces} ${unit(bulkPieces)} · ${toMark.length} fila(s)`}
             </button>
           </div>
           <button type="button" onClick={() => setChecked(new Set())} disabled={bulkSaving}
@@ -693,14 +704,17 @@ export function ScanLookupModal() {
               const same = results.filter((x) => normCode(x.code) === normCode(it.code))
               const pos = same.length > 1 && it.code ? same.indexOf(it) + 1 : 0
               const isChecked = checked.has(it.rowIndex)
+              const lleva = markedQty(it)
+              const addQ = addQtyOf(it.rowIndex)
               return (
               <div key={it.rowIndex}
-                className={`w-full flex items-stretch rounded-lg border text-left ${isChecked ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200'}`}>
+                className={`w-full rounded-lg border text-left ${isChecked ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200'}`}>
+              <div className="flex items-stretch">
                 {/* Casilla: selecciona la fila para marcarla junto con otras */}
                 <button type="button" role="checkbox" aria-checked={isChecked}
                   aria-label={`Seleccionar ${it.code || 'fila ' + (it.rowIndex + 1)}`}
                   onClick={() => toggleChecked(it.rowIndex)}
-                  className="w-11 flex-shrink-0 flex items-center justify-center">
+                  className="w-11 flex-shrink-0 flex items-center justify-center rounded-l-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50">
                   {isChecked
                     ? <CheckSquare className="w-5 h-5 text-emerald-600" />
                     : <Square className="w-5 h-5 text-gray-400" />}
@@ -723,11 +737,33 @@ export function ScanLookupModal() {
                     {(it.row ?? []).map((v) => String(v ?? '').trim()).filter((v) => v && normCode(v) !== normCode(it.code) && v !== it.descripcion).slice(0, 4).join(' · ')}
                   </p>
                 </div>
-                {(() => {
-                  const q = markedQty(it)
-                  return q > 0 ? <span className="text-[10px] font-bold text-emerald-700 flex-shrink-0">✓ ×{q}</span> : null
-                })()}
+                {/* Cuántas lleva marcadas esta fila */}
+                <span className={`text-[10px] font-bold flex-shrink-0 px-1.5 py-0.5 rounded-full border ${lleva > 0 ? 'text-emerald-700 bg-emerald-50 border-emerald-200' : 'text-gray-500 bg-gray-50 border-gray-200'}`}>
+                  {lleva > 0 ? `✓ lleva ${lleva}` : 'lleva 0'}
+                </span>
               </button>
+              </div>
+              {/* Seleccionada: cantidad a sumar a esta fila */}
+              {isChecked && it.code.trim() && (
+                <div className="flex items-center gap-2 px-2.5 pb-2.5 pl-11">
+                  <button type="button" onClick={() => setAddQty(it.rowIndex, addQ - 1)} aria-label="Restar una unidad"
+                    className="w-9 h-9 rounded-lg border border-gray-200 bg-white flex items-center justify-center active:scale-95">
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <input type="number" inputMode="numeric" min={1} value={addQ}
+                    data-scan-capture=""
+                    onChange={(e) => setAddQty(it.rowIndex, Number(e.target.value))}
+                    aria-label={`${pieces ? 'Piezas' : 'Cantidad'} a sumar a ${it.code}`}
+                    className="w-16 h-9 text-center text-base font-bold rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/30" />
+                  <button type="button" onClick={() => setAddQty(it.rowIndex, addQ + 1)} aria-label="Sumar una unidad"
+                    className="w-9 h-9 rounded-lg border border-gray-200 bg-white flex items-center justify-center active:scale-95">
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <span className="text-[11px] text-gray-600 min-w-0">
+                    +{addQ} → quedará <b className="text-emerald-700">{lleva + addQ}</b>
+                  </span>
+                </div>
+              )}
               </div>
               )
             })}
@@ -875,7 +911,13 @@ export function ScanLookupModal() {
 
             {selected.code ? (
               <div>
-                <label className="text-[11px] font-semibold text-gray-500 uppercase">{pieces ? 'Piezas que trae' : 'Cantidad que trae'}</label>
+                <div className="flex items-baseline justify-between gap-2">
+                  <label className="text-[11px] font-semibold text-gray-500 uppercase">{pieces ? 'Piezas a sumar' : 'Cantidad a sumar'}</label>
+                  <span className="text-[11px] text-gray-600">
+                    Lleva <b className={currentQty > 0 ? 'text-emerald-700' : 'text-gray-800'}>{currentQty}</b>
+                    {' → '}quedará <b className="text-emerald-700">{currentQty + qty}</b>
+                  </span>
+                </div>
                 <div className="mt-1 flex items-center gap-2">
                   <button type="button" onClick={() => changeQty(qty - 1)} aria-label="Restar una unidad"
                     className="w-11 h-11 rounded-xl border border-gray-200 flex items-center justify-center active:scale-95">
@@ -897,7 +939,7 @@ export function ScanLookupModal() {
                     <Plus className="w-5 h-5" />
                   </button>
                 </div>
-                <p className="text-[10px] text-gray-400 mt-1">Escanear de nuevo el mismo código suma 1.</p>
+                <p className="text-[10px] text-gray-400 mt-1">Se suma a lo que ya lleva (no lo reemplaza). Escanear de nuevo el mismo código suma 1.</p>
               </div>
             ) : (
               <p className="text-xs text-red-600">Esta fila no tiene código: no se puede marcar ni traer a un registro.</p>
